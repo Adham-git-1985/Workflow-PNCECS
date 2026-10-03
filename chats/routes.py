@@ -321,3 +321,21 @@ def download_attachment(attachment_id):
         abort(403)
     folder = Path(current_app.instance_path) / "uploads" / "chats" / str(attachment.message_id)
     return send_from_directory(str(folder), attachment.stored_name, as_attachment=not is_safe_inline_mimetype(attachment.mime_type), download_name=attachment.original_name, mimetype=attachment.mime_type or None)
+
+
+@chats_bp.route("/attachment/<int:attachment_id>/delete", methods=["POST"])
+@login_required
+@chat_access_required
+def delete_attachment(attachment_id):
+    attachment = ChatAttachment.query.get_or_404(attachment_id)
+    message = attachment.message
+    if message.sender_id != current_user.id or not _participant(message.conversation_id):
+        abort(403)
+    file_path = Path(current_app.instance_path) / "uploads" / "chats" / str(message.id) / Path(attachment.stored_name).name
+    db.session.delete(attachment)
+    db.session.commit()
+    try:
+        file_path.unlink(missing_ok=True)
+    except OSError:
+        current_app.logger.warning("Could not remove chat attachment %s", file_path)
+    return redirect(url_for("chats.conversation", conversation_id=message.conversation_id))

@@ -37,7 +37,7 @@
       <div class="dm-row {% if message.sender_id == current_user.id %}mine{% else %}theirs{% endif %}"><div class="dm-bubble {% if message.sender_id == current_user.id %}mine{% else %}theirs{% endif %}">
         {% if conversation.kind == 'GROUP' and message.sender_id != current_user.id %}<div class="small fw-bold mb-1">{{ message.sender.full_name }}</div>{% endif %}
         {% if message.body %}<div style="white-space:pre-wrap">{{ message.body }}</div>{% endif %}
-        {% for attachment in message.attachments %}<a class="d-block mt-2 text-reset" href="{{ url_for('chats.download_attachment', attachment_id=attachment.id) }}"><i class="bi bi-paperclip"></i> {{ attachment.original_name }}</a>{% endfor %}
+        {% for attachment in message.attachments %}<div class="d-flex gap-2 align-items-center mt-2"><a class="text-reset" href="{{ url_for('chats.download_attachment', attachment_id=attachment.id) }}"><i class="bi bi-paperclip"></i> {{ attachment.original_name }}</a>{% if message.sender_id == current_user.id %}<form method="post" action="{{ url_for('chats.delete_attachment', attachment_id=attachment.id) }}"><button class="btn btn-sm btn-link text-reset p-0" title="حذف المرفق" onclick="return confirm('حذف هذا المرفق؟')"><i class="bi bi-trash"></i></button></form>{% endif %}</div>{% endfor %}
         <small class="dm-time"><i class="bi bi-clock"></i> {{ message.created_at|local_datetime }} {% if message.sender_id == current_user.id %}<i class="bi {% if read_by_all.get(message.id) %}bi-check2-all{% else %}bi-check2{% endif %}"></i>{% endif %}</small>
       </div></div>
     {% else %}<div class="text-center text-muted pt-5">ابدأ المحادثة مع {{ direct_peer.full_name if direct_peer else 'المجموعة' }} برسالة بسيطة.</div>{% endfor %}
@@ -49,7 +49,7 @@
 </div>
 {% if can_manage_group %}<div class="modal fade" id="membersModal" tabindex="-1"><div class="modal-dialog"><form method="post" action="{{ url_for('chats.update_members', conversation_id=conversation.id) }}" class="modal-content"><div class="modal-header"><h5 class="modal-title">إدارة أعضاء المجموعة</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><label class="form-label">اسم المجموعة</label><input name="title" class="form-control mb-3" value="{{ conversation.title or '' }}"><label class="form-label">الأعضاء</label><select name="user_ids" class="form-select" multiple size="8"><option value="{{ current_user.id }}" selected>{{ current_user.full_name }} (أنت)</option>{% for user in eligible_users %}<option value="{{ user.id }}" {% if conversation.participants|selectattr('user_id','equalto',user.id)|list %}selected{% endif %}>{{ user.full_name }}</option>{% endfor %}</select></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button><button class="btn btn-primary">حفظ</button></div></form></div></div>{% endif %}
 {% endblock %}
-{% block scripts %}{{ super() }}<script>
+{% block extra_js %}<script>
 const box=document.getElementById('chatBody'),win=document.getElementById('chatWindow'),tray=document.getElementById('emojiTray');win.scrollTop=win.scrollHeight;
 document.getElementById('emojiToggle').onclick=()=>tray.classList.toggle('show');document.querySelectorAll('.emoji-btn').forEach(b=>b.onclick=()=>{box.value+=b.textContent;box.focus();tray.classList.remove('show')});
 </script>{% endblock %}
