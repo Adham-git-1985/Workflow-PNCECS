@@ -3474,6 +3474,9 @@ def _notification_payload(notification: Notification, state: dict) -> dict:
         "type": notification.type or "INFO",
         "source": (notification.source or "workflow").strip().lower(),
         "link_url": open_url,
+        "target_type": notification.target_type,
+        "target_id": notification.target_id,
+        "action": notification.action,
     }
 
 
