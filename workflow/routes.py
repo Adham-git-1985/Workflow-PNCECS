@@ -6829,10 +6829,15 @@ def view_request(request_id):
             "_attachment_action_code": action if attachment_activity else None,
         }
         user_audit.append(event)
-        story_events.append({
-            key: value for key, value in event.items()
-            if not key.startswith("_")
-        })
+        # The step cards already show the normal approve/reject result and
+        # its actor.  Keep the separate story section focused on everything
+        # that happens around the steps (comments, mentions, files, reopen,
+        # redirects, and other workflow events) so the reader stays clear.
+        if action not in {"STEP_APPROVED", "STEP_REJECTED"}:
+            story_events.append({
+                key: value for key, value in event.items()
+                if not key.startswith("_")
+            })
 
     # A single upload request can contain many files.  Keep one readable card
     # in the normal activity feed while preserving the individual AuditLog

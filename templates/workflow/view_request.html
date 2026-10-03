@@ -759,6 +759,29 @@
                 {% endif %}
               </div>
             {% endfor %}
+            {% if story_events %}
+              <div class="workflow-story-activity-card workflow-story-only border rounded-3 bg-white p-3 mt-3" data-story-kind="events">
+                <div class="fw-semibold text-primary mb-3"><i class="bi bi-clock-history"></i> سجل الأحداث والتعليقات</div>
+                <div class="vstack gap-3">
+                  {% for event in story_events %}
+                    <div class="border-start border-3 border-primary ps-3">
+                      <div class="d-flex flex-wrap align-items-center gap-2">
+                        <span class="badge text-bg-primary">{{ event.action }}</span>
+                        <strong>{{ event.author }}</strong>
+                        <time class="small text-muted">{{ event.created_at|local_datetime if event.created_at else '' }}</time>
+                      </div>
+                      {% if event.note %}<div class="mt-2 text-break" style="white-space: pre-wrap">{{ event.note }}</div>{% endif %}
+                      {% if event.attachment_file_id %}
+                        <div class="mt-2">
+                          <a class="btn btn-sm btn-outline-primary" target="_blank" href="{{ url_for('workflow.preview_workflow_attachment', file_id=event.attachment_file_id) }}"><i class="bi bi-paperclip"></i> فتح المرفق</a>
+                          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('workflow.download_workflow_attachment', file_id=event.attachment_file_id) }}">تنزيل</a>
+                        </div>
+                      {% endif %}
+                    </div>
+                  {% endfor %}
+                </div>
+              </div>
+            {% endif %}
           </div>
         {% else %}
           <div class="text-muted">لا يوجد مسار منشأ لهذا الطلب.</div>
@@ -1590,30 +1613,6 @@
   });
 </script>
 
-{# قصة المسار تقرأ كل حدث موثق، لا بطاقات الخطوات فقط. #}
-<div id="workflowStoryEvents" class="d-none">
-  {% for event in story_events or [] %}
-    <article class="workflow-story-card card border-0 shadow-sm mb-3" data-story-kind="{{ event.action }}">
-      <div class="card-body p-4">
-        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-          <span class="badge text-bg-primary"><i class="bi bi-activity"></i> {{ event.action }}</span>
-          <time class="small text-muted">{{ event.created_at|local_datetime if event.created_at else '' }}</time>
-        </div>
-        <div class="fw-semibold mb-2"><i class="bi bi-person-circle text-primary"></i> {{ event.author }}</div>
-        {% if event.note %}
-          <div class="border rounded-3 bg-light p-3 text-break" style="white-space: pre-wrap">{{ event.note }}</div>
-        {% endif %}
-        {% if event.attachment_file_id %}
-          <a class="btn btn-sm btn-outline-primary mt-3" target="_blank" href="{{ url_for('workflow.preview_workflow_attachment', file_id=event.attachment_file_id) }}"><i class="bi bi-paperclip"></i> فتح المرفق</a>
-          <a class="btn btn-sm btn-outline-secondary mt-3" href="{{ url_for('workflow.download_workflow_attachment', file_id=event.attachment_file_id) }}">تنزيل</a>
-        {% endif %}
-      </div>
-    </article>
-  {% else %}
-    <div class="workflow-story-card alert alert-info mb-0" data-story-kind="مسار">لا توجد أحداث موثقة في هذا المسار حتى الآن.</div>
-  {% endfor %}
-</div>
-
 {# قارئ موجز يحوّل المسار إلى قصة خطوة بخطوة دون فتح صفحة جديدة #}
 <div class="modal fade workflow-story-modal" id="workflowStoryModal" tabindex="-1" aria-labelledby="workflowStoryModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
@@ -1621,7 +1620,7 @@
       <div class="modal-header">
         <div>
           <h5 class="modal-title" id="workflowStoryModalLabel"><i class="bi bi-signpost-split"></i> قصة المسار</h5>
-          <div class="small text-muted">كل ما حدث على المسار بالترتيب: إجراءات، تعليقات، منشن، مرفقات وإعادة فتح.</div>
+          <div class="small text-muted">استعرض الخطوات أولًا، ثم سجل التعليقات والمنشن والمرفقات وإعادة فتح المسار.</div>
         </div>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
       </div>
@@ -1643,7 +1642,7 @@
 <script>
 (() => {
   const modal = document.getElementById('workflowStoryModal');
-  const source = document.getElementById('workflowStoryEvents');
+  const source = document.getElementById('workflowRouteSteps');
   if (!modal || !source) return;
   const stage = document.getElementById('workflowStoryStage');
   const counter = document.getElementById('workflowStoryCounter');
@@ -1665,9 +1664,15 @@
     if (!cards.length) return;
     active = Math.max(0, Math.min(index, cards.length - 1));
     cards.forEach((card, i) => card.classList.toggle('workflow-story-active', i === active));
-    const kind = cards[active].dataset.storyKind || 'حدث';
-    counter.textContent = `حدث ${active + 1} من ${cards.length}`;
-    label.textContent = kind;
+    const kind = cards[active].dataset.storyKind || 'step';
+    if (kind === 'events') {
+      counter.textContent = 'سجل الأحداث والتعليقات';
+      label.textContent = 'أحداث المسار';
+    } else {
+      const order = cards[active].dataset.stepOrder || active + 1;
+      counter.textContent = `خطوة ${active + 1} من ${cards.length - (cards.some(card => card.dataset.storyKind === 'events') ? 1 : 0)}`;
+      label.textContent = `الخطوة ${order}`;
+    }
     progress.style.width = `${((active + 1) / cards.length) * 100}%`;
     next.disabled = active === 0;
     prev.disabled = active === cards.length - 1;
@@ -1677,9 +1682,11 @@
       modal.dataset.stepOrder = '';
     }
     stage.replaceChildren();
-    cards = [...source.querySelectorAll('.workflow-story-card')].map(cleanClone);
+    cards = [...source.querySelectorAll('.workflow-step-card, .workflow-story-activity-card')].map(cleanClone);
     cards.forEach(card => stage.appendChild(card));
-    show(cards.length - 1);
+    const requested = Number(modal.dataset.stepOrder || source.dataset.currentStep || 0);
+    const matching = cards.findIndex(card => Number(card.dataset.stepOrder) === requested);
+    show(matching >= 0 ? matching : 0);
   });
   next.addEventListener('click', () => show(active - 1));
   prev.addEventListener('click', () => show(active + 1));
