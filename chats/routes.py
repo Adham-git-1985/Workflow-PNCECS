@@ -144,9 +144,23 @@ def typing(conversation_id):
 def typing_status(conversation_id):
     if not _participant(conversation_id):
         abort(403)
-    cutoff = datetime.utcnow() - timedelta(seconds=5)
-    rows = ChatTyping.query.filter(ChatTyping.conversation_id == conversation_id, ChatTyping.user_id != current_user.id, ChatTyping.updated_at >= cutoff).all()
-    return jsonify({"users": [row.user.full_name for row in rows]})
+    # Do not rely on a lazy relationship here: this endpoint is polled while
+    # another user is typing, so it must work even on an already-running app
+    # process that loaded the older ChatTyping model definition.
+    cutoff = datetime.utcnow() - timedelta(seconds=12)
+    users = (
+        User.query
+        .join(ChatTyping, ChatTyping.user_id == User.id)
+        .filter(
+            ChatTyping.conversation_id == conversation_id,
+            ChatTyping.user_id != current_user.id,
+            ChatTyping.updated_at >= cutoff,
+        )
+        .all()
+    )
+    response = jsonify({"users": [user.full_name for user in users]})
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
 
 
 @chats_bp.route("/<int:conversation_id>/mute", methods=["POST"])
@@ -336,13 +350,15 @@ def message_updates(conversation_id):
         membership.last_read_at = datetime.utcnow()
         db.session.commit()
     last_id = max([after_id, *[row.id for row in rows]])
-    return jsonify({
+    response = jsonify({
         "messages": [
             {"id": row.id, "deleted": bool(row.is_deleted), "html": _message_fragment(conversation, row)}
             for row in rows
         ],
         "last_id": last_id,
     })
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
 
 
 @chats_bp.route("/<int:conversation_id>", methods=["GET", "POST"])
