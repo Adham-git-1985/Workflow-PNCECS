@@ -39,6 +39,18 @@ def _direct_conversation(other_user_id):
             .first())
 
 
+def _unread_count(user_id):
+    rows = ChatParticipant.query.filter_by(user_id=user_id).all()
+    total = 0
+    for row in rows:
+        query = ChatMessage.query.filter(ChatMessage.conversation_id == row.conversation_id, ChatMessage.sender_id != user_id)
+        if row.last_read_at:
+            query = query.filter(ChatMessage.created_at > row.last_read_at)
+        if query.first():
+            total += 1
+    return total
+
+
 @chats_bp.route("/")
 @login_required
 @chat_access_required
@@ -48,7 +60,14 @@ def inbox():
         .order_by(ChatConversation.updated_at.desc()).all())
     users = User.query.order_by(User.name.asc(), User.email.asc()).all()
     eligible_users = [u for u in users if u.id != current_user.id and u.has_perm(CHAT_ACCESS)]
-    return render_template("chats/inbox.html", conversations=conversations, eligible_users=eligible_users)
+    return render_template("chats/inbox.html", conversations=conversations, eligible_users=eligible_users, unread_count=_unread_count(current_user.id))
+
+
+@chats_bp.route("/unread-count")
+@login_required
+@chat_access_required
+def unread_count():
+    return jsonify({"count": _unread_count(current_user.id)})
 
 
 @chats_bp.route("/group", methods=["POST"])
@@ -159,7 +178,11 @@ def conversation(conversation_id):
     membership.last_read_at = datetime.utcnow()
     db.session.commit()
     messages = ChatMessage.query.filter_by(conversation_id=conversation_id).order_by(ChatMessage.created_at.asc()).all()
-    return render_template("chats/conversation.html", conversation=conversation, messages=messages)
+    read_by_all = {
+        message.id: all(p.user_id == message.sender_id or (p.last_read_at and p.last_read_at >= message.created_at) for p in conversation.participants)
+        for message in messages if message.sender_id == current_user.id
+    }
+    return render_template("chats/conversation.html", conversation=conversation, messages=messages, read_by_all=read_by_all)
 
 
 @chats_bp.route("/attachment/<int:attachment_id>")

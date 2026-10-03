@@ -259,6 +259,24 @@ def get_unread_messages_count(user_id):
 app.jinja_env.globals["get_unread_messages_count"] = get_unread_messages_count
 
 
+def get_unread_chats_count(user_id):
+    try:
+        from models import ChatMessage, ChatParticipant
+        total = 0
+        for row in ChatParticipant.query.filter_by(user_id=user_id).all():
+            query = ChatMessage.query.filter(ChatMessage.conversation_id == row.conversation_id, ChatMessage.sender_id != user_id)
+            if row.last_read_at:
+                query = query.filter(ChatMessage.created_at > row.last_read_at)
+            if query.first():
+                total += 1
+        return total
+    except Exception:
+        return 0
+
+
+app.jinja_env.globals["get_unread_chats_count"] = get_unread_chats_count
+
+
 # تأكيد وجود instance
 os.makedirs(app.instance_path, exist_ok=True)
 

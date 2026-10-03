@@ -217,6 +217,7 @@
         <a href="{{ url_for('chats.inbox') }}"
            class="{% if request.path.startswith('/chats') %}active{% endif %}">
             <i class="bi bi-chat-dots-fill"></i> المحادثات
+            {% if unread_chats|default(0) > 0 %}<span class="badge bg-danger ms-2">{{ unread_chats }}</span>{% endif %}
         </a>
         {% endif %}
 
