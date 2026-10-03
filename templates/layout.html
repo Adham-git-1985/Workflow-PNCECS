@@ -67,6 +67,13 @@
                 </span>
             </a>
 
+            {% if can_open_chats|default(false) %}
+            <a href="{{ url_for('chats.inbox') }}" class="nav-link position-relative text-white p-0" title="المحادثات" aria-label="المحادثات">
+                <i class="bi bi-chat-dots-fill fs-5"></i>
+                {% if unread_chats|default(0) > 0 %}<span class="badge bg-danger position-absolute top-0 start-100 translate-middle">{{ unread_chats }}</span>{% endif %}
+            </a>
+            {% endif %}
+
             <button type="button"
                     id="notification-sound-toggle"
                     class="btn btn-outline-light btn-sm no-print"
