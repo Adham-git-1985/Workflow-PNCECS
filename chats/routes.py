@@ -9,7 +9,7 @@ from flask_login import current_user, login_required
 from sqlalchemy import and_, func, or_
 
 from extensions import db
-from models import AuditLog, ChatAttachment, ChatConversation, ChatMessage, ChatParticipant, ChatTyping, User, WorkflowInstance, WorkflowStepTask, WorkflowRequest
+from models import AuditLog, ChatAttachment, ChatConversation, ChatMessage, ChatParticipant, ChatTyping, User, UserPermission, WorkflowInstance, WorkflowStepTask, WorkflowRequest
 from utils.events import emit_event
 from utils.file_uploads import clean_original_filename, is_allowed_attachment, is_safe_inline_mimetype, random_storage_name
 from . import chats_bp
@@ -29,6 +29,10 @@ def chat_access_required(view):
 
 def _participant(conversation_id):
     return ChatParticipant.query.filter_by(conversation_id=conversation_id, user_id=current_user.id).first()
+
+
+def _explicit_chat_user_ids():
+    return {uid for (uid,) in db.session.query(UserPermission.user_id).filter(UserPermission.key == CHAT_ACCESS, UserPermission.is_allowed.is_(True)).all()}
 
 
 def _direct_conversation(other_user_id):
@@ -65,7 +69,8 @@ def inbox():
         matching_ids = db.session.query(ChatMessage.conversation_id).filter(ChatMessage.body.ilike(needle))
         conversations = [c for c in conversations if c.id in set(cid for (cid,) in matching_ids.all()) or search.lower() in (c.title or "").lower()]
     users = User.query.order_by(User.name.asc(), User.email.asc()).all()
-    eligible_users = [u for u in users if u.id != current_user.id and u.has_perm(CHAT_ACCESS)]
+    explicit_ids = _explicit_chat_user_ids()
+    eligible_users = [u for u in users if u.id != current_user.id and u.id in explicit_ids]
     return render_template("chats/inbox.html", conversations=conversations, eligible_users=eligible_users, unread_count=_unread_count(current_user.id), q=search)
 
 
@@ -152,7 +157,8 @@ def update_members(conversation_id):
     title = (request.form.get("title") or "").strip()[:200]
     ids.add(current_user.id)
     users = User.query.filter(User.id.in_(ids)).all()
-    if any(not u.has_perm(CHAT_ACCESS) for u in users):
+    explicit_ids = _explicit_chat_user_ids()
+    if any(u.id not in explicit_ids and u.id != current_user.id for u in users):
         abort(403)
     ChatParticipant.query.filter_by(conversation_id=conversation_id).delete(synchronize_session=False)
     db.session.add_all([ChatParticipant(conversation_id=conversation_id, user_id=u.id) for u in users])
@@ -195,7 +201,8 @@ def start_group():
         ids = set()
     ids.add(current_user.id)
     users = User.query.filter(User.id.in_(ids)).all()
-    if len(users) < 3 or any(not user.has_perm(CHAT_ACCESS) for user in users):
+    explicit_ids = _explicit_chat_user_ids()
+    if len(users) < 3 or any(user.id not in explicit_ids and user.id != current_user.id for user in users):
         flash("اختر مستخدمين مخوّلين اثنين على الأقل للمجموعة.", "warning")
         return redirect(url_for("chats.inbox"))
     conversation = ChatConversation(title=title or "مجموعة جديدة", kind="GROUP", created_by_id=current_user.id)
@@ -210,7 +217,7 @@ def start_group():
 @chat_access_required
 def start_direct(user_id):
     other = User.query.get_or_404(user_id)
-    if other.id == current_user.id or not other.has_perm(CHAT_ACCESS):
+    if other.id == current_user.id or other.id not in _explicit_chat_user_ids():
         abort(403)
     conversation = _direct_conversation(other.id)
     if not conversation:
@@ -240,7 +247,7 @@ def open_workflow_chat(request_id):
         instance = WorkflowInstance.query.filter_by(request_id=req.id).first()
         if instance:
             participant_ids.update(uid for (uid,) in db.session.query(WorkflowStepTask.assignee_user_id).filter_by(instance_id=instance.id).all() if uid)
-        allowed_ids = {u.id for u in User.query.filter(User.id.in_(participant_ids)).all() if u.has_perm(CHAT_ACCESS)}
+        allowed_ids = {u.id for u in User.query.filter(User.id.in_(participant_ids)).all() if u.id in _explicit_chat_user_ids()}
         allowed_ids.add(current_user.id)
         conversation = ChatConversation(title=f"محادثة الطلب #{req.id}", kind="WORKFLOW", workflow_request_id=req.id, created_by_id=current_user.id)
         db.session.add(conversation)
@@ -296,7 +303,8 @@ def conversation(conversation_id):
         message.id: all(p.user_id == message.sender_id or (p.last_read_at and p.last_read_at >= message.created_at) for p in conversation.participants)
         for message in messages if message.sender_id == current_user.id
     }
-    return render_template("chats/conversation.html", conversation=conversation, messages=messages, read_by_all=read_by_all, is_muted=membership.is_muted, is_pinned=membership.is_pinned, can_manage_group=(conversation.kind == "GROUP" and conversation.created_by_id == current_user.id), eligible_users=[u for u in User.query.order_by(User.name.asc()).all() if u.id != current_user.id and u.has_perm(CHAT_ACCESS)])
+    explicit_ids = _explicit_chat_user_ids()
+    return render_template("chats/conversation.html", conversation=conversation, messages=messages, read_by_all=read_by_all, is_muted=membership.is_muted, is_pinned=membership.is_pinned, can_manage_group=(conversation.kind == "GROUP" and conversation.created_by_id == current_user.id), eligible_users=[u for u in User.query.order_by(User.name.asc()).all() if u.id != current_user.id and u.id in explicit_ids])
 
 
 @chats_bp.route("/attachment/<int:attachment_id>")
