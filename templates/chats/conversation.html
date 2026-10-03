@@ -234,7 +234,15 @@
         if (!node) return;
         const existing = list.querySelector(`.chat-message[data-message-id="${Number(item.id)}"]`);
         if (existing) existing.replaceWith(node);
-        else { list.append(node); appended = true; }
+        else {
+          list.append(node);
+          appended = true;
+          if (!item.deleted && node.classList.contains('theirs')) {
+            window.dispatchEvent(new CustomEvent('masar:chat-message', {
+              detail: { messageId: Number(item.id), conversationId },
+            }));
+          }
+        }
       });
       const empty = document.getElementById('emptyConversation');
       if (empty && (Array.isArray(data.messages) && data.messages.length)) empty.remove();
@@ -253,7 +261,7 @@
     if (detail.targetType === 'ChatConversation' && Number(detail.targetId) === conversationId) refreshMessages();
   });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshMessages(); refreshTyping(); } });
-  window.setInterval(refreshMessages, 2500);
+  window.setInterval(refreshMessages, 1200);
   window.setInterval(refreshTyping, 1300);
   window.addEventListener('beforeunload', stopTyping);
   refreshMessages();

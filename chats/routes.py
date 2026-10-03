@@ -116,6 +116,52 @@ def unread_count():
     return jsonify({"count": _unread_count(current_user.id)})
 
 
+@chats_bp.route("/alerts")
+@login_required
+@chat_access_required
+def chat_alerts():
+    """Return incoming chat event ids for the private chat sound channel.
+
+    This deliberately reads from chat participation rather than the general
+    Notification table, so chat messages never enter Masar's notification
+    centre or use its notification sound.
+    """
+    after_id = request.args.get("after_id", type=int)
+    incoming = (
+        db.session.query(ChatMessage.id, ChatMessage.conversation_id)
+        .join(ChatParticipant, ChatParticipant.conversation_id == ChatMessage.conversation_id)
+        .filter(
+            ChatParticipant.user_id == current_user.id,
+            ChatParticipant.is_muted.is_(False),
+            ChatMessage.sender_id != current_user.id,
+            ChatMessage.is_deleted.is_(False),
+        )
+    )
+
+    events = []
+    if after_id is None:
+        # The first request establishes a cursor and must not sound old
+        # messages when a user first opens a page.
+        cursor = incoming.with_entities(func.max(ChatMessage.id)).scalar() or 0
+    else:
+        rows = (
+            incoming
+            .filter(ChatMessage.id > max(int(after_id), 0))
+            .order_by(ChatMessage.id.asc())
+            .limit(50)
+            .all()
+        )
+        events = [
+            {"message_id": int(message_id), "conversation_id": int(conversation_id)}
+            for message_id, conversation_id in rows
+        ]
+        cursor = events[-1]["message_id"] if events else max(int(after_id), 0)
+
+    response = jsonify({"cursor": int(cursor), "events": events})
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
+
+
 @chats_bp.route("/<int:conversation_id>/typing", methods=["POST"])
 @login_required
 @chat_access_required
@@ -392,9 +438,10 @@ def conversation(conversation_id):
             if size > MAX_ATTACHMENT_BYTES:
                 target.unlink(missing_ok=True); db.session.rollback(); flash("حجم المرفق يتجاوز 25 م.ب.", "danger"); return redirect(url_for("chats.conversation", conversation_id=conversation_id))
             db.session.add(ChatAttachment(message_id=msg.id, original_name=original_name, stored_name=stored_name, mime_type=(upload.mimetype or mimetypes.guess_type(original_name)[0] or "application/octet-stream")[:120], file_size=size))
-        for row in conversation.participants:
-            if row.user_id != current_user.id and not row.is_muted:
-                emit_event(actor_id=current_user.id, action="CHAT_MESSAGE_SENT", message="رسالة محادثة جديدة", target_type="ChatConversation", target_id=conversation_id, notify_user_id=row.user_id, level="INFO", auto_commit=False)
+        # Chat delivery is intentionally separate from the global Notification
+        # table.  Recipients receive the private chat sound/event through the
+        # chat alerts endpoint, while the header chat badge reflects unread
+        # conversations without polluting Masar's notification centre.
         typing_row = ChatTyping.query.filter_by(conversation_id=conversation_id, user_id=current_user.id).first()
         if typing_row:
             db.session.delete(typing_row)

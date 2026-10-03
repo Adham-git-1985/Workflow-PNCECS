@@ -294,8 +294,15 @@
 
 {% if can_open_chats|default(false) %}<script>
 (function(){
-  function refreshChatUnreadBadge(){fetch('{{ url_for("chats.unread_count") }}',{headers:{'X-Requested-With':'XMLHttpRequest'}}).then(function(r){return r.json()}).then(function(d){var b=document.getElementById('chat-unread-badge');if(!b)return;b.textContent=d.count||'';b.style.display=d.count?'inline-block':'none'}).catch(function(){})}
-  setInterval(refreshChatUnreadBadge,5000);
+  var unreadUrl='{{ url_for("chats.unread_count") }}';
+  var alertsUrl='{{ url_for("chats.chat_alerts") }}';
+  var chatCursor=null;
+  function refreshChatUnreadBadge(){fetch(unreadUrl,{credentials:'same-origin',cache:'no-store',headers:{'X-Requested-With':'XMLHttpRequest'}}).then(function(r){return r.json()}).then(function(d){var b=document.getElementById('chat-unread-badge');if(!b)return;b.textContent=d.count||'';b.style.display=d.count?'inline-block':'none'}).catch(function(){})}
+  function pollChatAlerts(){var url=new URL(alertsUrl,window.location.origin);if(chatCursor!==null)url.searchParams.set('after_id',String(chatCursor));fetch(url.toString(),{credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'}}).then(function(r){if(!r.ok)throw new Error('chat alerts unavailable');return r.json()}).then(function(data){if(chatCursor===null){chatCursor=Number(data.cursor||0);return}(Array.isArray(data.events)?data.events:[]).forEach(function(item){window.dispatchEvent(new CustomEvent('masar:chat-message',{detail:{messageId:Number(item.message_id||0),conversationId:Number(item.conversation_id||0)}}))});chatCursor=Number(data.cursor||chatCursor||0)}).catch(function(){})}
+  refreshChatUnreadBadge();
+  pollChatAlerts();
+  setInterval(refreshChatUnreadBadge,2500);
+  setInterval(pollChatAlerts,2500);
   window.addEventListener('masar:notification',function(event){var detail=event.detail||{};if(detail.targetType==='ChatConversation')refreshChatUnreadBadge()});
 })();
 </script>{% endif %}
@@ -323,7 +330,7 @@
 <script src="{{ url_for('static', filename='js/searchable_select.js') }}?v=20260816-bounded1"></script>
 
 <script src="{{ url_for('static', filename='js/responsive_helpers.js') }}?v=20260216r1"></script>
-    <script src="{{ url_for('static', filename='js/notification_alerts.js') }}?v=20261003-chat-targets1"></script>
+    <script src="{{ url_for('static', filename='js/notification_alerts.js') }}?v=20261003-chat-sound1"></script>
 <script src="{{ url_for('static', filename='js/chat_assistant.js') }}?v=20260930-language-tools"></script>
 {% if current_user.is_authenticated and not hide_shell %}
 <script src="{{ url_for('static', filename='js/user_presence.js') }}?v=20260827r1"

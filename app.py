@@ -2056,8 +2056,37 @@ def _ensure_runtime_schema():
 # We allow scripts (like init_db.py) to skip this best-effort runtime schema sync
 # by setting SKIP_RUNTIME_SCHEMA=1.
 app.extensions["runtime_schema_sync"] = _ensure_runtime_schema
+
+
+def _hide_legacy_chat_message_notifications():
+    """Keep historical chat-message alerts out of Masar's notification inbox.
+
+    Chat messages now use their own private delivery and sound channel.  Older
+    rows are retained for database integrity, but are no longer visible or
+    counted as general Masar notifications.
+    """
+    with app.app_context():
+        try:
+            changed = (
+                Notification.query
+                .filter(
+                    Notification.target_type == "ChatConversation",
+                    Notification.message == "رسالة محادثة جديدة",
+                    Notification.is_visible.is_(True),
+                )
+                .update({Notification.is_visible: False}, synchronize_session=False)
+            )
+            db.session.commit()
+            if changed:
+                UNREAD_CACHE.clear()
+        except Exception:
+            db.session.rollback()
+            logger.exception("Unable to hide legacy chat-message notifications")
+
+
 if should_run_runtime_schema_sync():
     _ensure_runtime_schema()
+    _hide_legacy_chat_message_notifications()
 login_manager.init_app(app)
 login_manager.login_view = "login"
 migrate = Migrate(app, db)

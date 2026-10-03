@@ -26,6 +26,7 @@
       .toLowerCase();
   const userId = toggleButton.dataset.userId || "anonymous";
   const lastEventStorageKey = `masar.notification.last-event.v1.${userId}.${notificationSource}`;
+  const lastChatEventStorageKey = `masar.chat.last-event.v1.${userId}`;
   const ALERT_TITLE = notificationSource === "portal"
     ? "🔔 تنبيه جديد - البوابة الإدارية"
     : "🔔 تنبيه جديد - مسار";
@@ -127,6 +128,24 @@
     return true;
   }
 
+  async function playChatSound(queueWhenBlocked) {
+    if (!soundEnabled) return false;
+    if (!(await prepareAudio())) {
+      // Keep a normal Masar alert as the higher-priority queued sound.
+      if (queueWhenBlocked !== false && pendingTone !== "alert") pendingTone = "chat";
+      return false;
+    }
+
+    pendingTone = null;
+    const context = getAudioContext();
+    // A softer, lower three-note ping: deliberately distinct from Masar's
+    // high two-note general-notification sound.
+    addTone(context, 523.25, 0, 0.09, 0.11);
+    addTone(context, 659.25, 0.11, 0.10, 0.11);
+    addTone(context, 783.99, 0.23, 0.14, 0.10);
+    return true;
+  }
+
   async function playConfirmationSound(queueWhenBlocked) {
     if (!soundEnabled) return false;
     if (!(await prepareAudio())) {
@@ -149,6 +168,8 @@
     pendingTone = null;
     if (tone === "alert") {
       playAlertSound(false);
+    } else if (tone === "chat") {
+      playChatSound(false);
     } else if (tone === "confirmation") {
       playConfirmationSound(false);
     }
@@ -313,6 +334,18 @@
     return true;
   }
 
+  function claimChatMessage(messageId) {
+    const id = Number(messageId || 0);
+    if (!id) return true;
+
+    try {
+      const previous = Number(window.localStorage.getItem(lastChatEventStorageKey) || 0);
+      if (id <= previous) return false;
+      window.localStorage.setItem(lastChatEventStorageKey, String(id));
+    } catch (_) {}
+    return true;
+  }
+
   function handleNotificationData(data) {
     // Keep the browser-side guard as a second line of defence in case an old
     // server instance or a cached response still returns both sources.
@@ -437,6 +470,14 @@
     playAlertSound(true);
     startTitleFlash();
     showToast(detail, false);
+  });
+
+  // Chat delivery is private and intentionally does not create a Masar
+  // notification, toast, or bell badge.  It has its own recognisable sound.
+  window.addEventListener("masar:chat-message", function (event) {
+    const detail = event.detail || {};
+    if (!claimChatMessage(detail.messageId)) return;
+    playChatSound(true);
   });
 
   document.addEventListener("visibilitychange", function () {
