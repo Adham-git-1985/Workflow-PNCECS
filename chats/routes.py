@@ -9,7 +9,7 @@ from flask_login import current_user, login_required
 from sqlalchemy import and_, func, or_
 
 from extensions import db
-from models import ChatAttachment, ChatConversation, ChatMessage, ChatParticipant, User, WorkflowInstance, WorkflowStepTask, WorkflowRequest
+from models import AuditLog, ChatAttachment, ChatConversation, ChatMessage, ChatParticipant, User, WorkflowInstance, WorkflowStepTask, WorkflowRequest
 from utils.events import emit_event
 from utils.file_uploads import clean_original_filename, is_allowed_attachment, is_safe_inline_mimetype, random_storage_name
 from . import chats_bp
@@ -109,6 +109,7 @@ def leave_group(conversation_id):
     if not participant or conversation.kind != "GROUP":
         abort(403)
     db.session.delete(participant)
+    db.session.add(AuditLog(user_id=current_user.id, action="CHAT_MEMBER_LEFT", target_type="ChatConversation", target_id=conversation_id, note=f"User {current_user.id} left group"))
     db.session.commit()
     return redirect(url_for("chats.inbox"))
 
@@ -120,6 +121,7 @@ def update_members(conversation_id):
     conversation = ChatConversation.query.get_or_404(conversation_id)
     if conversation.kind != "GROUP" or conversation.created_by_id != current_user.id:
         abort(403)
+    old_ids = {p.user_id for p in conversation.participants}
     ids = {int(v) for v in request.form.getlist("user_ids") if v.isdigit()}
     title = (request.form.get("title") or "").strip()[:200]
     ids.add(current_user.id)
@@ -130,6 +132,12 @@ def update_members(conversation_id):
     db.session.add_all([ChatParticipant(conversation_id=conversation_id, user_id=u.id) for u in users])
     if title:
         conversation.title = title
+    new_ids = {u.id for u in users}
+    for uid in sorted(new_ids - old_ids):
+        emit_event(actor_id=current_user.id, action="CHAT_MEMBER_ADDED", message="تمت إضافتك إلى مجموعة محادثة", target_type="ChatConversation", target_id=conversation_id, notify_user_id=uid, level="INFO", auto_commit=False)
+    for uid in sorted(old_ids - new_ids):
+        emit_event(actor_id=current_user.id, action="CHAT_MEMBER_REMOVED", message="تمت إزالتك من مجموعة محادثة", target_type="ChatConversation", target_id=conversation_id, notify_user_id=uid, level="INFO", auto_commit=False)
+    db.session.add(AuditLog(user_id=current_user.id, action="CHAT_MEMBERS_UPDATED", target_type="ChatConversation", target_id=conversation_id, note=f"members={sorted(new_ids)}"))
     db.session.commit()
     return redirect(url_for("chats.conversation", conversation_id=conversation_id))
 
@@ -144,6 +152,7 @@ def delete_group(conversation_id):
     if conversation.kind != "GROUP":
         abort(400)
     db.session.delete(conversation)
+    db.session.add(AuditLog(user_id=current_user.id, action="CHAT_GROUP_DELETED", target_type="ChatConversation", target_id=conversation_id, note="Administrative group deletion"))
     db.session.commit()
     flash("تم حذف المجموعة إداريًا.", "success")
     return redirect(url_for("chats.inbox"))
