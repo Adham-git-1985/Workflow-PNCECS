@@ -6,7 +6,7 @@ import uuid
 
 from flask import abort, current_app, flash, jsonify, redirect, render_template, request, send_from_directory, url_for
 from flask_login import current_user, login_required
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, or_
 
 from extensions import db
 from models import ChatAttachment, ChatConversation, ChatMessage, ChatParticipant, User, WorkflowInstance, WorkflowStepTask, WorkflowRequest
@@ -55,12 +55,17 @@ def _unread_count(user_id):
 @login_required
 @chat_access_required
 def inbox():
+    search = (request.args.get("q") or "").strip()
     conversations = (ChatConversation.query.join(ChatParticipant)
         .filter(ChatParticipant.user_id == current_user.id)
         .order_by(ChatConversation.updated_at.desc()).all())
+    if search:
+        needle = f"%{search}%"
+        matching_ids = db.session.query(ChatMessage.conversation_id).filter(ChatMessage.body.ilike(needle))
+        conversations = [c for c in conversations if c.id in set(cid for (cid,) in matching_ids.all()) or search.lower() in (c.title or "").lower()]
     users = User.query.order_by(User.name.asc(), User.email.asc()).all()
     eligible_users = [u for u in users if u.id != current_user.id and u.has_perm(CHAT_ACCESS)]
-    return render_template("chats/inbox.html", conversations=conversations, eligible_users=eligible_users, unread_count=_unread_count(current_user.id))
+    return render_template("chats/inbox.html", conversations=conversations, eligible_users=eligible_users, unread_count=_unread_count(current_user.id), q=search)
 
 
 @chats_bp.route("/unread-count")
@@ -68,6 +73,18 @@ def inbox():
 @chat_access_required
 def unread_count():
     return jsonify({"count": _unread_count(current_user.id)})
+
+
+@chats_bp.route("/<int:conversation_id>/mute", methods=["POST"])
+@login_required
+@chat_access_required
+def toggle_mute(conversation_id):
+    participant = _participant(conversation_id)
+    if not participant:
+        abort(403)
+    participant.is_muted = not participant.is_muted
+    db.session.commit()
+    return redirect(url_for("chats.conversation", conversation_id=conversation_id))
 
 
 @chats_bp.route("/group", methods=["POST"])
@@ -182,7 +199,7 @@ def conversation(conversation_id):
         message.id: all(p.user_id == message.sender_id or (p.last_read_at and p.last_read_at >= message.created_at) for p in conversation.participants)
         for message in messages if message.sender_id == current_user.id
     }
-    return render_template("chats/conversation.html", conversation=conversation, messages=messages, read_by_all=read_by_all)
+    return render_template("chats/conversation.html", conversation=conversation, messages=messages, read_by_all=read_by_all, is_muted=membership.is_muted)
 
 
 @chats_bp.route("/attachment/<int:attachment_id>")
