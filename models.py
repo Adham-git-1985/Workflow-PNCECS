@@ -1440,6 +1440,21 @@ class ChatMessage(db.Model):
 
     conversation = db.relationship("ChatConversation", back_populates="chat_messages")
     sender = db.relationship("User", foreign_keys=[sender_id], lazy="joined")
+    attachments = db.relationship("ChatAttachment", back_populates="message", cascade="all, delete-orphan", lazy="selectin")
+
+
+class ChatAttachment(db.Model):
+    __tablename__ = "chat_attachment"
+
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.Integer, db.ForeignKey("chat_message.id"), nullable=False, index=True)
+    original_name = db.Column(db.String(255), nullable=False)
+    stored_name = db.Column(db.String(255), nullable=False, unique=True)
+    mime_type = db.Column(db.String(120), nullable=True)
+    file_size = db.Column(db.Integer, nullable=False, default=0)
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    message = db.relationship("ChatMessage", back_populates="attachments")
 
 
 class Message(db.Model):

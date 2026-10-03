@@ -1,16 +1,21 @@
 from datetime import datetime
 from functools import wraps
+from pathlib import Path
+import mimetypes
+import uuid
 
-from flask import abort, flash, redirect, render_template, request, url_for
+from flask import abort, current_app, flash, jsonify, redirect, render_template, request, send_from_directory, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import and_, func
 
 from extensions import db
-from models import ChatConversation, ChatMessage, ChatParticipant, User, WorkflowInstance, WorkflowStepTask, WorkflowRequest
+from models import ChatAttachment, ChatConversation, ChatMessage, ChatParticipant, User, WorkflowInstance, WorkflowStepTask, WorkflowRequest
 from utils.events import emit_event
+from utils.file_uploads import clean_original_filename, is_allowed_attachment, is_safe_inline_mimetype, random_storage_name
 from . import chats_bp
 
 CHAT_ACCESS = "CHAT_ACCESS"
+MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 
 def chat_access_required(view):
@@ -44,6 +49,27 @@ def inbox():
     users = User.query.order_by(User.name.asc(), User.email.asc()).all()
     eligible_users = [u for u in users if u.id != current_user.id and u.has_perm(CHAT_ACCESS)]
     return render_template("chats/inbox.html", conversations=conversations, eligible_users=eligible_users)
+
+
+@chats_bp.route("/group", methods=["POST"])
+@login_required
+@chat_access_required
+def start_group():
+    title = (request.form.get("title") or "").strip()[:200]
+    try:
+        ids = {int(v) for v in request.form.getlist("user_ids")}
+    except ValueError:
+        ids = set()
+    ids.add(current_user.id)
+    users = User.query.filter(User.id.in_(ids)).all()
+    if len(users) < 3 or any(not user.has_perm(CHAT_ACCESS) for user in users):
+        flash("اختر مستخدمين مخوّلين اثنين على الأقل للمجموعة.", "warning")
+        return redirect(url_for("chats.inbox"))
+    conversation = ChatConversation(title=title or "مجموعة جديدة", kind="GROUP", created_by_id=current_user.id)
+    db.session.add(conversation); db.session.flush()
+    db.session.add_all([ChatParticipant(conversation_id=conversation.id, user_id=user.id) for user in users])
+    db.session.commit()
+    return redirect(url_for("chats.conversation", conversation_id=conversation.id))
 
 
 @chats_bp.route("/direct/<int:user_id>", methods=["POST"])
@@ -104,12 +130,26 @@ def conversation(conversation_id):
 
     if request.method == "POST":
         body = (request.form.get("body") or "").strip()
-        if not body:
+        uploads = [u for u in request.files.getlist("attachments") if u and u.filename]
+        if not body and not uploads:
             flash("اكتب رسالة أولاً.", "warning")
             return redirect(url_for("chats.conversation", conversation_id=conversation_id))
         msg = ChatMessage(conversation_id=conversation_id, sender_id=current_user.id, body=body)
         conversation.updated_at = datetime.utcnow()
-        db.session.add(msg)
+        db.session.add(msg); db.session.flush()
+        upload_dir = Path(current_app.instance_path) / "uploads" / "chats" / str(msg.id)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        for upload in uploads:
+            original_name = clean_original_filename(upload.filename)
+            if not original_name or not is_allowed_attachment(original_name):
+                db.session.rollback(); abort(400)
+            stored_name = random_storage_name(uuid.uuid4().hex, original_name)
+            target = upload_dir / stored_name
+            upload.save(str(target))
+            size = target.stat().st_size
+            if size > MAX_ATTACHMENT_BYTES:
+                target.unlink(missing_ok=True); db.session.rollback(); flash("حجم المرفق يتجاوز 25 م.ب.", "danger"); return redirect(url_for("chats.conversation", conversation_id=conversation_id))
+            db.session.add(ChatAttachment(message_id=msg.id, original_name=original_name, stored_name=stored_name, mime_type=(upload.mimetype or mimetypes.guess_type(original_name)[0] or "application/octet-stream")[:120], file_size=size))
         for row in conversation.participants:
             if row.user_id != current_user.id and not row.is_muted:
                 emit_event(actor_id=current_user.id, action="CHAT_MESSAGE_SENT", message="رسالة محادثة جديدة", target_type="ChatConversation", target_id=conversation_id, notify_user_id=row.user_id, level="INFO", auto_commit=False)
@@ -120,3 +160,14 @@ def conversation(conversation_id):
     db.session.commit()
     messages = ChatMessage.query.filter_by(conversation_id=conversation_id).order_by(ChatMessage.created_at.asc()).all()
     return render_template("chats/conversation.html", conversation=conversation, messages=messages)
+
+
+@chats_bp.route("/attachment/<int:attachment_id>")
+@login_required
+@chat_access_required
+def download_attachment(attachment_id):
+    attachment = ChatAttachment.query.get_or_404(attachment_id)
+    if not _participant(attachment.message.conversation_id):
+        abort(403)
+    folder = Path(current_app.instance_path) / "uploads" / "chats" / str(attachment.message_id)
+    return send_from_directory(str(folder), attachment.stored_name, as_attachment=not is_safe_inline_mimetype(attachment.mime_type), download_name=attachment.original_name, mimetype=attachment.mime_type or None)
