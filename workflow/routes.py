@@ -6784,6 +6784,11 @@ def view_request(request_id):
     # Keep a separate, uncollapsed representation so no comment, mention,
     # attachment, or reopen event disappears from the story.
     story_events = []
+    step_order_by_id = {
+        int(step.id): int(step.step_order)
+        for step in steps
+        if getattr(step, "id", None) is not None and getattr(step, "step_order", None) is not None
+    }
     for log in audit:
         action = (log.action or "").upper()
         if action in technical_actions:
@@ -6808,12 +6813,25 @@ def view_request(request_id):
             attachment_name = attachment_note
             if attachment_name.startswith("اسم المرفق:"):
                 attachment_name = attachment_name.split(":", 1)[1].strip()
+        event_step_order = None
+        try:
+            target_id = int(getattr(log, "target_id", 0) or 0)
+            if action in {"STEP_APPROVED", "STEP_REJECTED", "WORKFLOW_REOPENED_TO_STEP"}:
+                event_step_order = step_order_by_id.get(target_id)
+            if event_step_order is None:
+                event_step_order, _event_source = _parse_attachment_meta(
+                    getattr(log, "note", None)
+                )
+        except (TypeError, ValueError):
+            event_step_order = None
         event = {
             "id": log.id,
             "action": action_labels.get(action, ui_label(log.action)),
+            "action_code": action,
             "author": audit_author,
             "created_at": log.created_at,
             "note": attachment_note,
+            "step_order": event_step_order,
             "is_workflow_comment": action in {"WORKFLOW_COMMENT", "WORKFLOW_REPLY"},
             "attachment_file_id": (
                 int(log.target_id)
@@ -6829,11 +6847,11 @@ def view_request(request_id):
             "_attachment_action_code": action if attachment_activity else None,
         }
         user_audit.append(event)
-        # The step cards already show the normal approve/reject result and
-        # its actor.  Keep the separate story section focused on everything
-        # that happens around the steps (comments, mentions, files, reopen,
-        # redirects, and other workflow events) so the reader stays clear.
-        if action not in {"STEP_APPROVED", "STEP_REJECTED"}:
+        # The normal step cards already show the initial route decisions.
+        # Additional events become story cards in chronological order.  After
+        # a reopen, later decisions are retained as cards too, so the reader
+        # can see the new round of steps after the reopen event.
+        if action not in {"WORKFLOW_STARTED", "STEP_APPROVED", "STEP_REJECTED"}:
             story_events.append({
                 key: value for key, value in event.items()
                 if not key.startswith("_")
@@ -6844,6 +6862,32 @@ def view_request(request_id):
     # rows above for technical audit, attachment lookup, and deletion safety.
     user_audit = _collapse_attachment_activity_entries(user_audit)
     story_events.reverse()
+    if any(event.get("action_code") == "WORKFLOW_REOPENED_TO_STEP" for event in story_events):
+        post_reopen_decisions = []
+        reopen_seen = False
+        for log in reversed(audit):
+            action_code = (log.action or "").upper()
+            if action_code == "WORKFLOW_REOPENED_TO_STEP":
+                reopen_seen = True
+                continue
+            if not reopen_seen or action_code not in {"STEP_APPROVED", "STEP_REJECTED"}:
+                continue
+            matching = next(
+                (item for item in user_audit if item.get("id") == log.id),
+                None,
+            )
+            if matching:
+                post_reopen_decisions.append({
+                    key: value for key, value in matching.items()
+                    if not key.startswith("_")
+                })
+        story_events.extend(post_reopen_decisions)
+        story_events.sort(
+            key=lambda event: (
+                event.get("created_at") or datetime.min,
+                int(event.get("id") or 0),
+            )
+        )
     if not audit:
         decided_steps = [row for row in steps if getattr(row, "decided_at", None)]
         if decided_steps:
@@ -9258,13 +9302,20 @@ def add_request_note(request_id):
     try:
         # 1) Save note (if any)
         if note:
+            audit_note = note
+            if step_order is not None:
+                # Keep the step context in an internal line.  Display helpers
+                # remove it from the visible comment, while the story reader
+                # can still place the later comment beside its originating
+                # step.
+                audit_note = f"{note}\nمصدر العملية: workflow_comment | step={step_order}"
             db.session.add(AuditLog(
                 request_id=req.id,
                 user_id=working_user.id,
                 action=f"WORKFLOW_{kind}",
                 old_status=req.status,
                 new_status=req.status,
-                note=note,
+                note=audit_note,
                 target_type="WorkflowRequest",
                 target_id=req.id,
             ))
