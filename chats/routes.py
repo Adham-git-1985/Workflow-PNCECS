@@ -9,7 +9,7 @@ from flask_login import current_user, login_required
 from sqlalchemy import and_, func, or_
 
 from extensions import db
-from models import AuditLog, ChatAttachment, ChatConversation, ChatMessage, ChatParticipant, User, WorkflowInstance, WorkflowStepTask, WorkflowRequest
+from models import AuditLog, ChatAttachment, ChatConversation, ChatMessage, ChatParticipant, ChatTyping, User, WorkflowInstance, WorkflowStepTask, WorkflowRequest
 from utils.events import emit_event
 from utils.file_uploads import clean_original_filename, is_allowed_attachment, is_safe_inline_mimetype, random_storage_name
 from . import chats_bp
@@ -74,6 +74,32 @@ def inbox():
 @chat_access_required
 def unread_count():
     return jsonify({"count": _unread_count(current_user.id)})
+
+
+@chats_bp.route("/<int:conversation_id>/typing", methods=["POST"])
+@login_required
+@chat_access_required
+def typing(conversation_id):
+    if not _participant(conversation_id):
+        abort(403)
+    row = ChatTyping.query.filter_by(conversation_id=conversation_id, user_id=current_user.id).first()
+    if not row:
+        row = ChatTyping(conversation_id=conversation_id, user_id=current_user.id)
+        db.session.add(row)
+    row.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@chats_bp.route("/<int:conversation_id>/typing/status")
+@login_required
+@chat_access_required
+def typing_status(conversation_id):
+    if not _participant(conversation_id):
+        abort(403)
+    cutoff = datetime.utcnow() - __import__("datetime").timedelta(seconds=4)
+    rows = ChatTyping.query.filter(ChatTyping.conversation_id == conversation_id, ChatTyping.user_id != current_user.id, ChatTyping.updated_at >= cutoff).all()
+    return jsonify({"users": [row.user.full_name for row in rows]})
 
 
 @chats_bp.route("/<int:conversation_id>/mute", methods=["POST"])

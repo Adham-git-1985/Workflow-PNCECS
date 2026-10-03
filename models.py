@@ -1458,6 +1458,16 @@ class ChatAttachment(db.Model):
     message = db.relationship("ChatMessage", back_populates="attachments")
 
 
+class ChatTyping(db.Model):
+    __tablename__ = "chat_typing"
+
+    id = db.Column(db.Integer, primary_key=True)
+    conversation_id = db.Column(db.Integer, db.ForeignKey("chat_conversation.id"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    __table_args__ = (db.UniqueConstraint("conversation_id", "user_id", name="uq_chat_typing"),)
+
+
 class Message(db.Model):
     __tablename__ = "messages"
 
