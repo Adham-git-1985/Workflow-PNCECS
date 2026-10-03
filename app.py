@@ -381,6 +381,9 @@ def _ensure_runtime_schema():
             else:
                 _add_column_retry("chat_participant", "is_pinned", "BOOLEAN NOT NULL DEFAULT 0")
 
+            if not _col_exists("chat_participant", "last_delivered_at"):
+                _add_column_retry("chat_participant", "last_delivered_at", "DATETIME")
+
             for _chat_notif_col, _chat_notif_type in (("target_type", "TEXT"), ("target_id", "INTEGER")):
                 if not _col_exists("notification", _chat_notif_col):
                     _add_column_retry("notification", _chat_notif_col, _chat_notif_type)

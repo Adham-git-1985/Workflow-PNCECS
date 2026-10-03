@@ -1423,6 +1423,9 @@ class ChatParticipant(db.Model):
     conversation_id = db.Column(db.Integer, db.ForeignKey("chat_conversation.id"), nullable=False, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     joined_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    # Delivery and read are distinct: a participant may have received a
+    # message in the browser without opening its conversation.
+    last_delivered_at = db.Column(db.DateTime, nullable=True)
     last_read_at = db.Column(db.DateTime, nullable=True)
     is_muted = db.Column(db.Boolean, default=False, nullable=False)
     is_pinned = db.Column(db.Boolean, default=False, nullable=False)

@@ -21,7 +21,7 @@
     {% endif %}
 
     <div class="dm-meta">
-      <small class="dm-time"><i class="bi bi-clock"></i> {{ message.created_at|local_datetime }} {% if message.sender_id == current_user.id %}<i class="bi {% if message_read_by_all %}bi-check2-all{% else %}bi-check2{% endif %}"></i>{% endif %}</small>
+      <small class="dm-time"><i class="bi bi-clock"></i> {{ message.created_at|local_datetime }} {% if message.sender_id == current_user.id %}{% set receipt_labels = {'sent': 'تم الإرسال', 'delivered': 'تم الوصول', 'read': 'تمت القراءة'} %}<i class="bi {% if message_receipt_status == 'sent' %}bi-check2{% else %}bi-check2-all{% endif %} message-receipt {{ message_receipt_status }}" data-message-receipt="{{ message.id }}" title="{{ receipt_labels.get(message_receipt_status, 'تم الإرسال') }}" aria-label="{{ receipt_labels.get(message_receipt_status, 'تم الإرسال') }}"></i>{% endif %}</small>
       {% if message.sender_id == current_user.id and not message.is_deleted %}
         <form method="post" action="{{ url_for('chats.delete_message', message_id=message.id) }}" class="message-delete-form">
           <button class="btn btn-sm btn-link p-0 text-reset" title="حذف الرسالة" aria-label="حذف الرسالة" onclick="return confirm('حذف هذه الرسالة لدى جميع المشاركين؟')"><i class="bi bi-trash3"></i></button>

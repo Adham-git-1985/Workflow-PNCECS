@@ -14,6 +14,10 @@
   .dm-bubble.theirs { background:#fff; color:#1f2937; border-bottom-right-radius:4px; }
   .dm-time { display:block; font-size:.78rem; opacity:.85; direction:rtl; }
   .dm-meta { display:flex; align-items:center; justify-content:space-between; gap:.65rem; margin-top:.45rem; }
+  .message-receipt { margin-inline-start:.18rem; opacity:1; }
+  .message-receipt.sent { color:rgba(255,255,255,.88); }
+  .message-receipt.delivered { color:#d1d5db; }
+  .message-receipt.read { color:#5fd2ff; }
   .message-delete-form { opacity:.72; }
   .message-delete-form:hover { opacity:1; }
   .message-deleted { opacity:.76; font-style:italic; min-width:150px; }
@@ -54,7 +58,7 @@
     {% set last_message_id = messages[-1].id if messages else 0 %}
     <div id="messageList" data-last-message-id="{{ last_message_id }}">
       {% for message in messages %}
-        {% set message_read_by_all = read_by_all.get(message.id, false) %}
+        {% set message_receipt_status = receipt_statuses.get(message.id, 'sent') %}
         {% include 'chats/_message.html' %}
       {% else %}
         <div id="emptyConversation" class="text-center text-muted pt-5">ابدأ المحادثة مع {{ direct_peer.full_name if direct_peer else 'المجموعة' }} برسالة بسيطة.</div>
@@ -220,6 +224,16 @@
     template.innerHTML = String(html || '').trim();
     return template.content.firstElementChild;
   }
+  function updateReceipt(messageId, status) {
+    const receipt = list.querySelector(`[data-message-receipt="${Number(messageId)}"]`);
+    if (!receipt) return;
+    const labels = { sent: 'تم الإرسال', delivered: 'تم الوصول', read: 'تمت القراءة' };
+    const normalized = ['sent', 'delivered', 'read'].includes(status) ? status : 'sent';
+    receipt.classList.remove('sent', 'delivered', 'read', 'bi-check2', 'bi-check2-all');
+    receipt.classList.add('message-receipt', normalized, normalized === 'sent' ? 'bi-check2' : 'bi-check2-all');
+    receipt.title = labels[normalized];
+    receipt.setAttribute('aria-label', labels[normalized]);
+  }
   async function refreshMessages() {
     if (updatesInFlight) return;
     updatesInFlight = true;
@@ -243,6 +257,9 @@
             }));
           }
         }
+      });
+      (Array.isArray(data.receipts) ? data.receipts : []).forEach((receipt) => {
+        updateReceipt(receipt.message_id, receipt.status);
       });
       const empty = document.getElementById('emptyConversation');
       if (empty && (Array.isArray(data.messages) && data.messages.length)) empty.remove();

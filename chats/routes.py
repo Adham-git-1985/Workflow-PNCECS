@@ -59,13 +59,56 @@ def _unread_count(user_id):
     return total
 
 
-def _message_read_by_all(conversation, message):
-    """Whether every current recipient has opened this message."""
-    return all(
-        participant.user_id == message.sender_id
-        or (participant.last_read_at and participant.last_read_at >= message.created_at)
+def _message_receipt_status(conversation, message):
+    """Return WhatsApp-style receipt status for the message sender.
+
+    For groups, the status advances only after every other current participant
+    has received/read the message.  Direct conversations therefore map exactly
+    to one tick (sent), two grey ticks (delivered), and two blue ticks (read).
+    """
+    recipients = [
+        participant
         for participant in conversation.participants
+        if participant.user_id != message.sender_id
+    ]
+    if not recipients:
+        return "sent"
+
+    delivered_to_all = all(
+        participant.last_delivered_at
+        and participant.last_delivered_at >= message.created_at
+        for participant in recipients
     )
+    if not delivered_to_all:
+        return "sent"
+
+    read_by_all = all(
+        participant.last_read_at and participant.last_read_at >= message.created_at
+        for participant in recipients
+    )
+    return "read" if read_by_all else "delivered"
+
+
+def _record_delivery_for_current_user(delivered_by_conversation):
+    """Persist the latest message arrival acknowledged by this browser."""
+    if not delivered_by_conversation:
+        return
+
+    memberships = ChatParticipant.query.filter(
+        ChatParticipant.user_id == current_user.id,
+        ChatParticipant.conversation_id.in_(delivered_by_conversation),
+    ).all()
+    changed = False
+    for membership in memberships:
+        delivered_at = delivered_by_conversation.get(membership.conversation_id)
+        if delivered_at and (
+            not membership.last_delivered_at
+            or membership.last_delivered_at < delivered_at
+        ):
+            membership.last_delivered_at = delivered_at
+            changed = True
+    if changed:
+        db.session.commit()
 
 
 def _message_fragment(conversation, message):
@@ -73,7 +116,7 @@ def _message_fragment(conversation, message):
         "chats/_message.html",
         conversation=conversation,
         message=message,
-        message_read_by_all=_message_read_by_all(conversation, message),
+        message_receipt_status=_message_receipt_status(conversation, message),
     )
 
 
@@ -128,7 +171,7 @@ def chat_alerts():
     """
     after_id = request.args.get("after_id", type=int)
     incoming = (
-        db.session.query(ChatMessage.id, ChatMessage.conversation_id)
+        db.session.query(ChatMessage.id, ChatMessage.conversation_id, ChatMessage.created_at)
         .join(ChatParticipant, ChatParticipant.conversation_id == ChatMessage.conversation_id)
         .filter(
             ChatParticipant.user_id == current_user.id,
@@ -141,7 +184,20 @@ def chat_alerts():
     events = []
     if after_id is None:
         # The first request establishes a cursor and must not sound old
-        # messages when a user first opens a page.
+        # messages when a user first opens a page, but it does acknowledge
+        # their delivery to update the sender's receipt correctly.
+        delivered_rows = (
+            db.session.query(ChatMessage.conversation_id, func.max(ChatMessage.created_at))
+            .join(ChatParticipant, ChatParticipant.conversation_id == ChatMessage.conversation_id)
+            .filter(
+                ChatParticipant.user_id == current_user.id,
+                ChatMessage.sender_id != current_user.id,
+                ChatMessage.is_deleted.is_(False),
+            )
+            .group_by(ChatMessage.conversation_id)
+            .all()
+        )
+        _record_delivery_for_current_user(dict(delivered_rows))
         cursor = incoming.with_entities(func.max(ChatMessage.id)).scalar() or 0
     else:
         rows = (
@@ -153,8 +209,14 @@ def chat_alerts():
         )
         events = [
             {"message_id": int(message_id), "conversation_id": int(conversation_id)}
-            for message_id, conversation_id in rows
+            for message_id, conversation_id, _created_at in rows
         ]
+        delivered_by_conversation = {}
+        for _message_id, conversation_id, created_at in rows:
+            previous = delivered_by_conversation.get(conversation_id)
+            if not previous or created_at > previous:
+                delivered_by_conversation[conversation_id] = created_at
+        _record_delivery_for_current_user(delivered_by_conversation)
         cursor = events[-1]["message_id"] if events else max(int(after_id), 0)
 
     response = jsonify({"cursor": int(cursor), "events": events})
@@ -393,15 +455,32 @@ def message_updates(conversation_id):
     # The normal page view records the initial read.  Subsequent short polls
     # only write when a newly delivered, non-deleted message actually arrived.
     if any(row.sender_id != current_user.id and not row.is_deleted for row in rows):
-        membership.last_read_at = datetime.utcnow()
+        received_at = datetime.utcnow()
+        membership.last_delivered_at = received_at
+        membership.last_read_at = received_at
         db.session.commit()
     last_id = max([after_id, *[row.id for row in rows]])
+    receipt_messages = (
+        ChatMessage.query
+        .filter(
+            ChatMessage.conversation_id == conversation_id,
+            ChatMessage.sender_id == current_user.id,
+            ChatMessage.is_deleted.is_(False),
+        )
+        .order_by(ChatMessage.id.desc())
+        .limit(100)
+        .all()
+    )
     response = jsonify({
         "messages": [
             {"id": row.id, "deleted": bool(row.is_deleted), "html": _message_fragment(conversation, row)}
             for row in rows
         ],
         "last_id": last_id,
+        "receipts": [
+            {"message_id": message.id, "status": _message_receipt_status(conversation, message)}
+            for message in receipt_messages
+        ],
     })
     response.headers["Cache-Control"] = "no-store, max-age=0"
     return response
@@ -448,16 +527,18 @@ def conversation(conversation_id):
         db.session.commit()
         return redirect(url_for("chats.conversation", conversation_id=conversation_id))
 
-    membership.last_read_at = datetime.utcnow()
+    opened_at = datetime.utcnow()
+    membership.last_delivered_at = opened_at
+    membership.last_read_at = opened_at
     db.session.commit()
     messages = ChatMessage.query.filter_by(conversation_id=conversation_id).order_by(ChatMessage.created_at.asc()).all()
-    read_by_all = {
-        message.id: _message_read_by_all(conversation, message)
+    receipt_statuses = {
+        message.id: _message_receipt_status(conversation, message)
         for message in messages if message.sender_id == current_user.id
     }
     explicit_ids = _explicit_chat_user_ids()
     direct_peer = next((p.user for p in conversation.participants if p.user_id != current_user.id), None) if conversation.kind == "DIRECT" else None
-    return render_template("chats/conversation.html", conversation=conversation, messages=messages, read_by_all=read_by_all, is_muted=membership.is_muted, is_pinned=membership.is_pinned, direct_peer=direct_peer, can_manage_group=(conversation.kind == "GROUP" and conversation.created_by_id == current_user.id), eligible_users=[u for u in User.query.order_by(User.name.asc()).all() if u.id != current_user.id and u.id in explicit_ids])
+    return render_template("chats/conversation.html", conversation=conversation, messages=messages, receipt_statuses=receipt_statuses, is_muted=membership.is_muted, is_pinned=membership.is_pinned, direct_peer=direct_peer, can_manage_group=(conversation.kind == "GROUP" and conversation.created_by_id == current_user.id), eligible_users=[u for u in User.query.order_by(User.name.asc()).all() if u.id != current_user.id and u.id in explicit_ids])
 
 
 @chats_bp.route("/attachment/<int:attachment_id>")
