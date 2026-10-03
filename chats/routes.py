@@ -121,12 +121,15 @@ def update_members(conversation_id):
     if conversation.kind != "GROUP" or conversation.created_by_id != current_user.id:
         abort(403)
     ids = {int(v) for v in request.form.getlist("user_ids") if v.isdigit()}
+    title = (request.form.get("title") or "").strip()[:200]
     ids.add(current_user.id)
     users = User.query.filter(User.id.in_(ids)).all()
     if any(not u.has_perm(CHAT_ACCESS) for u in users):
         abort(403)
     ChatParticipant.query.filter_by(conversation_id=conversation_id).delete(synchronize_session=False)
     db.session.add_all([ChatParticipant(conversation_id=conversation_id, user_id=u.id) for u in users])
+    if title:
+        conversation.title = title
     db.session.commit()
     return redirect(url_for("chats.conversation", conversation_id=conversation_id))
 
