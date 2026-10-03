@@ -264,7 +264,11 @@ def get_unread_chats_count(user_id):
         from models import ChatMessage, ChatParticipant
         total = 0
         for row in ChatParticipant.query.filter_by(user_id=user_id).all():
-            query = ChatMessage.query.filter(ChatMessage.conversation_id == row.conversation_id, ChatMessage.sender_id != user_id)
+            query = ChatMessage.query.filter(
+                ChatMessage.conversation_id == row.conversation_id,
+                ChatMessage.sender_id != user_id,
+                ChatMessage.is_deleted.is_(False),
+            )
             if row.last_read_at:
                 query = query.filter(ChatMessage.created_at > row.last_read_at)
             if query.first():

@@ -71,6 +71,24 @@ body.has-fixed-header{
     padding-inline: clamp(1rem, 3vw, 3.5rem);
 }
 
+/* Make the chat entry visibly distinct whenever it has unread conversations. */
+#chat-nav-link.has-unread-chats {
+    color: #fff !important;
+    background: rgba(255, 255, 255, .16);
+    border-radius: .55rem;
+    padding: .28rem .42rem !important;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, .18);
+}
+
+#chat-nav-link.has-unread-chats .bi {
+    animation: chat-unread-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes chat-unread-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.12); }
+}
+
 
 /* Brand على اليمين */
 .main-header /* User actions على اليسار */

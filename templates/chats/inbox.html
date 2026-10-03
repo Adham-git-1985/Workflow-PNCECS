@@ -1,6 +1,117 @@
 {% extends "layout.html" %}
+
 {% block title %}المحادثات{% endblock %}
+
+{% block extra_css %}
+<style>
+  .chat-inbox-item {
+    border-inline-start: 4px solid transparent !important;
+    transition: background-color .16s ease, border-color .16s ease;
+  }
+  .chat-inbox-item--unread {
+    background: #f0f7ff;
+    border-inline-start-color: #0d6efd !important;
+  }
+  .chat-inbox-item--unread:hover { background: #e5f1ff; }
+  .chat-inbox-item--unread .chat-inbox-name { color: #093f76; font-weight: 700; }
+  .chat-inbox-unread-dot {
+    width: .56rem;
+    height: .56rem;
+    flex: 0 0 .56rem;
+    border-radius: 50%;
+    background: #dc3545;
+    box-shadow: 0 0 0 3px rgba(220, 53, 69, .12);
+  }
+  .chat-inbox-count { min-width: 1.55rem; }
+</style>
+{% endblock %}
+
 {% block content %}
-<form class="mb-3" method="get"><div class="input-group"><input class="form-control" name="q" value="{{ q }}" placeholder="ابحث في المحادثات والرسائل"><button class="btn btn-outline-primary"><i class="bi bi-search"></i></button></div></form>
-<div class="row g-3"><div class="col-lg-4"><div class="card shadow-sm"><div class="card-body"><h5><i class="bi bi-person-plus"></i> ابدأ محادثة مع</h5><div class="small text-muted mb-2">اختر اسم الموظف الذي تريد مراسلته:</div><div class="list-group list-group-flush">{% for user in eligible_users %}<form method="post" action="{{ url_for('chats.start_direct', user_id=user.id) }}"><button class="list-group-item list-group-item-action text-start py-2" type="submit"><div class="fw-semibold"><i class="bi bi-person-circle me-1"></i>{{ user.full_name }}</div><small class="text-muted">{{ user.job_title or 'موظف' }}{% if user.email %} · {{ user.email }}{% endif %}</small></button></form>{% else %}<div class="text-muted small py-3">لا يوجد موظفون مفعّلون للمحادثة حاليًا.</div>{% endfor %}</div><hr><h6><i class="bi bi-people"></i> إنشاء مجموعة</h6><form method="post" action="{{ url_for('chats.start_group') }}"><input class="form-control form-control-sm mb-2" name="title" placeholder="اسم المجموعة"><select class="form-select form-select-sm mb-2" name="user_ids" multiple size="4">{% for user in eligible_users %}<option value="{{ user.id }}">{{ user.full_name }} — {{ user.job_title or 'موظف' }}</option>{% endfor %}</select><button class="btn btn-sm btn-outline-primary w-100">إنشاء مجموعة وإضافة الأعضاء</button></form></div></div></div><div class="col-lg-8"><div class="card shadow-sm"><div class="card-body p-0"><div class="p-3 border-bottom"><h5 class="mb-0"><i class="bi bi-chat-square-text"></i> محادثاتي</h5></div><div class="list-group list-group-flush">{% for chat in conversations %}{% set others = chat.participants|selectattr('user_id', 'ne', current_user.id)|list %}<a class="list-group-item list-group-item-action py-3" href="{{ url_for('chats.conversation', conversation_id=chat.id) }}"><div class="fw-semibold">{{ chat.title or (others|map(attribute='user.full_name')|join('، ')) }}</div><small class="text-muted">{{ chat.updated_at|local_datetime }}</small></a>{% else %}<div class="p-4 text-muted text-center">لم تبدأ أي محادثة بعد.</div>{% endfor %}</div></div></div></div></div>
+<form class="mb-3" method="get">
+  <div class="input-group">
+    <input class="form-control" name="q" value="{{ q }}" placeholder="ابحث في المحادثات والرسائل">
+    <button class="btn btn-outline-primary" aria-label="بحث"><i class="bi bi-search"></i></button>
+  </div>
+</form>
+
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5><i class="bi bi-person-plus"></i> ابدأ محادثة مع</h5>
+        <div class="small text-muted mb-2">اختر اسم الموظف الذي تريد مراسلته:</div>
+        <div class="list-group list-group-flush">
+          {% for user in eligible_users %}
+          <form method="post" action="{{ url_for('chats.start_direct', user_id=user.id) }}">
+            <button class="list-group-item list-group-item-action text-start py-2" type="submit">
+              <div class="fw-semibold"><i class="bi bi-person-circle me-1"></i>{{ user.full_name }}</div>
+              <small class="text-muted">{{ user.job_title or 'موظف' }}{% if user.email %} · {{ user.email }}{% endif %}</small>
+            </button>
+          </form>
+          {% else %}
+          <div class="text-muted small py-3">لا يوجد موظفون مفعّلون للمحادثة حاليًا.</div>
+          {% endfor %}
+        </div>
+
+        <hr>
+        <h6><i class="bi bi-people"></i> إنشاء مجموعة</h6>
+        <form method="post" action="{{ url_for('chats.start_group') }}">
+          <input class="form-control form-control-sm mb-2" name="title" placeholder="اسم المجموعة">
+          <select class="form-select form-select-sm mb-2" name="user_ids" multiple size="4">
+            {% for user in eligible_users %}
+            <option value="{{ user.id }}">{{ user.full_name }} — {{ user.job_title or 'موظف' }}</option>
+            {% endfor %}
+          </select>
+          <button class="btn btn-sm btn-outline-primary w-100">إنشاء مجموعة وإضافة الأعضاء</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-body p-0">
+        <div class="p-3 border-bottom d-flex justify-content-between align-items-center gap-2">
+          <h5 class="mb-0"><i class="bi bi-chat-square-text"></i> محادثاتي</h5>
+          {% if unread_count %}
+          <span class="badge text-bg-danger rounded-pill" title="لديك محادثات تحتوي على رسائل جديدة">
+            {{ unread_count }} غير مقروءة
+          </span>
+          {% endif %}
+        </div>
+
+        <div class="list-group list-group-flush">
+          {% for chat in conversations %}
+          {% set others = chat.participants|selectattr('user_id', 'ne', current_user.id)|list %}
+          {% set unread_messages = unread_by_conversation.get(chat.id, 0) %}
+          <a class="list-group-item list-group-item-action py-3 chat-inbox-item{% if unread_messages %} chat-inbox-item--unread{% endif %}" href="{{ url_for('chats.conversation', conversation_id=chat.id) }}">
+            <div class="d-flex justify-content-between align-items-start gap-3">
+              <div class="flex-grow-1 min-w-0">
+                <div class="d-flex align-items-center gap-2">
+                  {% if unread_messages %}<span class="chat-inbox-unread-dot" aria-hidden="true"></span>{% endif %}
+                  <div class="chat-inbox-name fw-semibold">{{ chat.title or (others|map(attribute='user.full_name')|join('، ')) }}</div>
+                </div>
+                {% if unread_messages %}
+                <div class="small text-danger fw-semibold mt-1">
+                  <i class="bi bi-envelope-fill me-1"></i>
+                  {{ unread_messages }} رسالة غير مقروءة
+                </div>
+                {% endif %}
+              </div>
+              <div class="text-nowrap text-muted small text-start">
+                {{ chat.updated_at|local_datetime }}
+                {% if unread_messages %}
+                <span class="badge text-bg-danger rounded-pill chat-inbox-count ms-1" aria-label="{{ unread_messages }} رسالة غير مقروءة">{{ unread_messages }}</span>
+                {% endif %}
+              </div>
+            </div>
+          </a>
+          {% else %}
+          <div class="p-4 text-muted text-center">لم تبدأ أي محادثة بعد.</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}

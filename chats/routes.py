@@ -44,19 +44,45 @@ def _direct_conversation(other_user_id):
 
 
 def _unread_count(user_id):
-    rows = ChatParticipant.query.filter_by(user_id=user_id).all()
-    total = 0
-    for row in rows:
-        query = ChatMessage.query.filter(
-            ChatMessage.conversation_id == row.conversation_id,
+    """Return the number of conversations containing unread messages."""
+    return len(_unread_by_conversation(user_id))
+
+
+def _unread_by_conversation(user_id, conversation_ids=None):
+    """Return ``{conversation_id: unread_message_count}`` for one user.
+
+    The header intentionally counts conversations, while the inbox needs the
+    exact number of new messages in each conversation so it can make the
+    unread state obvious to the user.
+    """
+    query = (
+        db.session.query(ChatMessage.conversation_id, func.count(ChatMessage.id))
+        .join(
+            ChatParticipant,
+            and_(
+                ChatParticipant.conversation_id == ChatMessage.conversation_id,
+                ChatParticipant.user_id == user_id,
+            ),
+        )
+        .filter(
             ChatMessage.sender_id != user_id,
             ChatMessage.is_deleted.is_(False),
+            or_(
+                ChatParticipant.last_read_at.is_(None),
+                ChatMessage.created_at > ChatParticipant.last_read_at,
+            ),
         )
-        if row.last_read_at:
-            query = query.filter(ChatMessage.created_at > row.last_read_at)
-        if query.first():
-            total += 1
-    return total
+    )
+    if conversation_ids is not None:
+        conversation_ids = list(conversation_ids)
+        if not conversation_ids:
+            return {}
+        query = query.filter(ChatMessage.conversation_id.in_(conversation_ids))
+
+    return {
+        conversation_id: int(message_count)
+        for conversation_id, message_count in query.group_by(ChatMessage.conversation_id).all()
+    }
 
 
 def _message_receipt_status(conversation, message):
@@ -149,14 +175,28 @@ def inbox():
     users = User.query.order_by(User.name.asc(), User.email.asc()).all()
     explicit_ids = _explicit_chat_user_ids()
     eligible_users = [u for u in users if u.id != current_user.id and u.id in explicit_ids]
-    return render_template("chats/inbox.html", conversations=conversations, eligible_users=eligible_users, unread_count=_unread_count(current_user.id), q=search)
+    unread_by_conversation = _unread_by_conversation(
+        current_user.id, [conversation.id for conversation in conversations]
+    )
+    return render_template(
+        "chats/inbox.html",
+        conversations=conversations,
+        eligible_users=eligible_users,
+        unread_count=len(unread_by_conversation),
+        unread_by_conversation=unread_by_conversation,
+        q=search,
+    )
 
 
 @chats_bp.route("/unread-count")
 @login_required
 @chat_access_required
 def unread_count():
-    return jsonify({"count": _unread_count(current_user.id)})
+    unread_by_conversation = _unread_by_conversation(current_user.id)
+    return jsonify({
+        "count": len(unread_by_conversation),
+        "messages": sum(unread_by_conversation.values()),
+    })
 
 
 @chats_bp.route("/alerts")
