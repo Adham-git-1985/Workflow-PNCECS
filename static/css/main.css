@@ -185,6 +185,45 @@ body.has-fixed-header{
     max-height: none !important;
 }
 
+/*
+   Desktop shell scrolling
+   -----------------------
+   Keep each column independently scrollable.  In the RTL layout the sidebar
+   is the right-most column, so its scrollbar occupies the screen's far-right
+   edge; the content scrollbar remains beside the main page content.
+*/
+@media (min-width: 992px) {
+    body.has-split-scroll {
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    body.has-split-scroll .admin-wrapper {
+        flex: 1 1 auto;
+        height: auto;
+        min-height: 0;
+        align-items: stretch;
+    }
+
+    body.has-split-scroll .admin-wrapper > .admin-sidebar {
+        align-self: stretch;
+        height: auto;
+        min-height: 0;
+        position: static;
+    }
+
+    body.has-split-scroll .admin-wrapper > .admin-content {
+        height: auto;
+        min-height: 0;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+    }
+}
+
 /* =========================
    Cards
 ========================= */
