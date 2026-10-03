@@ -1391,6 +1391,8 @@ class Notification(db.Model):
     event_key = db.Column(db.String(64), nullable=True)
     actor_id = db.Column(db.Integer, nullable=True)
     is_mirror = db.Column(db.Boolean, default=False, nullable=False)
+    target_type = db.Column(db.String(80), nullable=True, index=True)
+    target_id = db.Column(db.Integer, nullable=True, index=True)
 
 
 # ======================

@@ -120,6 +120,8 @@ def emit_event(
                 is_mirror=False,
                 link_url=link_url,
                 source=source,
+                target_type=target_type,
+                target_id=target_id,
             )
         )
 
