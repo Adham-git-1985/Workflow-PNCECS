@@ -19,7 +19,7 @@
   <div class="alert alert-info d-flex gap-2 align-items-start" role="status">
     <i class="bi bi-info-circle mt-1"></i>
     <div>
-      سيظهر الإشعار فورًا في صندوق إشعارات المستلمين داخل البوابة. هذه رسالة نظامية أحادية الاتجاه ولا يمكن الرد عليها، ولا يُرسل هذا النموذج بريدًا إلكترونيًا أو رسالة خارجية.
+      سيظهر الإشعار فورًا في صندوق إشعارات المستلمين، كما ستصل مراسلة نظامية جديدة إلى صندوق واردهم. لا يمكن الرد على المراسلة مباشرة، ويمكنهم منها إرسال تغذية راجعة على التحديث.
     </div>
   </div>
 
@@ -97,7 +97,7 @@
 
     <div class="border rounded-3 p-3 mb-3">
       <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
-        <label class="form-label fw-semibold mb-0" for="linkedCorrespondence">ربط بمراسلة <span class="text-muted fw-normal">(اختياري)</span></label>
+        <label class="form-label fw-semibold mb-0" for="linkedCorrespondence">ربط بمرجع مراسلة <span class="text-muted fw-normal">(اختياري)</span></label>
         <span class="text-muted small">لا يضيف الربط صلاحيات جديدة للمستلمين.</span>
       </div>
       <input class="form-control mb-2" type="search" id="linkedCorrespondenceSearch" placeholder="ابحث برقم المراسلة أو موضوعها" autocomplete="off">
@@ -111,7 +111,7 @@
         {% endfor %}
       </select>
       <div class="form-text">
-        تظهر المراسلات العادية غير السرية التي تملك صلاحية الاطلاع عليها. عند فتح الإشعار، يمكن للمستلم عرض المراسلة فقط إذا كانت لديه صلاحيتها مسبقًا.
+        تظهر المراسلات العادية غير السرية التي تملك صلاحية الاطلاع عليها. يُحفظ الربط كمرجع للتحديث، بينما يفتح المستلم مراسلة النظام الجديدة التي وصلته ويمكنه منها إرسال تغذية راجعة.
       </div>
       {% if not correspondence_options %}
         <div class="form-text text-warning">لا توجد مراسلات متاحة للربط حاليًا.</div>

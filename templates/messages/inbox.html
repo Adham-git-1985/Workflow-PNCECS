@@ -65,6 +65,9 @@
                   <td>
                     <a href="{{ url_for('messages.view_message', message_id=rec.message_id) }}" class="text-decoration-none">
                       <strong>{{ rec.message.subject or 'بدون موضوع' }}</strong>
+                      {% if (rec.message.target_kind or '')|upper == 'ADMIN_BROADCAST' %}
+                        <span class="badge text-bg-primary ms-1">رسالة نظامية — دون رد</span>
+                      {% endif %}
                       {% if rec.message.attachments %}
                         <span class="badge text-bg-light border ms-1"><i class="bi bi-paperclip"></i> {{ rec.message.attachments|length }}</span>
                       {% endif %}
@@ -77,7 +80,9 @@
                   <td>
                     <div class="d-flex gap-1">
                       <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('messages.view_message', message_id=rec.message_id) }}">عرض</a>
-                      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('messages.reply', message_id=rec.message_id) }}">رد</a>
+                      {% if (rec.message.target_kind or '')|upper != 'ADMIN_BROADCAST' %}
+                        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('messages.reply', message_id=rec.message_id) }}">رد</a>
+                      {% endif %}
                       <form method="post" action="{{ url_for('messages.delete_message', message_id=rec.message_id) }}" onsubmit="return confirm('حذف الرسالة؟')">
                         <button type="submit" class="btn btn-sm btn-outline-danger">حذف</button>
                       </form>

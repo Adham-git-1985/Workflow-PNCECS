@@ -58,15 +58,11 @@
             </div>
             {% if is_admin_system_message %}
               <div class="text-muted small mt-1">
-                {% if has_linked_correspondence %}
-                  هذه رسالة نظامية لا يمكن الرد عليها. فتح المراسلة يخضع لصلاحياتك الحالية.
-                {% else %}
-                  هذه رسالة نظامية أحادية الاتجاه لا يمكن الرد عليها.
-                {% endif %}
+                هذه رسالة نظامية أحادية الاتجاه لا يمكن الرد عليها. افتح المراسلة لقراءة التحديث وإرسال تغذية راجعة عند الحاجة.
               </div>
             {% endif %}
             <a class="btn btn-sm btn-primary mt-2" href="{{ url_for('portal.portal_open_notification', notif_id=n.id) }}">
-              {% if has_linked_correspondence %}فتح المراسلة{% elif is_admin_system_message %}عرض الرسالة{% else %}فتح الحركة{% endif %}
+              {% if is_admin_system_message %}فتح المراسلة{% else %}فتح الحركة{% endif %}
             </a>
           </div>
           <div class="text-end">

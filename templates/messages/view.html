@@ -11,7 +11,7 @@
     <div class="d-flex gap-2">
       <a href="{{ url_for('messages.inbox') }}" class="btn btn-outline-secondary">📥 الوارد</a>
       <a href="{{ url_for('messages.sent') }}" class="btn btn-outline-secondary">📤 المرسلة</a>
-      {% if rec %}
+      {% if rec and not is_admin_broadcast_message %}
         <a href="{{ url_for('messages.reply', message_id=msg.id) }}" class="btn btn-outline-primary">↩️ رد</a>
       {% endif %}
       <form method="post" action="{{ url_for('messages.delete_message', message_id=msg.id) }}" onsubmit="return confirm('حذف الرسالة؟')">
@@ -37,6 +37,20 @@
           <div class="text-muted small">الموضوع</div>
           <div class="fw-bold">{{ msg.subject or 'بدون موضوع' }}</div>
         </div>
+
+        {% if is_admin_broadcast_message %}
+        <div class="col-12">
+          <div class="alert alert-info d-flex justify-content-between align-items-center flex-wrap gap-2 mb-0">
+            <div>
+              <div class="fw-semibold"><i class="bi bi-bell-fill"></i> رسالة نظامية — دون رد</div>
+              <div class="small">هذه رسالة لإبلاغك بتحديث في النظام. لا يمكن الرد عليها مباشرة.</div>
+            </div>
+            {% if feedback_url and rec %}
+              <a class="btn btn-primary" href="{{ feedback_url }}"><i class="bi bi-chat-square-text"></i> إرسال تغذية راجعة</a>
+            {% endif %}
+          </div>
+        </div>
+        {% endif %}
 
         {% if msg.attachments %}
         <div class="col-12">

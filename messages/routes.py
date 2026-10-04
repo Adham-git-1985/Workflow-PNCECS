@@ -15,7 +15,7 @@ from utils.file_uploads import clean_original_filename, is_allowed_attachment, r
 from . import messages_bp
 from models import (
     User, Department, Directorate,
-    Message, MessageAttachment, MessageRecipient, AuditLog
+    Message, MessageAttachment, MessageRecipient, Notification, AuditLog
 )
 
 
@@ -23,6 +23,41 @@ MESSAGE_ATTACHMENT_MAX_FILES = 10
 MESSAGE_ATTACHMENT_MAX_FILE_BYTES = 25 * 1024 * 1024
 MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES = 50 * 1024 * 1024
 MESSAGE_ATTACHMENT_MAX_REQUEST_BYTES = MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES + (2 * 1024 * 1024)
+ADMIN_BROADCAST_MESSAGE_TARGET_KIND = "ADMIN_BROADCAST"
+ADMIN_BROADCAST_NOTIFICATION_TARGET_TYPES = (
+    "ADMIN_BROADCAST",
+    "ADMIN_BROADCAST_CORR_INBOUND",
+    "ADMIN_BROADCAST_CORR_OUTBOUND",
+)
+
+
+def _is_admin_broadcast_message(message: Message | None) -> bool:
+    """Whether a mailbox item is a one-way administrator update."""
+    return (
+        (getattr(message, "target_kind", "") or "").strip().upper()
+        == ADMIN_BROADCAST_MESSAGE_TARGET_KIND
+    )
+
+
+def _admin_broadcast_feedback_url(message: Message, recipient) -> str | None:
+    """Find this recipient's visible broadcast notification and its feedback form."""
+    if not recipient or not _is_admin_broadcast_message(message):
+        return None
+    message_url = url_for("messages.view_message", message_id=message.id)
+    notification = (
+        Notification.query
+        .filter(Notification.user_id == current_user.id)
+        .filter(Notification.source == "portal")
+        .filter(Notification.is_mirror.is_(False))
+        .filter(Notification.is_visible.is_(True))
+        .filter(Notification.link_url == message_url)
+        .filter(Notification.target_type.in_(ADMIN_BROADCAST_NOTIFICATION_TARGET_TYPES))
+        .order_by(Notification.created_at.desc(), Notification.id.desc())
+        .first()
+    )
+    if not notification:
+        return None
+    return url_for("portal.trouble_ticket_feedback", notification_id=notification.id)
 
 
 def _message_attachment_dir(message_id: int) -> Path:
@@ -490,6 +525,10 @@ def reply(message_id):
         flash("لا تملك صلاحية للرد على هذه الرسالة", "danger")
         return redirect(url_for("messages.inbox"))
 
+    if _is_admin_broadcast_message(original):
+        flash("هذه رسالة نظامية حول تحديث النظام ولا يمكن الرد عليها مباشرة.", "info")
+        return redirect(url_for("messages.view_message", message_id=original.id))
+
     if request.method == "POST":
         if (
             request.content_length is not None
@@ -688,6 +727,9 @@ def view_message(message_id):
         rec.read_at = datetime.utcnow()
         db.session.commit()
 
+    is_admin_broadcast_message = _is_admin_broadcast_message(msg)
+    feedback_url = _admin_broadcast_feedback_url(msg, rec)
+
     # Optional: detect known internal links and show quick action buttons.
     payslip_url = None
     workflow_url = None
@@ -744,4 +786,6 @@ def view_message(message_id):
         meeting_url=meeting_url,
         movement_url=movement_url,
         supply_request_url=supply_request_url,
+        is_admin_broadcast_message=is_admin_broadcast_message,
+        feedback_url=feedback_url,
     )

@@ -5174,9 +5174,8 @@ def trouble_ticket_feedback(notification_id: int):
                     action="TROUBLE_TICKET_FEEDBACK_CREATE",
                     note=(
                         f"تذكرة ملاحظات #{ticket.id} من إشعار "
-                        f"#{feedback_context['notification_id']} للمراسلة "
-                        f"{feedback_context['correspondence_kind']}:"
-                        f"{feedback_context['correspondence_id']}"
+                        f"#{feedback_context['notification_id']} للمصدر "
+                        f"{feedback_context.get('correspondence_reference') or 'SYSTEM_UPDATE'}"
                     ),
                     target_type="TROUBLE_TICKET",
                     target_id=ticket.id,
@@ -7276,6 +7275,9 @@ ADMIN_NOTIFICATION_SCOPES = {
 ADMIN_NOTIFICATION_TARGET_TYPE = "ADMIN_BROADCAST"
 ADMIN_NOTIFICATION_CORR_IN_TARGET_TYPE = "ADMIN_BROADCAST_CORR_INBOUND"
 ADMIN_NOTIFICATION_CORR_OUT_TARGET_TYPE = "ADMIN_BROADCAST_CORR_OUTBOUND"
+# This value is deliberately stored on Message.target_kind rather than using
+# is_system_generated: the inbox must show these one-way system messages.
+ADMIN_NOTIFICATION_MESSAGE_TARGET_KIND = "ADMIN_BROADCAST"
 
 
 def _admin_notification_correspondence_label(kind: str, item) -> str:
@@ -7287,6 +7289,41 @@ def _admin_notification_correspondence_label(kind: str, item) -> str:
     if len(subject) > 120:
         subject = f"{subject[:117]}..."
     return " — ".join(part for part in (kind_label, reference_label, subject) if part)
+
+
+def _admin_notification_system_message_subject(message: str, correspondence_label: str = "") -> str:
+    """Build a concise inbox subject for an administrator system update."""
+    prefix = "تحديث نظام"
+    if correspondence_label:
+        prefix = f"{prefix} — مراسلة مرتبطة"
+    text = (message or "").strip()
+    if text:
+        return f"{prefix}: {text}"[:200]
+    return prefix[:200]
+
+
+def _admin_notification_system_message_body(message: str, correspondence_label: str = "") -> str:
+    """Render the one-way correspondence that accompanies a broadcast."""
+    lines = [
+        "هذه رسالة نظامية حول تحديث في النظام، ولا يمكن الرد عليها مباشرة.",
+        "",
+        (message or "").strip(),
+    ]
+    if correspondence_label:
+        lines.extend(("", "يرتبط هذا التحديث بمرجع مراسلة داخل النظام."))
+    lines.extend((
+        "",
+        "يمكنك إرسال ملاحظاتك أو تغذيتك الراجعة من زر «إرسال تغذية راجعة» في هذه المراسلة.",
+    ))
+    return "\n".join(line for line in lines if line is not None).strip()
+
+
+def _admin_notification_message_url(notification) -> str | None:
+    """Return the trusted internal-message URL used by current broadcasts."""
+    candidate = safe_local_notification_url(getattr(notification, "link_url", None))
+    if candidate and re.fullmatch(r"/messages/view/\d+", candidate):
+        return candidate
+    return None
 
 
 def _admin_notification_linkable_correspondences(
@@ -7366,10 +7403,13 @@ def _admin_notification_feedback_context_for_notification(
     expected_kind: str | None = None,
     expected_item_id: int | None = None,
 ) -> dict | None:
-    """Return feedback context only for a recipient of a linked broadcast.
+    """Return feedback context only for the recipient of an admin broadcast.
 
-    The notification is the authorization context for feedback. A guessed id,
-    a hidden notification, or a correspondence mismatch never produces a form.
+    A broadcast is delivered as both a visible portal notification and an
+    internal one-way message.  The notification remains the authorization
+    context for feedback, while an optional linked correspondence is retained
+    only as a reference; recipients do not need direct access to that original
+    correspondence in order to comment on the system update.
     """
     try:
         notification_id = int(notification_id)
@@ -7386,6 +7426,7 @@ def _admin_notification_feedback_context_for_notification(
         .filter(Notification.is_mirror.is_(False))
         .filter(Notification.is_visible.is_(True))
         .filter(Notification.target_type.in_((
+            ADMIN_NOTIFICATION_TARGET_TYPE,
             ADMIN_NOTIFICATION_CORR_IN_TARGET_TYPE,
             ADMIN_NOTIFICATION_CORR_OUT_TARGET_TYPE,
         )))
@@ -7395,36 +7436,53 @@ def _admin_notification_feedback_context_for_notification(
         return None
 
     kind = _admin_notification_correspondence_kind_from_target_type(notification.target_type)
-    if not kind or (expected_kind and kind != expected_kind):
+    if expected_kind and kind != expected_kind:
         return None
-    try:
-        correspondence_id = int(notification.target_id or 0)
-    except (TypeError, ValueError):
-        return None
-    if correspondence_id <= 0 or (
-        expected_item_id is not None and correspondence_id != int(expected_item_id)
-    ):
-        return None
+    correspondence_id = None
+    correspondence_url = None
+    correspondence_reference = ""
+    correspondence_label = "رسالة تحديث النظام"
 
-    item = db.session.get(InboundMail if kind == "IN" else OutboundMail, correspondence_id)
-    if not item or not _corr_can_access(item):
-        return None
+    if kind:
+        try:
+            correspondence_id = int(notification.target_id or 0)
+        except (TypeError, ValueError):
+            correspondence_id = None
+        if not correspondence_id or correspondence_id <= 0:
+            return None
+        if expected_item_id is not None and correspondence_id != int(expected_item_id):
+            return None
 
-    correspondence_url = notification_target_path(
-        "CORR_INBOUND" if kind == "IN" else "CORR_OUTBOUND",
-        item.id,
-    )
-    if not correspondence_url:
-        return None
+        correspondence_reference = f"{kind}:{correspondence_id}"
+        item = db.session.get(InboundMail if kind == "IN" else OutboundMail, correspondence_id)
+        if not item:
+            if expected_kind:
+                return None
+            correspondence_label = "مراسلة مرتبطة بتحديث النظام"
+        else:
+            candidate_url = notification_target_path(
+                "CORR_INBOUND" if kind == "IN" else "CORR_OUTBOUND",
+                item.id,
+            )
+            # Never reveal a correspondence's subject or direct link merely
+            # because the recipient received a broadcast about an update.
+            if candidate_url and _corr_can_access(item):
+                correspondence_url = candidate_url
+                correspondence_label = _admin_notification_correspondence_label(kind, item)
+            else:
+                correspondence_label = "مراسلة مرتبطة بتحديث النظام"
 
-    correspondence_label = _admin_notification_correspondence_label(kind, item)
+    message_url = _admin_notification_message_url(notification)
+    return_url = message_url or correspondence_url or url_for("portal.portal_notifications")
     return {
         "notification_id": notification.id,
-        "correspondence_id": item.id,
+        "correspondence_id": correspondence_id,
         "correspondence_kind": kind,
         "correspondence_label": correspondence_label,
+        "correspondence_reference": correspondence_reference,
         "correspondence_url": correspondence_url,
-        "return_url": f"{correspondence_url}?feedback_notification={notification.id}",
+        "message_url": message_url,
+        "return_url": return_url,
         "ticket_subject": (
             f"ملاحظات حول تحديث النظام — {correspondence_label}"
         )[:250],
@@ -7469,15 +7527,19 @@ def _admin_notification_feedback_open_url(notification, target_url: str | None) 
 
 def _admin_notification_feedback_ticket_description(context: dict, comment: str) -> str:
     """Keep a readable, durable source reference with the user's feedback."""
-    return "\n".join((
+    lines = [
         "مصدر الملاحظة: تحديث نظام مُرسل عبر إشعار داخلي.",
         f"المراسلة المرتبطة: {context['correspondence_label']}",
         f"مرجع الإشعار: #{context['notification_id']}",
-        f"رابط المراسلة: {context['correspondence_url']}",
-        "",
-        "ملاحظات المستخدم:",
-        comment,
-    ))
+    ]
+    if context.get("correspondence_reference"):
+        lines.append(f"مرجع المراسلة: {context['correspondence_reference']}")
+    if context.get("correspondence_url"):
+        lines.append(f"رابط المراسلة: {context['correspondence_url']}")
+    if context.get("message_url"):
+        lines.append(f"رابط رسالة التحديث: {context['message_url']}")
+    lines.extend(("", "ملاحظات المستخدم:", comment))
+    return "\n".join(lines)
 
 
 def _positive_integer_ids(values) -> set[int]:
@@ -7751,7 +7813,6 @@ def portal_admin_send_notifications():
 
         notification_target_type = ADMIN_NOTIFICATION_TARGET_TYPE
         notification_target_id = target_id
-        notification_link_url = url_for("portal.portal_notifications")
         linked_correspondence_label = ""
         if linked_correspondence:
             linked_kind, linked_item = linked_correspondence
@@ -7761,10 +7822,6 @@ def portal_admin_send_notifications():
                 else ADMIN_NOTIFICATION_CORR_OUT_TARGET_TYPE
             )
             notification_target_id = linked_item.id
-            notification_link_url = notification_target_path(
-                "CORR_INBOUND" if linked_kind == "IN" else "CORR_OUTBOUND",
-                linked_item.id,
-            )
             linked_correspondence_label = _admin_notification_correspondence_label(
                 linked_kind,
                 linked_item,
@@ -7773,6 +7830,47 @@ def portal_admin_send_notifications():
         now = datetime.utcnow()
         event_key = uuid.uuid4().hex
         try:
+            # Every broadcast has an inbox correspondence as well as its bell
+            # notification.  It is deliberately not marked system-generated:
+            # those records are hidden by the normal inbox, whereas this is the
+            # user-facing, one-way update the recipient needs to open.
+            internal_message = Message(
+                sender_id=current_user.id,
+                subject=_admin_notification_system_message_subject(
+                    message,
+                    linked_correspondence_label,
+                ),
+                body=_admin_notification_system_message_body(
+                    message,
+                    linked_correspondence_label,
+                ),
+                target_kind=ADMIN_NOTIFICATION_MESSAGE_TARGET_KIND,
+                target_id=notification_target_id or recipient_ids[0],
+                created_at=now,
+                reply_to_id=None,
+                is_system_generated=False,
+            )
+            db.session.add(internal_message)
+            db.session.flush()
+            db.session.add_all([
+                MessageRecipient(
+                    message_id=internal_message.id,
+                    recipient_user_id=user_id,
+                    is_read=False,
+                    read_at=None,
+                    is_deleted=False,
+                    deleted_at=None,
+                )
+                for user_id in recipient_ids
+            ])
+
+            # The notification opens the recipient's inbox message, not the
+            # underlying correspondence record.  This gives every addressee a
+            # reliable feedback path without granting new document access.
+            notification_link_url = url_for(
+                "messages.view_message",
+                message_id=internal_message.id,
+            )
             db.session.add_all([
                 Notification(
                     user_id=user_id,
@@ -7783,6 +7881,7 @@ def portal_admin_send_notifications():
                     created_at=now,
                     is_read=False,
                     is_mirror=False,
+                    is_visible=True,
                     actor_id=current_user.id,
                     event_key=event_key,
                     target_type=notification_target_type,

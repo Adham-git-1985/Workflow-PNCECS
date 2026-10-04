@@ -7,6 +7,7 @@ from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
 
 from extensions import db
+from messages import messages_bp
 from models import (
     AuditLog,
     Department,
@@ -50,6 +51,7 @@ class AdminBroadcastNotificationRouteTests(unittest.TestCase):
                 return None
 
         cls.app.register_blueprint(portal_bp)
+        cls.app.register_blueprint(messages_bp)
         cls.app.jinja_loader = ChoiceLoader([
             DictLoader({
                 "portal/layout.html": (
@@ -201,12 +203,20 @@ class AdminBroadcastNotificationRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
 
         rows = self._sent_notifications()
+        internal_message = Message.query.one()
         self.assertEqual({row.user_id for row in rows}, {
             self.department_employee.id,
             self.other_employee.id,
         })
         self.assertTrue(all(row.source == "portal" for row in rows))
         self.assertTrue(all(row.type == "URGENT" for row in rows))
+        self.assertTrue(all(row.is_visible is True for row in rows))
+        self.assertTrue(all(
+            row.link_url == f"/messages/view/{internal_message.id}"
+            for row in rows
+        ))
+        self.assertEqual(internal_message.target_kind, "ADMIN_BROADCAST")
+        self.assertEqual(MessageRecipient.query.filter_by(message_id=internal_message.id).count(), 2)
         self.assertTrue(all(row.actor_id == self.admin.id for row in rows))
         self.assertEqual(len({row.event_key for row in rows}), 1)
         self.assertEqual(
@@ -216,7 +226,17 @@ class AdminBroadcastNotificationRouteTests(unittest.TestCase):
 
         with self.app.test_client() as client:
             self._login(client, self.department_employee.id)
+            notification_inbox = client.get("/portal/notifications")
+            with patch("messages.routes.render_template", return_value="broadcast message") as render:
+                message_view = client.get(f"/messages/view/{internal_message.id}")
             denied = client.get("/portal/admin/notifications/send")
+        self.assertEqual(notification_inbox.status_code, 200)
+        self.assertIn("يرجى مراجعة النظام اليوم.", notification_inbox.get_data(as_text=True))
+        self.assertEqual(message_view.status_code, 200)
+        self.assertEqual(
+            render.call_args.kwargs["feedback_url"],
+            f"/portal/trouble-tickets/feedback/{next(row.id for row in rows if row.user_id == self.department_employee.id)}",
+        )
         self.assertEqual(denied.status_code, 403)
 
     def test_super_admin_can_send_to_an_entire_directorate(self):
@@ -280,30 +300,44 @@ class AdminBroadcastNotificationRouteTests(unittest.TestCase):
             target_type="ADMIN_BROADCAST_CORR_OUTBOUND",
             user_id=self.department_employee.id,
         ).one()
+        internal_message = Message.query.one()
         self.assertEqual(row.target_id, self.linked_outbound.id)
-        self.assertEqual(row.link_url, f"/portal/corr/outbound/{self.linked_outbound.id}")
-        # A broadcast is a portal-system message, not an internal message
-        # thread, so it cannot be replied to through the messages module.
-        self.assertEqual(Message.query.count(), 0)
-        self.assertEqual(MessageRecipient.query.count(), 0)
+        self.assertEqual(row.link_url, f"/messages/view/{internal_message.id}")
+        self.assertTrue(row.is_visible)
+        self.assertFalse(internal_message.is_system_generated)
+        self.assertEqual(internal_message.target_kind, "ADMIN_BROADCAST")
+        self.assertIn("لا يمكن الرد عليها", internal_message.body)
+        self.assertEqual(
+            MessageRecipient.query.filter_by(
+                message_id=internal_message.id,
+                recipient_user_id=self.department_employee.id,
+                is_read=False,
+            ).count(),
+            1,
+        )
 
         with self.app.test_client() as client:
             self._login(client, self.department_employee.id)
             opened = client.get(f"/portal/notifications/{row.id}/open")
             self.assertEqual(opened.status_code, 302)
+            self.assertEqual(opened.headers["Location"], row.link_url)
+            with patch("messages.routes.render_template", return_value="broadcast message") as render:
+                message_view = client.get(opened.headers["Location"])
+            self.assertEqual(message_view.status_code, 200)
+            self.assertEqual(render.call_args.args[0], "messages/view.html")
+            self.assertTrue(render.call_args.kwargs["is_admin_broadcast_message"])
             self.assertEqual(
-                opened.headers["Location"],
-                f"{row.link_url}?feedback_notification={row.id}",
+                render.call_args.kwargs["feedback_url"],
+                f"/portal/trouble-tickets/feedback/{row.id}",
             )
-            # The broadcast link did not grant correspondence-read access.
-            denied = client.get(opened.headers["Location"])
-        self.assertEqual(denied.status_code, 403)
+            reply = client.get(f"/messages/reply/{internal_message.id}")
+        self.assertEqual(reply.status_code, 302)
+        self.assertEqual(reply.headers["Location"], row.link_url)
 
     def test_recipient_can_submit_feedback_on_a_linked_update(self):
-        # The notification does not create this access; it represents a
-        # pre-existing assignment to the correspondence.
-        self.linked_outbound.current_assignee_id = self.department_employee.id
-        db.session.commit()
+        # Receiving the update creates a safe inbox correspondence.  Feedback
+        # does not depend on the recipient having direct access to the original
+        # correspondence selected by the administrator as a reference.
 
         with self.app.test_client() as client:
             self._login(client, self.admin.id)
@@ -322,6 +356,7 @@ class AdminBroadcastNotificationRouteTests(unittest.TestCase):
             target_type="ADMIN_BROADCAST_CORR_OUTBOUND",
             user_id=self.department_employee.id,
         ).one()
+        internal_message = Message.query.one()
 
         with self.app.test_client() as client:
             self._login(client, self.department_employee.id)
@@ -329,27 +364,23 @@ class AdminBroadcastNotificationRouteTests(unittest.TestCase):
             self.assertEqual(opened.status_code, 302)
             self.assertEqual(
                 opened.headers["Location"],
-                (
-                    f"/portal/corr/outbound/{self.linked_outbound.id}"
-                    f"?feedback_notification={notification.id}"
-                ),
+                f"/messages/view/{internal_message.id}",
             )
 
-            with patch("portal.routes.render_template", return_value="feedback view") as render:
-                correspondence_view = client.get(opened.headers["Location"])
-            self.assertEqual(correspondence_view.status_code, 200)
-            self.assertEqual(render.call_args.args[0], "portal/corr/outbound_view.html")
-            shown_feedback = render.call_args.kwargs["feedback_context"]
-            self.assertEqual(shown_feedback["notification_id"], notification.id)
+            with patch("messages.routes.render_template", return_value="feedback view") as render:
+                message_view = client.get(opened.headers["Location"])
+            self.assertEqual(message_view.status_code, 200)
+            self.assertEqual(render.call_args.args[0], "messages/view.html")
             self.assertEqual(
-                shown_feedback["ticket_url"],
+                render.call_args.kwargs["feedback_url"],
                 f"/portal/trouble-tickets/feedback/{notification.id}",
             )
 
             form = client.get(f"/portal/trouble-tickets/feedback/{notification.id}")
             self.assertEqual(form.status_code, 200)
             self.assertIn("إرسال ملاحظات حول تحديث النظام", form.get_data(as_text=True))
-            self.assertIn(self.linked_outbound.subject, form.get_data(as_text=True))
+            self.assertIn("مراسلة مرتبطة بتحديث النظام", form.get_data(as_text=True))
+            self.assertNotIn(self.linked_outbound.subject, form.get_data(as_text=True))
             self.assertEqual(TroubleTicket.query.count(), 0)
 
             submitted = client.post(
@@ -369,7 +400,8 @@ class AdminBroadcastNotificationRouteTests(unittest.TestCase):
         self.assertNotIn("محاولة تغيير عنوان التذكرة", ticket.subject)
         self.assertIn("أقترح شرحاً أوضح لإعدادات الخصوصية.", ticket.description)
         self.assertIn(f"مرجع الإشعار: #{notification.id}", ticket.description)
-        self.assertIn(f"/portal/corr/outbound/{self.linked_outbound.id}", ticket.description)
+        self.assertIn(f"مرجع المراسلة: OUT:{self.linked_outbound.id}", ticket.description)
+        self.assertIn(f"/messages/view/{internal_message.id}", ticket.description)
         self.assertIsNotNone(AuditLog.query.filter_by(
             action="TROUBLE_TICKET_FEEDBACK_CREATE",
             target_id=ticket.id,
