@@ -5298,16 +5298,15 @@ class InvEmployeeRequest(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     requester_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    # Retained solely for historic requests created before manager approval was
+    # removed from the materials-request route.
     manager_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
-    # Snapshot of every direct manager who received this request.  Keeping the
-    # list on the request makes a submitted path stable when the org chart is
-    # later changed.  One of these managers may approve the request.
     manager_user_ids = db.Column(db.Text, nullable=True)
     items_text = db.Column(db.Text, nullable=False)
     purpose = db.Column(db.String(255), nullable=False)
     note = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(20), nullable=False, default="SUBMITTED", index=True)
-    approval_stage = db.Column(db.String(20), nullable=False, default="MANAGER", index=True)
+    approval_stage = db.Column(db.String(20), nullable=False, default="WAREHOUSE", index=True)
     decided_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

@@ -1,7 +1,6 @@
 from collections import defaultdict
 from io import BytesIO
-import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from flask import abort, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
@@ -30,7 +29,6 @@ from models import (
     UserPermission,
 )
 from utils.perms import perm_required
-from services.hr_request_workflow import resolve_responsible_managers
 from services.official_request_forms import (
     DOCX_MIME,
     build_supply_request_docx,
@@ -42,7 +40,6 @@ from utils.inventory_numbers import auto_inventory_voucher_no
 
 STAGES = {
     "HR": "مدير الشؤون البشرية (بديل)",
-    "MANAGER": "المسؤولون المباشرون",
     "WAREHOUSE": "مدير المستودع",
     "DONE": "مكتمل",
 }
@@ -64,7 +61,7 @@ def _status_label(status, approval_stage):
 
 
 def _request_status_label(row):
-    return _status_label(row.status, row.approval_stage)
+    return _status_label(row.status, _effective_approval_stage(row))
 
 
 def _last_request_label(created_at):
@@ -266,24 +263,6 @@ def _warehouse_or_hr_stage(exclude_user_id=None):
     return "WAREHOUSE" if _warehouse_approver_ids(exclude_user_id) else "HR"
 
 
-def _manager_ids(row):
-    """Return the direct-manager snapshot for a submitted materials request."""
-    raw = (getattr(row, "manager_user_ids", None) or "").strip()
-    ids = []
-    if raw:
-        try:
-            values = json.loads(raw)
-            values = values if isinstance(values, list) else [values]
-            ids = [int(value) for value in values if str(value).isdigit()]
-        except (TypeError, ValueError, json.JSONDecodeError):
-            ids = [int(value) for value in raw.split(",") if value.strip().isdigit()]
-    if not ids and row.manager_user_id:
-        ids = [int(row.manager_user_id)]
-    if not ids:
-        ids = [int(user.id) for user in resolve_responsible_managers(row.requester_user_id)]
-    return list(dict.fromkeys(ids))
-
-
 def _is_system_admin(user):
     try:
         return bool(user.has_role("SUPER_ADMIN") or user.has_role("SUPERADMIN") or user.has_role("ADMIN"))
@@ -291,12 +270,25 @@ def _is_system_admin(user):
         return (getattr(user, "role", "") or "").upper().replace("_", "") in {"SUPERADMIN", "ADMIN"}
 
 
+def _effective_approval_stage(row):
+    """Resolve the active stage while bypassing retired manager-stage requests.
+
+    New employee material requests go straight to the warehouse (or the HR
+    fallback when the requester is the warehouse approver). Older pending
+    requests may still carry the former ``MANAGER`` value, so treat them as
+    being at their next real approver rather than leaving them stranded.
+    """
+    stage = (getattr(row, "approval_stage", None) or "").strip().upper()
+    if stage == "MANAGER":
+        return _warehouse_or_hr_stage(getattr(row, "requester_user_id", None))
+    return stage
+
+
 def _recipient_ids(row):
-    if row.approval_stage == "MANAGER":
-        return _manager_ids(row)
-    if row.approval_stage == "WAREHOUSE":
+    stage = _effective_approval_stage(row)
+    if stage == "WAREHOUSE":
         return _warehouse_approver_ids(row.requester_user_id)
-    if row.approval_stage == "HR":
+    if stage == "HR":
         return _hr_fallback_approver_ids(row.requester_user_id)
     return []
 
@@ -306,11 +298,10 @@ def _can_process(row):
         return False
     if _is_system_admin(current_user):
         return True
-    if row.approval_stage == "MANAGER":
-        return current_user.id in _manager_ids(row)
-    if row.approval_stage == "WAREHOUSE":
+    stage = _effective_approval_stage(row)
+    if stage == "WAREHOUSE":
         return current_user.id in _warehouse_approver_ids(row.requester_user_id)
-    if row.approval_stage == "HR":
+    if stage == "HR":
         return current_user.id in _hr_fallback_approver_ids(row.requester_user_id)
     return False
 
@@ -606,20 +597,135 @@ def inventory_request_settings():
     )
 
 
+def _employee_request_filter_values():
+    """Read and validate the GET filters shared by request-list pages."""
+    status = (request.args.get("status") or "").strip().upper()
+    stage = (request.args.get("stage") or "").strip().upper()
+    user_id = (request.args.get("user_id") or "").strip()
+    date_from = (request.args.get("date_from") or "").strip()
+    date_to = (request.args.get("date_to") or "").strip()
+
+    if status not in STATUS_LABELS:
+        status = ""
+    if stage not in STAGES:
+        stage = ""
+    if not user_id.isdigit():
+        user_id = ""
+
+    for value_name, value in (("date_from", date_from), ("date_to", date_to)):
+        try:
+            date.fromisoformat(value) if value else None
+        except ValueError:
+            if value_name == "date_from":
+                date_from = ""
+            else:
+                date_to = ""
+
+    return {
+        "q": (request.args.get("q") or "").strip()[:120],
+        "status": status,
+        "stage": stage,
+        "user_id": user_id,
+        "date_from": date_from,
+        "date_to": date_to,
+    }
+
+
+def _apply_employee_request_filters(query, filters, *, can_filter_by_user):
+    """Apply safe list filters without widening the caller's visibility scope."""
+    status = filters.get("status") or ""
+    stage = filters.get("stage") or ""
+    user_id = filters.get("user_id") or ""
+    query_text = filters.get("q") or ""
+    date_from = filters.get("date_from") or ""
+    date_to = filters.get("date_to") or ""
+
+    if status:
+        query = query.filter(InvEmployeeRequest.status == status)
+    if stage == "WAREHOUSE":
+        # Pending records created before the manager stage was retired have
+        # the same effective warehouse/HR target.
+        query = query.filter(InvEmployeeRequest.approval_stage.in_(("WAREHOUSE", "MANAGER")))
+    elif stage:
+        query = query.filter(InvEmployeeRequest.approval_stage == stage)
+    if can_filter_by_user and user_id:
+        query = query.filter(InvEmployeeRequest.requester_user_id == int(user_id))
+    if query_text:
+        pattern = f"%{query_text}%"
+        text_filters = [
+            InvEmployeeRequest.items_text.ilike(pattern),
+            InvEmployeeRequest.purpose.ilike(pattern),
+            InvEmployeeRequest.note.ilike(pattern),
+            InvEmployeeRequest.requester.has(or_(
+                User.name.ilike(pattern),
+                User.email.ilike(pattern),
+                User.job_title.ilike(pattern),
+            )),
+            InvEmployeeRequest.lines.any(
+                InvEmployeeRequestLine.item.has(or_(
+                    InvItem.name.ilike(pattern),
+                    InvItem.code.ilike(pattern),
+                    InvItem.variant.ilike(pattern),
+                ))
+            ),
+        ]
+        if query_text.isdigit():
+            text_filters.append(InvEmployeeRequest.id == int(query_text))
+        query = query.filter(or_(*text_filters))
+    if date_from:
+        query = query.filter(
+            InvEmployeeRequest.created_at >= datetime.combine(date.fromisoformat(date_from), datetime.min.time())
+        )
+    if date_to:
+        query = query.filter(
+            InvEmployeeRequest.created_at < datetime.combine(
+                date.fromisoformat(date_to) + timedelta(days=1),
+                datetime.min.time(),
+            )
+        )
+    return query
+
+
+def _employee_request_filter_users(query):
+    requester_ids = [
+        requester_id
+        for (requester_id,) in query.with_entities(InvEmployeeRequest.requester_user_id).distinct().all()
+        if requester_id
+    ]
+    if not requester_ids:
+        return []
+    return (
+        User.query
+        .filter(User.id.in_(requester_ids))
+        .order_by(User.name.asc(), User.email.asc())
+        .all()
+    )
+
+
 @portal_bp.route("/inventory/employee-requests")
 @login_required
 def inventory_employee_requests():
+    can_manage = _can_manage()
     query = InvEmployeeRequest.query
-    if not _can_manage():
+    if not can_manage:
         query = query.filter_by(requester_user_id=current_user.id)
-    rows = query.order_by(InvEmployeeRequest.created_at.desc()).all()
+    requester_users = _employee_request_filter_users(query) if can_manage else []
+    filters = _employee_request_filter_values()
+    rows = (
+        _apply_employee_request_filters(query, filters, can_filter_by_user=can_manage)
+        .order_by(InvEmployeeRequest.created_at.desc(), InvEmployeeRequest.id.desc())
+        .all()
+    )
     pending_count = sum(1 for row in rows if _can_process(row))
     return render_template(
         "portal/inventory/employee_requests.html",
         rows=rows,
         stages=STAGES,
+        status_options=STATUS_LABELS,
+        requester_users=requester_users,
+        filters=filters,
         request_status_labels={row.id: _request_status_label(row) for row in rows},
-        can_manage=_can_manage(),
+        can_manage=can_manage,
         can_manage_catalog=_can_manage_catalog(),
         pending_count=pending_count,
     )
@@ -628,16 +734,28 @@ def inventory_employee_requests():
 @portal_bp.route("/inventory/employee-requests/tasks")
 @login_required
 def inventory_employee_request_tasks():
+    can_manage = _can_manage()
+    filters = _employee_request_filter_values()
+    filters["status"] = "SUBMITTED"
+    query = _apply_employee_request_filters(
+        InvEmployeeRequest.query.filter_by(status="SUBMITTED"),
+        filters,
+        can_filter_by_user=can_manage,
+    )
     rows = [
-        row for row in InvEmployeeRequest.query.filter_by(status="SUBMITTED").order_by(InvEmployeeRequest.created_at.desc()).all()
+        row for row in query.order_by(InvEmployeeRequest.created_at.desc(), InvEmployeeRequest.id.desc()).all()
         if _can_process(row)
     ]
+    requester_users = _employee_request_filter_users(InvEmployeeRequest.query) if can_manage else []
     return render_template(
         "portal/inventory/employee_requests.html",
         rows=rows,
         stages=STAGES,
+        status_options=STATUS_LABELS,
+        requester_users=requester_users,
+        filters=filters,
         request_status_labels={row.id: _request_status_label(row) for row in rows},
-        can_manage=_can_manage(),
+        can_manage=can_manage,
         can_manage_catalog=_can_manage_catalog(),
         pending_count=len(rows),
         tasks=True,
@@ -700,17 +818,12 @@ def inventory_employee_request_new():
                 catalog_has_items=catalog_has_items,
                 can_manage_catalog=_can_manage_catalog(),
             )
-        managers = resolve_responsible_managers(current_user.id)
-        manager_ids = [int(manager.id) for manager in managers if manager and manager.id != current_user.id]
-        manager_id = manager_ids[0] if manager_ids else None
         row = InvEmployeeRequest(
             requester_user_id=current_user.id,
-            manager_user_id=manager_id,
-            manager_user_ids=json.dumps(manager_ids, separators=(",", ":")) if manager_ids else None,
             items_text="",
             purpose=purpose,
             note=(request.form.get("note") or "").strip() or None,
-            approval_stage="MANAGER" if manager_id else _warehouse_or_hr_stage(current_user.id),
+            approval_stage=_warehouse_or_hr_stage(current_user.id),
         )
         db.session.add(row)
         db.session.flush()
@@ -743,8 +856,8 @@ def inventory_employee_request_view(request_id):
     row = InvEmployeeRequest.query.get_or_404(request_id)
     if not _can_view(row):
         abort(403)
-    # The employee owns the requested quantities.  Managers record their
-    # approval/comment in their own stage and cannot silently alter the form.
+    # The employee owns the requested quantities. Only the requester may
+    # alter a pending request; warehouse/HR approvers record their decision.
     can_edit = row.status == "SUBMITTED" and row.requester_user_id == current_user.id
     request_item_ids = [line.item_id for line in row.lines if line.item_id]
     # A request view only needs its own items' balances.  Loading every item
@@ -777,7 +890,7 @@ def inventory_employee_request_view(request_id):
         row.note = (request.form.get("note") or "").strip() or None
         if old_signature != new_signature:
             _replace_lines(row, requested_lines)
-            row.approval_stage = "MANAGER" if _manager_ids(row) else _warehouse_or_hr_stage(row.requester_user_id)
+            row.approval_stage = _warehouse_or_hr_stage(row.requester_user_id)
             _notify(row, _recipient_ids(row), f"تم تعديل طلب المواد #{row.id} ويحتاج إعادة المتابعة لدى {STAGES[row.approval_stage]}.")
         db.session.add(InvEmployeeRequestAction(
             request_id=row.id,
@@ -799,6 +912,7 @@ def inventory_employee_request_view(request_id):
         warehouse_balances=warehouse_balances,
         stages=STAGES,
         status_label=_request_status_label(row),
+        approval_stage=_effective_approval_stage(row),
         previous_requests=previous_requests,
         can_process=_can_process(row),
         can_edit=can_edit,
@@ -972,7 +1086,9 @@ def inventory_employee_request_approve(request_id):
     if not _can_process(row):
         abort(403)
     note = (request.form.get("note") or "").strip() or None
-    current_stage = row.approval_stage
+    current_stage = _effective_approval_stage(row)
+    if row.approval_stage != current_stage:
+        row.approval_stage = current_stage
     decision = (request.form.get("decision") or "approve").strip().lower()
     if decision == "reject":
         if not note:
@@ -997,9 +1113,7 @@ def inventory_employee_request_approve(request_id):
         return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
     if decision != "approve":
         abort(400)
-    if current_stage == "MANAGER":
-        row.approval_stage = _warehouse_or_hr_stage(row.requester_user_id)
-    elif current_stage in {"WAREHOUSE", "HR"}:
+    if current_stage in {"WAREHOUSE", "HR"}:
         warehouse_id_raw = request.form.get("warehouse_id") or ""
         if not warehouse_id_raw.isdigit():
             flash("اختر مستودع الصرف.", "danger")

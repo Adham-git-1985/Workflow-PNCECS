@@ -54,7 +54,10 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
 
         cls.app.register_blueprint(portal_bp)
         cls.app.jinja_loader = ChoiceLoader([
-            DictLoader({"portal/inventory/base.html": "{% block inv_content %}{% endblock %}"}),
+            DictLoader({
+                "portal/inventory/base.html": "{% block inv_content %}{% endblock %}",
+                "portal/layout.html": "{% block content %}{% endblock %}",
+            }),
             cls.app.jinja_loader,
         ])
         cls.context = cls.app.app_context()
@@ -145,30 +148,56 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         return InvEmployeeRequest.query.order_by(InvEmployeeRequest.id.desc()).first()
 
-    def test_one_of_the_direct_managers_can_approve_the_request(self):
+    def test_legacy_manager_stage_is_routed_to_the_warehouse(self):
         self._login(self.second_manager.id)
         response = self.client.post(
             f"/portal/inventory/employee-requests/{self.request.id}/approve",
-            data={"note": "Reviewed by the second manager"},
+            data={"decision": "reject", "note": "Managers no longer approve materials"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+        self._login(self.warehouse_manager.id)
+        response = self.client.post(
+            f"/portal/inventory/employee-requests/{self.request.id}/approve",
+            data={"decision": "reject", "note": "Warehouse review"},
         )
 
         self.assertEqual(response.status_code, 302)
         db.session.expire_all()
         row = db.session.get(InvEmployeeRequest, self.request.id)
-        self.assertEqual(row.approval_stage, "WAREHOUSE")
+        self.assertEqual(row.status, "REJECTED")
         action = InvEmployeeRequestAction.query.filter_by(
             request_id=row.id,
-            stage="MANAGER",
-            action="APPROVED",
+            stage="WAREHOUSE",
+            action="REJECTED",
         ).one()
-        self.assertEqual(action.actor_user_id, self.second_manager.id)
+        self.assertEqual(action.actor_user_id, self.warehouse_manager.id)
+
+    def test_new_request_bypasses_direct_manager_and_goes_to_warehouse(self):
+        item = InvItem.query.filter_by(code="PAPER-001").one()
+        self._login(self.employee.id)
+        response = self.client.post(
+            "/portal/inventory/employee-requests/new",
+            data={
+                "item_id": str(item.id),
+                "requested_qty": "2",
+                "purpose": "New office supply request",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        row = InvEmployeeRequest.query.order_by(InvEmployeeRequest.id.desc()).first()
+        self.assertEqual(row.approval_stage, "WAREHOUSE")
+        self.assertIsNone(row.manager_user_id)
+        self.assertIsNone(row.manager_user_ids)
 
         self._login(self.first_manager.id)
-        duplicate = self.client.post(
+        manager_attempt = self.client.post(
             f"/portal/inventory/employee-requests/{row.id}/approve",
-            data={"note": "A second decision must not be accepted"},
+            data={"decision": "reject", "note": "Managers are bypassed"},
         )
-        self.assertEqual(duplicate.status_code, 403)
+        self.assertEqual(manager_attempt.status_code, 403)
 
     def test_warehouse_manager_request_uses_hr_fallback_and_not_self_approval(self):
         row = self._submit_warehouse_manager_request()
@@ -316,7 +345,7 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
         self.assertIsNone(marker)
 
     def test_current_approver_can_reject_with_a_recorded_reason(self):
-        self._login(self.second_manager.id)
+        self._login(self.warehouse_manager.id)
 
         response = self.client.post(
             f"/portal/inventory/employee-requests/{self.request.id}/approve",
@@ -329,11 +358,57 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
         self.assertEqual(row.status, "REJECTED")
         action = InvEmployeeRequestAction.query.filter_by(
             request_id=row.id,
-            stage="MANAGER",
+            stage="WAREHOUSE",
             action="REJECTED",
         ).one()
-        self.assertEqual(action.actor_user_id, self.second_manager.id)
+        self.assertEqual(action.actor_user_id, self.warehouse_manager.id)
         self.assertEqual(action.note, "The request is not needed")
+
+    def test_request_list_filters_status_stage_employee_and_text(self):
+        db.session.add(InvEmployeeRequest(
+            requester_user_id=self.first_manager.id,
+            items_text="Network cable",
+            purpose="A different request",
+            approval_stage="DONE",
+            status="APPROVED",
+        ))
+        db.session.commit()
+
+        self._login(self.warehouse_manager.id)
+        with patch("portal.supply_requests.render_template", return_value="list") as render:
+            response = self.client.get(
+                "/portal/inventory/employee-requests?status=SUBMITTED&stage=WAREHOUSE"
+                f"&user_id={self.employee.id}&q=A4"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row.id for row in render.call_args.kwargs["rows"]], [self.request.id])
+        self.assertEqual(render.call_args.kwargs["filters"], {
+            "q": "A4",
+            "status": "SUBMITTED",
+            "stage": "WAREHOUSE",
+            "user_id": str(self.employee.id),
+            "date_from": "",
+            "date_to": "",
+        })
+
+    def test_request_list_page_renders_filter_controls(self):
+        self._login(self.warehouse_manager.id)
+        response = self.client.get("/portal/inventory/employee-requests")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn('id="requestSearch"', body)
+        self.assertIn('id="requestStatus"', body)
+        self.assertIn('id="requestStage"', body)
+
+    def test_request_templates_compile(self):
+        for template_name in (
+            "portal/inventory/employee_requests.html",
+            "portal/inventory/employee_request_view.html",
+        ):
+            with self.subTest(template=template_name):
+                self.app.jinja_env.get_template(template_name)
 
     def test_requester_can_cancel_a_pending_material_request(self):
         self._login(self.employee.id)
@@ -415,6 +490,7 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
             [row.id for row in render.call_args.kwargs["items"]],
             [item.id],
         )
+        self.assertEqual(render.call_args.kwargs["approval_stage"], "WAREHOUSE")
 
     def test_material_search_shows_the_employee_last_request_and_month_marker(self):
         item = InvItem.query.filter_by(code="PAPER-001").one()

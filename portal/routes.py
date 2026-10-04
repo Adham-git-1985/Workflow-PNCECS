@@ -13971,7 +13971,13 @@ def _attendance_edit_hr_approver_user_ids() -> list[int]:
 def _manual_attendance_review_stage(row: HRAttendanceSpecialCase | None) -> str | None:
     if not row or _manual_attendance_approval_status(row) != "PENDING":
         return None
-    return "SECRETARY_GENERAL" if getattr(row, "approved_at", None) else "HR"
+    # Some requests created while the first-stage audit timestamp was optional
+    # retain the approving user but not ``approved_at``. The reviewer is the
+    # authoritative marker in that case, so do not show them as still waiting
+    # for Administrative Affairs after that stage has already been completed.
+    return "SECRETARY_GENERAL" if (
+        getattr(row, "approved_at", None) or getattr(row, "approved_by_id", None)
+    ) else "HR"
 
 
 def _user_is_super_admin_account(user: User | None) -> bool:

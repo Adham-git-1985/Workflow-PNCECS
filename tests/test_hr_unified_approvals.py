@@ -135,6 +135,37 @@ class UnifiedApprovalsInboxTests(unittest.TestCase):
         self.assertEqual([row.id for row in manual_rows], [correction.id])
         self.assertTrue(manual_rows[0].can_review)
 
+    def test_daily_edit_with_legacy_first_approval_moves_to_secretary_general(self):
+        secretary = User(
+            email="unified-secretary@example.test",
+            name="Secretary General",
+            password_hash="x",
+            role="GENERAL_SECRETARY",
+        )
+        correction = HRAttendanceSpecialCase(
+            user_id=self.employee.id,
+            day="2032-01-04",
+            day_to="2032-01-04",
+            kind="MANUAL_ATTENDANCE",
+            start_time="08:05",
+            approval_status="PENDING",
+            applied=False,
+            # Older records can have a first-stage reviewer without the
+            # timestamp that newer versions also persist.
+            approved_by_id=self.affairs_manager.id,
+            created_by_id=self.employee.id,
+        )
+        db.session.add_all((secretary, correction))
+        db.session.commit()
+
+        with self.app.test_request_context("/portal/hr/approvals"):
+            schedule_rows, manual_rows = _attendance_approval_inbox_rows(user=secretary)
+
+        self.assertEqual(schedule_rows, [])
+        self.assertEqual([row.id for row in manual_rows], [correction.id])
+        self.assertEqual(manual_rows[0].review_stage, "SECRETARY_GENERAL")
+        self.assertTrue(manual_rows[0].can_review)
+
     def test_pending_schedule_remains_visible_to_a_manager_who_already_reviewed_it(self):
         plan = HRAttendanceSchedulePlan(
             user_id=self.employee.id,
