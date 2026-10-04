@@ -10,7 +10,7 @@ from werkzeug.security import check_password_hash
 from urllib.parse import urlparse
 from flask_migrate import Migrate
 from flask_wtf.csrf import generate_csrf
-from sqlalchemy import func, event
+from sqlalchemy import and_, func, event, or_
 from sqlalchemy.engine import Engine
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -142,6 +142,11 @@ ESCALATION_BADGE_TTL = 30  # seconds
 
 UNREAD_CACHE = {}
 UNREAD_TTL = 10  # seconds
+ADMIN_BROADCAST_NOTIFICATION_TARGET_TYPES = (
+    "ADMIN_BROADCAST",
+    "ADMIN_BROADCAST_CORR_INBOUND",
+    "ADMIN_BROADCAST_CORR_OUTBOUND",
+)
 
 # ======================
 # App Init
@@ -219,8 +224,17 @@ def get_unread_count(user_id, source="workflow"):
     elif src in {'all', 'unified'}:
         src_filter = None
     else:
-        # Treat NULL as legacy workflow
-        src_filter = (Notification.source.is_(None) | (Notification.source == 'workflow'))
+        # Treat NULL as legacy workflow. System-update broadcasts originate
+        # from the portal but open the shared internal inbox, so their badge
+        # must also be visible in the main Masar shell.
+        src_filter = or_(
+            Notification.source.is_(None),
+            Notification.source == 'workflow',
+            and_(
+                Notification.source == 'portal',
+                Notification.target_type.in_(ADMIN_BROADCAST_NOTIFICATION_TARGET_TYPES),
+            ),
+        )
 
     query = db.session.query(func.count(Notification.id)).filter(
         Notification.user_id == user_id,

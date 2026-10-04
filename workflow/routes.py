@@ -29,7 +29,7 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-from sqlalchemy import func, update, or_
+from sqlalchemy import and_, func, update, or_
 from sqlalchemy.orm import joinedload
 
 from . import workflow_bp
@@ -3116,6 +3116,11 @@ def preview_workflow_attachment(file_id):
 # =========================
 _NOTIFICATION_REQUEST_NUMBER_RE = re.compile(r"#\s*(\d+)")
 _NOTIFICATION_TICKET_NUMBER_RE = re.compile(r"تذكرة(?:\s+دعم)?[^#]{0,80}#\s*(\d+)", re.IGNORECASE)
+ADMIN_BROADCAST_NOTIFICATION_TARGET_TYPES = (
+    "ADMIN_BROADCAST",
+    "ADMIN_BROADCAST_CORR_INBOUND",
+    "ADMIN_BROADCAST_CORR_OUTBOUND",
+)
 
 
 def _notification_source(value: str | None, default: str = "workflow") -> str:
@@ -3124,19 +3129,33 @@ def _notification_source(value: str | None, default: str = "workflow") -> str:
     return source if source in {"workflow", "portal", "all"} else default
 
 
+def _admin_broadcast_notification_filter():
+    """Return portal updates that must also be visible in the Masar shell."""
+    return and_(
+        Notification.source == "portal",
+        Notification.target_type.in_(ADMIN_BROADCAST_NOTIFICATION_TARGET_TYPES),
+    )
+
+
 def _notification_source_filter(source: str):
     """Return the SQL filter for one notification source.
 
     Existing rows created before ``Notification.source`` was introduced have
     a NULL source.  They are legacy Masar notifications and therefore belong
-    to the workflow inbox.
+    to the workflow inbox. Administrator system-update broadcasts are created
+    by the portal, but must be visible from either shell because their target
+    is the shared internal inbox.
     """
     source = _notification_source(source)
     if source == "portal":
         return Notification.source == "portal"
     if source == "all":
         return None
-    return or_(Notification.source.is_(None), Notification.source == "workflow")
+    return or_(
+        Notification.source.is_(None),
+        Notification.source == "workflow",
+        _admin_broadcast_notification_filter(),
+    )
 
 
 def _notification_target_url(notification: Notification) -> str | None:
@@ -3289,7 +3308,7 @@ def _sync_mirror_for_event(event_key: str):
             Notification.is_mirror.is_(False),
             Notification.is_read.is_(False),
             Notification.is_visible.is_(True),
-            or_(Notification.source.is_(None), Notification.source == "workflow")
+            _notification_source_filter("workflow")
         )
         .scalar()
     ) or 0
@@ -3302,7 +3321,7 @@ def _sync_mirror_for_event(event_key: str):
                 Notification.is_mirror.is_(True),
                 Notification.is_read.is_(False),
                 Notification.is_visible.is_(True),
-                or_(Notification.source.is_(None), Notification.source == "workflow")
+                _notification_source_filter("workflow")
             )
             .values(is_read=True)
         )
@@ -3438,8 +3457,23 @@ def _notification_state_for_user(user_id: int, source: str = "all") -> dict:
         key = (row_source or "workflow").strip().lower()
         unread_by_source[key] = unread_by_source.get(key, 0) + int(count or 0)
 
-    workflow_unread = unread_by_source.get("workflow", 0)
+    workflow_native_unread = unread_by_source.get("workflow", 0)
     portal_unread = unread_by_source.get("portal", 0)
+    broadcast_unread = (
+        db.session.query(func.count(Notification.id))
+        .filter(
+            Notification.user_id == int(user_id),
+            Notification.is_mirror.is_(False),
+            Notification.is_read.is_(False),
+            Notification.is_visible.is_(True),
+            _admin_broadcast_notification_filter(),
+        )
+        .scalar()
+    ) or 0
+    # A broadcast remains a portal notification too, while being deliberately
+    # surfaced in the shared Masar inbox and its bell badge.
+    workflow_unread = workflow_native_unread + int(broadcast_unread)
+    all_unread = sum(unread_by_source.values())
     latest_query = (
         db.session.query(func.max(Notification.id))
         .filter(
@@ -3452,7 +3486,7 @@ def _notification_state_for_user(user_id: int, source: str = "all") -> dict:
         latest_query = latest_query.filter(scoped_filter)
     latest_id = latest_query.scalar()
     scoped_unread = (
-        workflow_unread + portal_unread
+        all_unread
         if source == "all"
         else (portal_unread if source == "portal" else workflow_unread)
     )
@@ -3593,10 +3627,10 @@ def event_stream():
 def notifications_dashboard():
     total = Notification.query.filter(
         Notification.is_visible.is_(True),
-        or_(Notification.source.is_(None), Notification.source == 'workflow'),
+        _notification_source_filter("workflow"),
     ).count()
     unread = Notification.query.filter_by(is_read=False, is_visible=True).filter(
-        or_(Notification.source.is_(None), Notification.source == 'workflow')
+        _notification_source_filter("workflow")
     ).count()
 
     top_users = (
@@ -3607,7 +3641,7 @@ def notifications_dashboard():
         .join(Notification, Notification.user_id == User.id)
         .filter(
             Notification.is_visible.is_(True),
-            or_(Notification.source.is_(None), Notification.source == 'workflow'),
+            _notification_source_filter("workflow"),
         )
         .group_by(User.email)
         .order_by(func.count(Notification.id).desc())
@@ -3622,7 +3656,7 @@ def notifications_dashboard():
         )
         .filter(
             Notification.is_visible.is_(True),
-            or_(Notification.source.is_(None), Notification.source == 'workflow'),
+            _notification_source_filter("workflow"),
         )
         .group_by(Notification.type)
         .all()

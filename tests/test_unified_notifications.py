@@ -124,6 +124,51 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
         self.assertIn("تذكرة دعم جديدة #42", portal_body)
         self.assertIn(f"/portal/notifications/{portal_notification.id}/open", portal_body)
 
+    def test_admin_broadcast_is_visible_in_both_notification_inboxes(self):
+        broadcast = Notification(
+            user_id=self.user.id,
+            message="تحديث نظامي جديد",
+            source="portal",
+            type="INFO",
+            target_type="ADMIN_BROADCAST",
+            link_url="/messages/view/123",
+            is_read=False,
+        )
+        db.session.add(broadcast)
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, self.user.id)
+            workflow_response = client.get("/workflow/notifications")
+            workflow_count = client.get("/workflow/notifications/unread-count")
+            portal_response = client.get("/portal/notifications")
+            workflow_poll = client.get(
+                "/workflow/notifications/poll?source=workflow&after_id=0"
+            ).get_json()
+            portal_poll = client.get(
+                "/workflow/notifications/poll?source=portal&after_id=0"
+            ).get_json()
+
+        self.assertEqual(workflow_response.status_code, 200)
+        self.assertIn("تحديث نظامي جديد", workflow_response.get_data(as_text=True))
+        self.assertIn(
+            f"/portal/notifications/{broadcast.id}/open",
+            workflow_response.get_data(as_text=True),
+        )
+        self.assertEqual(workflow_count.get_json(), {"count": 1})
+        self.assertEqual(portal_response.status_code, 200)
+        self.assertIn("تحديث نظامي جديد", portal_response.get_data(as_text=True))
+        self.assertEqual(
+            [row["notification_id"] for row in workflow_poll["notifications"]],
+            [broadcast.id],
+        )
+        self.assertEqual(workflow_poll["unread"], 1)
+        self.assertEqual(
+            [row["notification_id"] for row in portal_poll["notifications"]],
+            [broadcast.id],
+        )
+        self.assertEqual(portal_poll["unread"], 1)
+
     def test_notification_poll_is_scoped_to_requested_source(self):
         workflow_notification = Notification(
             user_id=self.user.id,
