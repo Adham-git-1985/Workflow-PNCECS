@@ -1,0 +1,105 @@
+{% extends "portal/layout.html" %}
+{% block title %}الإشعارات المرسلة{% endblock %}
+
+{% block content %}
+<div class="p-4 bg-white rounded-3 shadow-sm">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-send"></i> الإشعارات المرسلة</h4>
+      <div class="text-muted">
+        {% if is_super_admin %}
+          يمكنك إدارة جميع الإشعارات الإدارية المرسلة.
+        {% else %}
+          يمكنك إدارة الإشعارات التي أرسلتها أنت فقط.
+        {% endif %}
+      </div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-primary" href="{{ url_for('portal.portal_admin_send_notifications') }}"><i class="bi bi-send-fill"></i> إرسال إشعار</a>
+      {% if is_super_admin %}
+        <a class="btn btn-outline-primary" href="{{ url_for('portal.portal_admin_notifications') }}"><i class="bi bi-bell-slash"></i> إدارة إشعارات الموظفين</a>
+      {% endif %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}"><i class="bi bi-arrow-right"></i> رجوع للإدارة</a>
+    </div>
+  </div>
+
+  <div class="alert alert-info">
+    <div class="fw-semibold mb-1">الخيارات المتاحة</div>
+    <ul class="mb-0 ps-3">
+      <li><strong>تعديل:</strong> يحدّث العنوان والنص في النسخ الحالية بصمت، دون إنشاء إشعار جديد أو تغيير حالة القراءة.</li>
+      <li><strong>حذف من المرسلة:</strong> يخفيه من قائمة الإدارة والسوبر أدمن فقط، ويبقى الإشعار لدى المستخدمين.</li>
+      <li><strong>حذف من جميع المستلمين:</strong> يحذف الإشعار ورسالة التحديث من جميع الحسابات التي وصلتها.</li>
+    </ul>
+  </div>
+
+  <form method="get" class="row g-2 align-items-end mb-3">
+    <div class="col-md-8">
+      <label class="form-label" for="sentNotificationSearch">بحث</label>
+      <input id="sentNotificationSearch" class="form-control" type="search" name="q" value="{{ q }}" placeholder="عنوان الإشعار أو نصه أو اسم المرسل">
+    </div>
+    <div class="col-md-auto d-flex gap-2">
+      <button class="btn btn-outline-primary" type="submit"><i class="bi bi-search"></i> بحث</button>
+      {% if q %}<a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_sent_notifications') }}">مسح</a>{% endif %}
+    </div>
+  </form>
+
+  {% if rows %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>العنوان</th>
+            {% if is_super_admin %}<th>المرسل</th>{% endif %}
+            <th>تاريخ الإرسال</th>
+            <th>الوصول الحالي</th>
+            <th>الحالة</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            {% set message = row.message %}
+            <tr>
+              <td class="fw-semibold">{{ message.subject or 'تحديث نظام' }}</td>
+              {% if is_super_admin %}<td>{{ message.sender.full_name }}</td>{% endif %}
+              <td class="small text-nowrap">{{ message.created_at|local_datetime if message.created_at else '—' }}</td>
+              <td>
+                <div>{{ row.recipient_count }} رسالة وارد</div>
+                <div class="small text-muted">{{ row.notification_count }} إشعار ظاهر</div>
+              </td>
+              <td>
+                {% if row.delivery_active %}
+                  <span class="badge text-bg-success">ظاهر لدى المستلمين</span>
+                {% else %}
+                  <span class="badge text-bg-secondary">محذوف من المستلمين</span>
+                {% endif %}
+              </td>
+              <td>
+                <div class="d-flex flex-wrap gap-1 justify-content-end">
+                  {% if row.delivery_active %}
+                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.portal_admin_edit_sent_notification', message_id=message.id, q=q or none) }}"><i class="bi bi-pencil-square"></i> تعديل</a>
+                    <form method="post" class="d-inline" onsubmit="return confirm('سيُحذف الإشعار والرسالة المقابلة من جميع المستلمين. هل تريد المتابعة؟');">
+                      <input type="hidden" name="message_id" value="{{ message.id }}">
+                      <input type="hidden" name="action" value="DELETE_RECIPIENT_COPIES">
+                      <input type="hidden" name="q" value="{{ q }}">
+                      <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-people"></i> حذف من المستلمين</button>
+                    </form>
+                  {% endif %}
+                  <form method="post" class="d-inline" onsubmit="return confirm('سيُحذف الإشعار من قائمة المرسلة لدى الإدارة والسوبر أدمن فقط، وسيبقى ظاهرًا للمستخدمين. هل تريد المتابعة؟');">
+                    <input type="hidden" name="message_id" value="{{ message.id }}">
+                    <input type="hidden" name="action" value="DELETE_SENT_COPY">
+                    <input type="hidden" name="q" value="{{ q }}">
+                    <button class="btn btn-sm btn-outline-secondary" type="submit"><i class="bi bi-trash"></i> حذف من المرسلة</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="alert alert-light border mb-0">لا توجد إشعارات مرسلة مطابقة.</div>
+  {% endif %}
+</div>
+{% endblock %}

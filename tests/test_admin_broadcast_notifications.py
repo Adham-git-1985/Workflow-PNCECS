@@ -483,6 +483,196 @@ class AdminBroadcastNotificationRouteTests(unittest.TestCase):
         self.assertEqual(forbidden_feedback.status_code, 404)
         self.assertEqual(forbidden_reference.status_code, 403)
 
+    def test_admin_can_silently_edit_own_broadcast_without_redelivery(self):
+        with self.app.test_client() as client:
+            self._login(client, self.admin.id)
+            sent = client.post(
+                "/portal/admin/notifications/send",
+                data={
+                    "title": "عنوان قبل التعديل",
+                    "body": "<p>النص قبل التعديل.</p>",
+                    "level": "INFO",
+                    "target_scope": "USERS",
+                    "recipient_user_ids": [
+                        str(self.department_employee.id),
+                        str(self.other_employee.id),
+                    ],
+                },
+            )
+        self.assertEqual(sent.status_code, 302)
+
+        message = Message.query.one()
+        notifications = Notification.query.order_by(Notification.id.asc()).all()
+        recipients = MessageRecipient.query.order_by(MessageRecipient.id.asc()).all()
+        notification_count = len(notifications)
+        recipient_count = len(recipients)
+        first_notification_id = notifications[0].id
+        first_notification_created_at = notifications[0].created_at
+        first_notification_event_key = notifications[0].event_key
+        notifications[0].is_read = True
+        recipients[0].is_read = True
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, self.admin.id)
+            edit_form = client.get(
+                f"/portal/admin/notifications/sent/{message.id}/edit"
+            )
+            edited = client.post(
+                f"/portal/admin/notifications/sent/{message.id}/edit",
+                data={
+                    "title": "عنوان بعد التعديل",
+                    "body": (
+                        '<p><strong>النص بعد التعديل</strong></p>'
+                        '<script>alert(1)</script>'
+                    ),
+                },
+            )
+        self.assertEqual(edit_form.status_code, 200)
+        self.assertIn("تعديل إشعار مُرسل", edit_form.get_data(as_text=True))
+        self.assertEqual(edited.status_code, 302)
+
+        db.session.expire_all()
+        updated_message = db.session.get(Message, message.id)
+        updated_notifications = Notification.query.order_by(Notification.id.asc()).all()
+        updated_recipients = MessageRecipient.query.order_by(MessageRecipient.id.asc()).all()
+        updated_first_notification = db.session.get(Notification, first_notification_id)
+        self.assertEqual(Notification.query.count(), notification_count)
+        self.assertEqual(MessageRecipient.query.count(), recipient_count)
+        self.assertEqual(updated_message.subject, "عنوان بعد التعديل")
+        self.assertIn("<strong>النص بعد التعديل</strong>", updated_message.body)
+        self.assertNotIn("script", updated_message.body.lower())
+        self.assertEqual(
+            {notification.message for notification in updated_notifications},
+            {"عنوان بعد التعديل"},
+        )
+        self.assertTrue(updated_first_notification.is_read)
+        self.assertEqual(updated_first_notification.created_at, first_notification_created_at)
+        self.assertEqual(updated_first_notification.event_key, first_notification_event_key)
+        self.assertTrue(updated_recipients[0].is_read)
+        self.assertIsNotNone(AuditLog.query.filter_by(
+            action="PORTAL_ADMIN_BROADCAST_EDIT",
+            target_id=message.id,
+        ).first())
+
+    def test_deleting_sender_copy_keeps_the_broadcast_visible_to_recipients(self):
+        with self.app.test_client() as client:
+            self._login(client, self.admin.id)
+            sent = client.post(
+                "/portal/admin/notifications/send",
+                data={
+                    "title": "إشعار يحذف من المرسلة",
+                    "body": "يبقى هذا النص عند المستلمين.",
+                    "level": "INFO",
+                    "target_scope": "USERS",
+                    "recipient_user_ids": [str(self.department_employee.id)],
+                },
+            )
+        self.assertEqual(sent.status_code, 302)
+        message = Message.query.one()
+
+        with self.app.test_client() as client:
+            self._login(client, self.admin.id)
+            sent_list = client.get("/portal/admin/notifications/sent")
+            deleted = client.post(
+                "/portal/admin/notifications/sent",
+                data={
+                    "message_id": str(message.id),
+                    "action": "DELETE_SENT_COPY",
+                },
+            )
+            sent_list_after = client.get("/portal/admin/notifications/sent")
+            hidden_edit = client.get(
+                f"/portal/admin/notifications/sent/{message.id}/edit"
+            )
+        with self.app.test_client() as client:
+            self._login(client, self.super_admin.id)
+            super_sent_list_after = client.get("/portal/admin/notifications/sent")
+            hidden_edit_for_super_admin = client.get(
+                f"/portal/admin/notifications/sent/{message.id}/edit"
+            )
+        self.assertEqual(sent_list.status_code, 200)
+        self.assertIn("إشعار يحذف من المرسلة", sent_list.get_data(as_text=True))
+        self.assertEqual(deleted.status_code, 302)
+        self.assertEqual(sent_list_after.status_code, 200)
+        self.assertNotIn("إشعار يحذف من المرسلة", sent_list_after.get_data(as_text=True))
+        self.assertEqual(hidden_edit.status_code, 404)
+        self.assertEqual(super_sent_list_after.status_code, 200)
+        self.assertNotIn(
+            "إشعار يحذف من المرسلة",
+            super_sent_list_after.get_data(as_text=True),
+        )
+        self.assertEqual(hidden_edit_for_super_admin.status_code, 404)
+
+        db.session.expire_all()
+        self.assertTrue(db.session.get(Message, message.id).sender_deleted)
+        self.assertTrue(Notification.query.one().is_visible)
+        self.assertFalse(MessageRecipient.query.one().is_deleted)
+        self.assertIsNotNone(AuditLog.query.filter_by(
+            action="PORTAL_ADMIN_BROADCAST_DELETE_SENT_COPY",
+            target_id=message.id,
+        ).first())
+
+    def test_super_admin_can_delete_recipient_copies_but_admin_cannot_manage_others(self):
+        with self.app.test_client() as client:
+            self._login(client, self.super_admin.id)
+            sent = client.post(
+                "/portal/admin/notifications/send",
+                data={
+                    "title": "إشعار السوبر أدمن",
+                    "body": "هذا النص سيحذف من حسابات المستلمين.",
+                    "level": "URGENT",
+                    "target_scope": "USERS",
+                    "recipient_user_ids": [
+                        str(self.department_employee.id),
+                        str(self.other_employee.id),
+                    ],
+                },
+            )
+        self.assertEqual(sent.status_code, 302)
+        message = Message.query.one()
+
+        with self.app.test_client() as client:
+            self._login(client, self.admin.id)
+            foreign_edit = client.get(
+                f"/portal/admin/notifications/sent/{message.id}/edit"
+            )
+            foreign_delete = client.post(
+                "/portal/admin/notifications/sent",
+                data={
+                    "message_id": str(message.id),
+                    "action": "DELETE_RECIPIENT_COPIES",
+                },
+            )
+        self.assertEqual(foreign_edit.status_code, 403)
+        self.assertEqual(foreign_delete.status_code, 403)
+
+        with self.app.test_client() as client:
+            self._login(client, self.super_admin.id)
+            deleted = client.post(
+                "/portal/admin/notifications/sent",
+                data={
+                    "message_id": str(message.id),
+                    "action": "DELETE_RECIPIENT_COPIES",
+                },
+            )
+        self.assertEqual(deleted.status_code, 302)
+
+        db.session.expire_all()
+        self.assertFalse(db.session.get(Message, message.id).sender_deleted)
+        self.assertTrue(all(
+            notification.is_visible is False and notification.is_read is True
+            for notification in Notification.query.all()
+        ))
+        self.assertTrue(all(
+            recipient.is_deleted is True
+            for recipient in MessageRecipient.query.all()
+        ))
+        self.assertIsNotNone(AuditLog.query.filter_by(
+            action="PORTAL_ADMIN_BROADCAST_DELETE_RECIPIENT_COPIES",
+            target_id=message.id,
+        ).first())
+
 
 if __name__ == "__main__":
     unittest.main()

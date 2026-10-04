@@ -7313,6 +7313,11 @@ ADMIN_NOTIFICATION_SCOPES = {
 ADMIN_NOTIFICATION_TARGET_TYPE = "ADMIN_BROADCAST"
 ADMIN_NOTIFICATION_CORR_IN_TARGET_TYPE = "ADMIN_BROADCAST_CORR_INBOUND"
 ADMIN_NOTIFICATION_CORR_OUT_TARGET_TYPE = "ADMIN_BROADCAST_CORR_OUTBOUND"
+ADMIN_NOTIFICATION_BROADCAST_TARGET_TYPES = (
+    ADMIN_NOTIFICATION_TARGET_TYPE,
+    ADMIN_NOTIFICATION_CORR_IN_TARGET_TYPE,
+    ADMIN_NOTIFICATION_CORR_OUT_TARGET_TYPE,
+)
 # This value is deliberately stored on Message.target_kind rather than using
 # is_system_generated: the inbox must show these one-way system messages.
 ADMIN_NOTIFICATION_MESSAGE_TARGET_KIND = "ADMIN_BROADCAST"
@@ -7339,6 +7344,82 @@ def _admin_notification_system_message_body(body: str, correspondence_label: str
     """Store the composed, sanitised rich-text update body for the inbox."""
     del correspondence_label
     return sanitize_notification_rich_text(body)
+
+
+def _is_admin_broadcast_message(message: Message | None) -> bool:
+    return bool(
+        message
+        and (getattr(message, "target_kind", "") or "").strip().upper()
+        == ADMIN_NOTIFICATION_MESSAGE_TARGET_KIND
+    )
+
+
+def _can_manage_admin_broadcast(message: Message | None) -> bool:
+    """Admins manage their own broadcasts; super admins may manage all."""
+    if not _is_admin_broadcast_message(message):
+        return False
+    return bool(
+        _is_super_admin()
+        or getattr(message, "sender_id", None) == getattr(current_user, "id", None)
+    )
+
+
+def _admin_broadcast_message_path(message: Message) -> str:
+    return url_for("messages.view_message", message_id=message.id)
+
+
+def _admin_broadcast_notification_query(message: Message):
+    """Return every recipient notification created for one inbox broadcast."""
+    return (
+        Notification.query
+        .filter(Notification.source == "portal")
+        .filter(Notification.is_mirror.is_(False))
+        .filter(Notification.target_type.in_(ADMIN_NOTIFICATION_BROADCAST_TARGET_TYPES))
+        .filter(Notification.link_url == _admin_broadcast_message_path(message))
+    )
+
+
+def _admin_broadcast_delivery_counts(messages: list[Message]) -> dict[int, dict[str, int]]:
+    """Batch active recipient and visible-notification counts for sent rows."""
+    rows = [message for message in messages if getattr(message, "id", None)]
+    if not rows:
+        return {}
+
+    message_ids = [int(message.id) for message in rows]
+    paths = {
+        int(message.id): _admin_broadcast_message_path(message)
+        for message in rows
+    }
+    recipient_counts = {
+        int(message_id): int(count or 0)
+        for message_id, count in (
+            db.session.query(MessageRecipient.message_id, func.count(MessageRecipient.id))
+            .filter(MessageRecipient.message_id.in_(message_ids))
+            .filter(MessageRecipient.is_deleted.is_(False))
+            .group_by(MessageRecipient.message_id)
+            .all()
+        )
+    }
+    notification_counts_by_path = {
+        link_url: int(count or 0)
+        for link_url, count in (
+            db.session.query(Notification.link_url, func.count(Notification.id))
+            .filter(Notification.source == "portal")
+            .filter(Notification.is_mirror.is_(False))
+            .filter(Notification.is_visible.is_(True))
+            .filter(Notification.target_type.in_(ADMIN_NOTIFICATION_BROADCAST_TARGET_TYPES))
+            .filter(Notification.link_url.in_(list(paths.values())))
+            .group_by(Notification.link_url)
+            .all()
+        )
+    }
+    return {
+        message_id: {
+            "recipient_count": recipient_counts.get(message_id, 0),
+            "notification_count": notification_counts_by_path.get(path, 0),
+        }
+        for message_id, path in paths.items()
+    }
 
 
 def _admin_notification_message_url(notification) -> str | None:
@@ -8023,6 +8104,187 @@ def portal_admin_send_notifications():
         selected_department_id=None,
         selected_correspondence="",
     )
+
+
+@portal_bp.route("/admin/notifications/sent", methods=["GET", "POST"])
+@login_required
+def portal_admin_sent_notifications():
+    """Manage administrative broadcasts already sent to employee inboxes."""
+    if not _is_admin_or_super_admin():
+        abort(403)
+
+    is_super_admin = _is_super_admin()
+    search_query = (request.values.get("q") or "").strip()[:160]
+
+    if request.method == "POST":
+        try:
+            message_id = int(request.form.get("message_id") or 0)
+        except (TypeError, ValueError):
+            message_id = 0
+        message = db.session.get(Message, message_id) if message_id else None
+        if not _is_admin_broadcast_message(message) or message.sender_deleted:
+            abort(404)
+        if not _can_manage_admin_broadcast(message):
+            abort(403)
+
+        action = (request.form.get("action") or "").strip().upper()
+        now = datetime.utcnow()
+        if action == "DELETE_SENT_COPY":
+            message.sender_deleted = True
+            message.sender_deleted_at = now
+            _portal_audit(
+                "PORTAL_ADMIN_BROADCAST_DELETE_SENT_COPY",
+                f"message_id={message.id} sender_id={message.sender_id}",
+                target_type="ADMIN_BROADCAST",
+                target_id=message.id,
+            )
+            db.session.commit()
+            flash(
+                "تم حذف الإشعار من قائمة المرسلة لدى الإدارة فقط. ما زال ظاهرًا للمستلمين.",
+                "success",
+            )
+        elif action == "DELETE_RECIPIENT_COPIES":
+            hidden_notification_count = (
+                _admin_broadcast_notification_query(message)
+                .filter(Notification.is_visible.is_(True))
+                .update({"is_visible": False, "is_read": True}, synchronize_session=False)
+            )
+            deleted_recipient_count = (
+                MessageRecipient.query
+                .filter(MessageRecipient.message_id == message.id)
+                .filter(MessageRecipient.is_deleted.is_(False))
+                .update({"is_deleted": True, "deleted_at": now}, synchronize_session=False)
+            )
+            _portal_audit(
+                "PORTAL_ADMIN_BROADCAST_DELETE_RECIPIENT_COPIES",
+                (
+                    f"message_id={message.id} sender_id={message.sender_id} "
+                    f"notifications={hidden_notification_count} recipients={deleted_recipient_count}"
+                ),
+                target_type="ADMIN_BROADCAST",
+                target_id=message.id,
+            )
+            db.session.commit()
+            flash(
+                "تم حذف الإشعار والرسالة المقابلة من حسابات جميع المستلمين.",
+                "success",
+            )
+        else:
+            abort(400)
+
+        return redirect(url_for(
+            "portal.portal_admin_sent_notifications",
+            q=search_query or None,
+        ))
+
+    query = Message.query.filter(
+        Message.target_kind == ADMIN_NOTIFICATION_MESSAGE_TARGET_KIND,
+        Message.sender_deleted.is_(False),
+    )
+    if not is_super_admin:
+        query = query.filter(Message.sender_id == current_user.id)
+    if search_query:
+        needle = f"%{search_query}%"
+        query = query.filter(or_(
+            Message.subject.ilike(needle),
+            Message.body.ilike(needle),
+            Message.sender.has(or_(User.name.ilike(needle), User.email.ilike(needle))),
+        ))
+
+    messages = (
+        query
+        .order_by(Message.created_at.desc(), Message.id.desc())
+        .limit(500)
+        .all()
+    )
+    delivery_counts = _admin_broadcast_delivery_counts(messages)
+    rows = []
+    for message in messages:
+        counts = delivery_counts.get(message.id, {})
+        recipient_count = int(counts.get("recipient_count", 0))
+        notification_count = int(counts.get("notification_count", 0))
+        delivery_active = bool(recipient_count or notification_count)
+        rows.append({
+            "message": message,
+            "recipient_count": recipient_count,
+            "notification_count": notification_count,
+            "delivery_active": delivery_active,
+        })
+
+    return render_template(
+        "portal/admin/notifications_sent.html",
+        rows=rows,
+        q=search_query,
+        is_super_admin=is_super_admin,
+    )
+
+
+@portal_bp.route("/admin/notifications/sent/<int:message_id>/edit", methods=["GET", "POST"])
+@login_required
+def portal_admin_edit_sent_notification(message_id: int):
+    """Silently update the existing title and rich body of a broadcast."""
+    if not _is_admin_or_super_admin():
+        abort(403)
+
+    message = db.session.get(Message, message_id)
+    if not _is_admin_broadcast_message(message) or message.sender_deleted:
+        abort(404)
+    if not _can_manage_admin_broadcast(message):
+        abort(403)
+
+    search_query = (request.values.get("q") or "").strip()[:160]
+
+    def render_form(*, title: str, body: str):
+        return render_template(
+            "portal/admin/notification_edit.html",
+            message=message,
+            title=title,
+            body=body,
+            body_html=sanitize_notification_rich_text(body),
+            q=search_query,
+        )
+
+    if request.method == "POST":
+        title = " ".join((request.form.get("title") or "").strip().split())
+        raw_body = str(request.form.get("body") or "")
+        body_too_large = len(raw_body) > MAX_NOTIFICATION_RICH_TEXT_CHARS
+        body = "" if body_too_large else sanitize_notification_rich_text(raw_body)
+        if not title:
+            flash("يرجى كتابة عنوان الإشعار.", "warning")
+            return render_form(title=title, body=body)
+        if len(title) > 200:
+            flash("عنوان الإشعار يجب ألا يتجاوز 200 حرف.", "warning")
+            return render_form(title=title, body=body)
+        if body_too_large:
+            flash("نص الرسالة التفصيلي كبير جدًا. الحد الأقصى 100000 حرف.", "warning")
+            return render_form(title=title, body=body)
+        if not body:
+            flash("يرجى كتابة نص الرسالة التفصيلي.", "warning")
+            return render_form(title=title, body=body)
+
+        message.subject = title
+        message.body = body
+        updated_notification_count = _admin_broadcast_notification_query(message).update(
+            {"message": title},
+            synchronize_session=False,
+        )
+        _portal_audit(
+            "PORTAL_ADMIN_BROADCAST_EDIT",
+            (
+                f"message_id={message.id} sender_id={message.sender_id} "
+                f"notifications={updated_notification_count} silent=1"
+            ),
+            target_type="ADMIN_BROADCAST",
+            target_id=message.id,
+        )
+        db.session.commit()
+        flash("تم تعديل الإشعار بصمت؛ لم يُرسل أي إشعار جديد إلى المستلمين.", "success")
+        return redirect(url_for(
+            "portal.portal_admin_sent_notifications",
+            q=search_query or None,
+        ))
+
+    return render_form(title=message.subject or "", body=message.body or "")
 
 
 @portal_bp.route("/admin/notifications", methods=["GET", "POST"])
@@ -40004,6 +40266,12 @@ def portal_admin_dashboard():
             "desc": "إرسال إشعار مباشر إلى موظفين محددين أو إلى إدارة أو دائرة.",
             "icon": "bi-bell-fill",
             "url": url_for("portal.portal_admin_send_notifications"),
+        })
+        cards.append({
+            "title": "الإشعارات المرسلة",
+            "desc": "تعديل الإشعارات المرسلة أو حذفها من المرسلة أو من جميع المستلمين.",
+            "icon": "bi-send",
+            "url": url_for("portal.portal_admin_sent_notifications"),
         })
     if _is_super_admin():
         cards.append({
