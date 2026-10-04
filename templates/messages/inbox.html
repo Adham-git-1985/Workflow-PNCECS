@@ -61,7 +61,13 @@
                       <span class="text-muted">•</span>
                     {% endif %}
                   </td>
-                  <td>{{ rec.message.sender.email }}</td>
+                  <td>
+                    {% if (rec.message.target_kind or '')|upper == 'ADMIN_BROADCAST' %}
+                      نظام مسار والبوابة الإدارية
+                    {% else %}
+                      {{ rec.message.sender.email }}
+                    {% endif %}
+                  </td>
                   <td>
                     <a href="{{ url_for('messages.view_message', message_id=rec.message_id) }}" class="text-decoration-none">
                       <strong>{{ rec.message.subject or 'بدون موضوع' }}</strong>

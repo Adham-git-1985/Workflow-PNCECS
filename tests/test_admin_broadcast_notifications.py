@@ -58,6 +58,10 @@ class AdminBroadcastNotificationRouteTests(unittest.TestCase):
                     "<!doctype html>{% block content %}{% endblock %}"
                     "{% block scripts %}{% endblock %}"
                 ),
+                "layout.html": (
+                    "<!doctype html>{% block title %}{% endblock %}"
+                    "{% block content %}{% endblock %}"
+                ),
             }),
             cls.app.jinja_loader,
         ])
@@ -284,6 +288,33 @@ class AdminBroadcastNotificationRouteTests(unittest.TestCase):
         rendered_body = str(render.call_args.kwargs["broadcast_body_html"])
         self.assertIn('<h3 style="color: #0d6efd; background-color: rgb(255, 243, 205)">عنوان منسق</h3>', rendered_body)
         self.assertNotIn("script", rendered_body.lower())
+
+    def test_existing_and_new_broadcasts_show_the_system_sender_label(self):
+        with self.app.test_client() as client:
+            self._login(client, self.admin.id)
+            sent = client.post(
+                "/portal/admin/notifications/send",
+                data={
+                    "title": "تحديث باسم المرسل النظامي",
+                    "body": "تظهر الرسالة باسم النظام.",
+                    "level": "INFO",
+                    "target_scope": "USERS",
+                    "recipient_user_ids": [str(self.department_employee.id)],
+                },
+            )
+        self.assertEqual(sent.status_code, 302)
+        message = Message.query.one()
+
+        with self.app.test_client() as client:
+            self._login(client, self.department_employee.id)
+            inbox = client.get("/messages/inbox")
+            message_view = client.get(f"/messages/view/{message.id}")
+        self.assertEqual(inbox.status_code, 200)
+        self.assertEqual(message_view.status_code, 200)
+        for response in (inbox, message_view):
+            content = response.get_data(as_text=True)
+            self.assertIn("نظام مسار والبوابة الإدارية", content)
+            self.assertNotIn(self.admin.email, content)
 
     def test_super_admin_can_send_to_an_entire_directorate(self):
         with self.app.test_client() as client:

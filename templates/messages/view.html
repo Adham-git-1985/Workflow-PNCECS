@@ -45,7 +45,13 @@
       <div class="row g-3">
         <div class="col-md-6">
           <div class="text-muted small">من</div>
-          <div class="fw-bold">{{ msg.sender.email }}</div>
+          <div class="fw-bold">
+            {% if is_admin_broadcast_message %}
+              نظام مسار والبوابة الإدارية
+            {% else %}
+              {{ msg.sender.email }}
+            {% endif %}
+          </div>
         </div>
         <div class="col-md-6">
           <div class="text-muted small">التاريخ</div>
