@@ -14,7 +14,7 @@
 
 <form method="post" class="card shadow-sm">
   <div class="card-body">
-    {% if catalog_has_items %}<div class="alert alert-info">انقر في حقل الصنف لتظهر قائمة أول 60 صنفاً، أو اكتب الاسم أو الكود للبحث. الكمية المتاحة المعروضة هي إجمالي الرصيد الحالي في المستودعات.</div>{% else %}<div class="alert alert-warning">لا توجد أصناف معرفة في المستودع حالياً. {% if can_manage_catalog %}<a class="alert-link" href="{{ url_for('portal.inventory_admin_items') }}">أضف صنفاً ومواصفاته الآن</a>.{% else %}يرجى التواصل مع مدير المستودع لإضافة الأصناف والأرصدة.{% endif %}</div>{% endif %}
+    {% if catalog_has_items %}<div class="alert alert-info">اكتب حرفين على الأقل من اسم الصنف أو كوده للبحث. الكمية المتاحة المعروضة هي إجمالي الرصيد الحالي في المستودعات.</div>{% else %}<div class="alert alert-warning">لا توجد أصناف معرفة في المستودع حالياً. {% if can_manage_catalog %}<a class="alert-link" href="{{ url_for('portal.inventory_admin_items') }}">أضف صنفاً ومواصفاته الآن</a>.{% else %}يرجى التواصل مع مدير المستودع لإضافة الأصناف والأرصدة.{% endif %}</div>{% endif %}
     <div class="row g-2 mb-3">
       <div class="col-md-5"><label class="form-label">تصفية حسب التصنيف</label><select class="form-select" id="itemCategory"><option value="">كل التصنيفات</option>{% for category in categories %}<option value="{{ category.id }}">{{ category.name }}</option>{% endfor %}</select></div>
     </div>

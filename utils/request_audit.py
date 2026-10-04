@@ -25,6 +25,12 @@ AUTOMATED_ENDPOINTS = {
     "workflow.event_stream",
     "workflow.unread_notifications_count",
     "users.presence_heartbeat",
+    # Inventory item pickers search while the user types and when each new
+    # voucher line receives focus.  These read-only, high-frequency lookups
+    # must not contend for SQLite's single writer by creating audit rows.
+    # Saving the voucher itself is still audited by the inventory routes.
+    "portal.inventory_item_search_json",
+    "portal.inventory_employee_request_items_search",
 }
 
 AUTOMATED_PATH_PREFIXES = (

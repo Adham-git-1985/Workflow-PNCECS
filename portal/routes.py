@@ -21530,7 +21530,10 @@ def _attendance_approval_inbox_rows(
     for plan in schedule_rows:
         stage = _attendance_schedule_review_stage(plan, selected_user)
         if normalized_status == "SUBMITTED":
-            if not stage:
+            # A request remains pending until its final approval.  A manager
+            # who has already completed an earlier stage must still see that
+            # pending request, rather than seeing it only under "All".
+            if not (stage or _attendance_schedule_history_visible(plan, selected_user)):
                 continue
         elif not (stage or _attendance_schedule_history_visible(plan, selected_user)):
             continue
@@ -21542,7 +21545,9 @@ def _attendance_approval_inbox_rows(
         stage = _manual_attendance_review_stage(row)
         can_act = bool(stage and _can_review_manual_attendance(row, selected_user))
         if normalized_status == "SUBMITTED":
-            if not can_act:
+            # The creator and prior reviewers need to track a daily edit
+            # while it is awaiting a later approver as well.
+            if not (can_act or _manual_attendance_history_visible(row, selected_user)):
                 continue
         elif not (can_act or _manual_attendance_history_visible(row, selected_user)):
             continue
@@ -45966,6 +45971,7 @@ def inventory_inbound_voucher_new():
             v.voucher_no = auto_inventory_voucher_no("inbound", voucher_date, v.id)
 
         any_line = False
+        line_values = []
         for i, raw_item_id in enumerate(item_ids):
             if not raw_item_id:
                 continue
@@ -45980,22 +45986,26 @@ def inventory_inbound_voucher_new():
             except Exception:
                 qty = 1.0
 
-            ln = InvInboundVoucherLine(
-                voucher_id=v.id,
-                item_id=item_id,
-                qty=qty,
-                serial=(serials[i] if i < len(serials) else None) or None,
-                warranty_start=(w_starts[i] if i < len(w_starts) else None) or None,
-                warranty_end=(w_ends[i] if i < len(w_ends) else None) or None,
-                details=(details_list[i] if i < len(details_list) else None) or None,
-            )
-            db.session.add(ln)
+            line_values.append({
+                "voucher_id": v.id,
+                "item_id": item_id,
+                "qty": qty,
+                "serial": (serials[i] if i < len(serials) else None) or None,
+                "warranty_start": (w_starts[i] if i < len(w_starts) else None) or None,
+                "warranty_end": (w_ends[i] if i < len(w_ends) else None) or None,
+                "details": (details_list[i] if i < len(details_list) else None) or None,
+            })
             any_line = True
 
         if not any_line:
             db.session.rollback()
             flash("يرجى إضافة صنف واحد على الأقل.", "warning")
             return redirect(url_for("portal.inventory_inbound_voucher_new"))
+
+        # A large delivery can contain hundreds or thousands of materials.
+        # Insert the lines as one executemany statement instead of issuing an
+        # ORM insert per line, which otherwise monopolizes SQLite's writer.
+        db.session.execute(InvInboundVoucherLine.__table__.insert(), line_values)
 
         # Audit + commit voucher/lines first (protect from attachments failure)
         try:
@@ -46011,6 +46021,7 @@ def inventory_inbound_voucher_new():
             pass
 
         db.session.commit()
+        _inv_invalidate_balance_cache()
 
         # Attachments (best effort)
         files = request.files.getlist("attachments")
@@ -47276,13 +47287,15 @@ def inventory_admin_items_import_catalog():
                     voucher_date,
                     stocktake_voucher.id,
                 )
+                stocktake_lines = []
                 for item, quantity in quantity_lines:
-                    db.session.add(InvStocktakeVoucherLine(
+                    stocktake_lines.append(InvStocktakeVoucherLine(
                         voucher_id=stocktake_voucher.id,
                         item_id=item.id,
                         qty=quantity,
                         details=f"استيراد مباشر من ملف {filename}",
                     ))
+                db.session.bulk_save_objects(stocktake_lines)
                 try:
                     db.session.add(AuditLog(
                         user_id=current_user.id,
@@ -47296,6 +47309,7 @@ def inventory_admin_items_import_catalog():
                     pass
 
             db.session.commit()
+            _inv_invalidate_balance_cache()
             result = {
                 "source_rows": len(source_rows),
                 "categories_created": categories_created,
@@ -47383,6 +47397,7 @@ def inventory_stocktake_voucher_new():
             v.voucher_no = auto_inventory_voucher_no("stocktake", voucher_date, v.id)
 
         any_line = False
+        line_objects = []
         for i, raw_item_id in enumerate(item_ids):
             if not raw_item_id:
                 continue
@@ -47406,13 +47421,15 @@ def inventory_stocktake_voucher_new():
                 warranty_end=(w_ends[i] if i < len(w_ends) else None) or None,
                 details=(details_list[i] if i < len(details_list) else None) or None,
             )
-            db.session.add(ln)
+            line_objects.append(ln)
             any_line = True
 
         if not any_line:
             db.session.rollback()
             flash("يرجى إضافة صنف واحد على الأقل.", "warning")
             return redirect(url_for("portal.inventory_stocktake_voucher_new"))
+
+        db.session.bulk_save_objects(line_objects)
 
         # Audit + commit voucher/lines first (protect from attachments failure)
         try:
@@ -47955,7 +47972,30 @@ def inventory_custody_items():
 # Inventory: Reports (التقارير)
 # ==========================================================
 
-def _inv_build_balances():
+def _inv_balance_filter_ids(values):
+    """Normalize optional warehouse/item filters used by balance reads."""
+    if values is None:
+        return None
+    if isinstance(values, (str, bytes, int)):
+        values = (values,)
+    normalized = set()
+    for value in values:
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            normalized.add(value)
+    return tuple(sorted(normalized))
+
+
+def _inv_invalidate_balance_cache():
+    """Discard request-local stock totals after a stock movement is written."""
+    if has_request_context() and hasattr(g, "_inventory_balance_cache"):
+        delattr(g, "_inventory_balance_cache")
+
+
+def _inv_build_balances(*, warehouse_ids=None, item_ids=None):
     """Compute current balances per (warehouse_id, item_id).
 
     Rules:
@@ -47965,6 +48005,23 @@ def _inv_build_balances():
     - Scrap: -
     - Stocktake: treated as a baseline per (warehouse,item): take latest stocktake qty, then apply movements after it.
     """
+    warehouse_filter = _inv_balance_filter_ids(warehouse_ids)
+    item_filter = _inv_balance_filter_ids(item_ids)
+    if warehouse_filter == () or item_filter == ():
+        return {}
+
+    cache_key = (warehouse_filter, item_filter)
+    cache = None
+    if has_request_context():
+        cache = getattr(g, "_inventory_balance_cache", None)
+        if cache is None:
+            cache = {}
+            g._inventory_balance_cache = cache
+        if cache_key in cache:
+            return dict(cache[cache_key])
+
+    warehouse_filter_set = set(warehouse_filter or ())
+    item_filter_set = set(item_filter or ())
     balances: dict[tuple[int, int], float] = {}
 
     # 1) Stocktake baseline per (warehouse,item)
@@ -47972,7 +48029,7 @@ def _inv_build_balances():
     baseline_created_at: dict[tuple[int, int], datetime | None] = {}
     baseline_qty: dict[tuple[int, int], float] = {}
 
-    st_rows = (
+    stocktake_query = (
         db.session.query(
             InvStocktakeVoucher.warehouse_id,
             InvStocktakeVoucherLine.item_id,
@@ -47982,6 +48039,17 @@ def _inv_build_balances():
             func.sum(InvStocktakeVoucherLine.qty),
         )
         .join(InvStocktakeVoucherLine, InvStocktakeVoucherLine.voucher_id == InvStocktakeVoucher.id)
+    )
+    if warehouse_filter:
+        stocktake_query = stocktake_query.filter(
+            InvStocktakeVoucher.warehouse_id.in_(warehouse_filter)
+        )
+    if item_filter:
+        stocktake_query = stocktake_query.filter(
+            InvStocktakeVoucherLine.item_id.in_(item_filter)
+        )
+    st_rows = (
+        stocktake_query
         .group_by(
             InvStocktakeVoucher.warehouse_id,
             InvStocktakeVoucherLine.item_id,
@@ -48039,12 +48107,16 @@ def _inv_build_balances():
             return
         wh_id = int(wh_id)
         item_id = int(item_id)
+        if warehouse_filter_set and wh_id not in warehouse_filter_set:
+            return
+        if item_filter_set and item_id not in item_filter_set:
+            return
         if not _after_baseline(wh_id, item_id, str(v_date), movement_created_at):
             return
         balances[(wh_id, item_id)] = balances.get((wh_id, item_id), 0.0) + float(delta or 0)
 
     # 2) Inbound (+)
-    inbound_rows = (
+    inbound_query = (
         db.session.query(
             InvInboundVoucher.to_warehouse_id,
             InvInboundVoucherLine.item_id,
@@ -48053,6 +48125,17 @@ def _inv_build_balances():
             func.sum(InvInboundVoucherLine.qty),
         )
         .join(InvInboundVoucherLine, InvInboundVoucherLine.voucher_id == InvInboundVoucher.id)
+    )
+    if warehouse_filter:
+        inbound_query = inbound_query.filter(
+            InvInboundVoucher.to_warehouse_id.in_(warehouse_filter)
+        )
+    if item_filter:
+        inbound_query = inbound_query.filter(
+            InvInboundVoucherLine.item_id.in_(item_filter)
+        )
+    inbound_rows = (
+        inbound_query
         .group_by(
             InvInboundVoucher.to_warehouse_id,
             InvInboundVoucherLine.item_id,
@@ -48065,7 +48148,7 @@ def _inv_build_balances():
         _add(wh_id, item_id, v_date, float(s or 0), created_at)
 
     # 3) Return (+)
-    return_rows = (
+    return_query = (
         db.session.query(
             InvReturnVoucher.to_warehouse_id,
             InvReturnVoucherLine.item_id,
@@ -48074,6 +48157,17 @@ def _inv_build_balances():
             func.sum(InvReturnVoucherLine.qty),
         )
         .join(InvReturnVoucherLine, InvReturnVoucherLine.voucher_id == InvReturnVoucher.id)
+    )
+    if warehouse_filter:
+        return_query = return_query.filter(
+            InvReturnVoucher.to_warehouse_id.in_(warehouse_filter)
+        )
+    if item_filter:
+        return_query = return_query.filter(
+            InvReturnVoucherLine.item_id.in_(item_filter)
+        )
+    return_rows = (
+        return_query
         .group_by(
             InvReturnVoucher.to_warehouse_id,
             InvReturnVoucherLine.item_id,
@@ -48086,7 +48180,7 @@ def _inv_build_balances():
         _add(wh_id, item_id, v_date, float(s or 0), created_at)
 
     # 4) Issue (ROOM: -, WAREHOUSE transfer: -/+)
-    issue_rows = (
+    issue_query = (
         db.session.query(
             InvIssueVoucher.issue_kind,
             InvIssueVoucher.from_warehouse_id,
@@ -48097,6 +48191,18 @@ def _inv_build_balances():
             func.sum(InvIssueVoucherLine.qty),
         )
         .join(InvIssueVoucherLine, InvIssueVoucherLine.voucher_id == InvIssueVoucher.id)
+    )
+    if warehouse_filter:
+        issue_query = issue_query.filter(or_(
+            InvIssueVoucher.from_warehouse_id.in_(warehouse_filter),
+            InvIssueVoucher.to_warehouse_id.in_(warehouse_filter),
+        ))
+    if item_filter:
+        issue_query = issue_query.filter(
+            InvIssueVoucherLine.item_id.in_(item_filter)
+        )
+    issue_rows = (
+        issue_query
         .group_by(
             InvIssueVoucher.issue_kind,
             InvIssueVoucher.from_warehouse_id,
@@ -48114,7 +48220,7 @@ def _inv_build_balances():
             _add(to_wh, item_id, v_date, qty, created_at)
 
     # 5) Scrap (-)
-    scrap_rows = (
+    scrap_query = (
         db.session.query(
             InvScrapVoucher.from_warehouse_id,
             InvScrapVoucherLine.item_id,
@@ -48123,6 +48229,17 @@ def _inv_build_balances():
             func.sum(InvScrapVoucherLine.qty),
         )
         .join(InvScrapVoucherLine, InvScrapVoucherLine.voucher_id == InvScrapVoucher.id)
+    )
+    if warehouse_filter:
+        scrap_query = scrap_query.filter(
+            InvScrapVoucher.from_warehouse_id.in_(warehouse_filter)
+        )
+    if item_filter:
+        scrap_query = scrap_query.filter(
+            InvScrapVoucherLine.item_id.in_(item_filter)
+        )
+    scrap_rows = (
+        scrap_query
         .group_by(
             InvScrapVoucher.from_warehouse_id,
             InvScrapVoucherLine.item_id,
@@ -48134,6 +48251,8 @@ def _inv_build_balances():
     for wh_id, item_id, v_date, created_at, s in scrap_rows:
         _add(wh_id, item_id, v_date, -float(s or 0), created_at)
 
+    if cache is not None:
+        cache[cache_key] = dict(balances)
     return balances
 
 

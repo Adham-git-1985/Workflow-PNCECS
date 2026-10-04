@@ -135,6 +135,48 @@ class UnifiedApprovalsInboxTests(unittest.TestCase):
         self.assertEqual([row.id for row in manual_rows], [correction.id])
         self.assertTrue(manual_rows[0].can_review)
 
+    def test_pending_schedule_remains_visible_to_a_manager_who_already_reviewed_it(self):
+        plan = HRAttendanceSchedulePlan(
+            user_id=self.employee.id,
+            manager_user_id=self.manager.id,
+            manager_approved_by_id=self.manager.id,
+            period_start="2032-01-04",
+            period_end="2032-01-10",
+            version_no=1,
+            status="MANAGER_APPROVED",
+            request_type="CHANGE_REQUEST",
+        )
+        db.session.add(plan)
+        db.session.commit()
+
+        with self.app.test_request_context("/portal/hr/approvals?status=SUBMITTED"):
+            schedule_rows, manual_rows = _attendance_approval_inbox_rows("SUBMITTED", user=self.manager)
+
+        self.assertEqual([row.id for row in schedule_rows], [plan.id])
+        self.assertIsNone(schedule_rows[0].review_stage)
+        self.assertEqual(manual_rows, [])
+
+    def test_pending_daily_edit_remains_visible_to_its_creator(self):
+        correction = HRAttendanceSpecialCase(
+            user_id=self.employee.id,
+            day="2032-01-04",
+            day_to="2032-01-04",
+            kind="MANUAL_ATTENDANCE",
+            start_time="08:05",
+            approval_status="PENDING",
+            applied=False,
+            created_by_id=self.manager.id,
+        )
+        db.session.add(correction)
+        db.session.commit()
+
+        with self.app.test_request_context("/portal/hr/approvals?status=SUBMITTED"):
+            schedule_rows, manual_rows = _attendance_approval_inbox_rows("SUBMITTED", user=self.manager)
+
+        self.assertEqual(schedule_rows, [])
+        self.assertEqual([row.id for row in manual_rows], [correction.id])
+        self.assertFalse(manual_rows[0].can_review)
+
     def test_page_permission_can_be_assigned_without_granting_an_action_stage(self):
         self.assertTrue(_hr_approvals_can_open(self.viewer))
         with self.app.test_request_context("/portal/hr/approvals"):

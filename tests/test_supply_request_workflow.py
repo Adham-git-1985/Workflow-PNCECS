@@ -391,6 +391,31 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
         self.assertTrue(render.call_args.kwargs["catalog_has_items"])
         self.assertEqual(render.call_args.kwargs["items"], [])
 
+    def test_request_view_loads_only_its_own_catalogue_items(self):
+        item = InvItem.query.filter_by(code="PAPER-001").one()
+        other_item = InvItem(name="Other material", code="OTHER-001", is_active=True)
+        db.session.add_all((
+            other_item,
+            InvEmployeeRequestLine(
+                request_id=self.request.id,
+                item_id=item.id,
+                requested_qty=2,
+            ),
+        ))
+        db.session.commit()
+        self._login(self.employee.id)
+
+        with patch("portal.supply_requests.render_template", return_value="view") as render:
+            response = self.client.get(
+                f"/portal/inventory/employee-requests/{self.request.id}"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [row.id for row in render.call_args.kwargs["items"]],
+            [item.id],
+        )
+
     def test_material_search_shows_the_employee_last_request_and_month_marker(self):
         item = InvItem.query.filter_by(code="PAPER-001").one()
         self.request.created_at = datetime.utcnow() - timedelta(days=12)

@@ -10,6 +10,8 @@ from openpyxl import Workbook
 
 from extensions import db
 from models import (
+    InvInboundVoucher,
+    InvInboundVoucherLine,
     InvItem,
     InvStocktakeVoucher,
     InvStocktakeVoucherLine,
@@ -146,6 +148,14 @@ class InventoryCatalogImportTests(unittest.TestCase):
         self.assertEqual(len(lines), 2)
         self.assertEqual(sum(line.qty for line in lines), 19.0)
         self.assertEqual(_inv_build_balances()[(self.warehouse.id, lines[0].item_id)], lines[0].qty)
+        scoped_balances = _inv_build_balances(
+            warehouse_ids=(self.warehouse.id,),
+            item_ids=(lines[0].item_id,),
+        )
+        self.assertEqual(
+            scoped_balances,
+            {(self.warehouse.id, lines[0].item_id): lines[0].qty},
+        )
         self.assertIn("2 صنفًا", response.get_data(as_text=True))
         self.assertIn("19", response.get_data(as_text=True))
 
@@ -163,6 +173,28 @@ class InventoryCatalogImportTests(unittest.TestCase):
         self.assertIn("ورق اختبار", page)
         self.assertNotIn("قلم اختبار", page)
         self.assertIn('value="TEST-001"', page)
+
+    def test_inbound_voucher_saves_multiple_lines_in_one_request(self):
+        self.assertEqual(self._post_import().status_code, 200)
+        items = InvItem.query.order_by(InvItem.code.asc()).all()
+
+        response = self.client.post(
+            "/portal/inventory/vouchers/inbound/new",
+            data={
+                "voucher_date": "2026-09-16",
+                "to_warehouse_id": str(self.warehouse.id),
+                "item_id[]": [str(item.id) for item in items],
+                "qty[]": ["3", "4"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        voucher = InvInboundVoucher.query.one()
+        lines = InvInboundVoucherLine.query.filter_by(voucher_id=voucher.id).all()
+        self.assertEqual([(line.item_id, line.qty) for line in lines], [
+            (items[0].id, 3.0),
+            (items[1].id, 4.0),
+        ])
 
     def test_reimport_does_not_add_the_same_opening_quantity_twice(self):
         self.assertEqual(self._post_import().status_code, 200)

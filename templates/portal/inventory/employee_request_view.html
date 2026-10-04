@@ -71,4 +71,28 @@
   function refreshEditRow(row) { const option = row.querySelector('.item-select').selectedOptions[0]; row.querySelector('.available').textContent = option ? Number(option.dataset.stock || 0).toLocaleString('ar') : '—'; }
   if (editBody) { editSearch.addEventListener('input', filterEditOptions); editCategory.addEventListener('change', filterEditOptions); editBody.addEventListener('change', event => { if (event.target.classList.contains('item-select')) refreshEditRow(event.target.closest('tr')); }); editBody.addEventListener('click', event => { const button = event.target.closest('.remove-line'); if (button && editBody.rows.length > 1) button.closest('tr').remove(); }); document.getElementById('addEditLine').addEventListener('click', () => { const row = editBody.rows[0].cloneNode(true); row.querySelector('select').value = ''; row.querySelector('input').value = '1'; refreshEditRow(row); editBody.appendChild(row); filterEditOptions(); }); }
 </script>
+<script>
+  // The shared item picker replaces selects with search controls.  Replace
+  // the legacy clone handler with a fresh select so new request lines keep
+  // working without rendering the whole catalogue in this page.
+  (function () {
+    const oldButton = document.getElementById('addEditLine');
+    const editBody = document.querySelector('#editLines tbody');
+    if (!oldButton || !editBody) return;
+
+    const button = oldButton.cloneNode(true);
+    oldButton.replaceWith(button);
+    button.addEventListener('click', function () {
+      const row = document.createElement('tr');
+      row.innerHTML = [
+        '<td><select class="form-select item-select" name="item_id" data-item-picker-category="#editItemCategory" data-item-picker-endpoint="{{ url_for("portal.inventory_employee_request_items_search") }}"><option value="">Select an item</option></select></td>',
+        '<td><input class="form-control" type="number" name="requested_qty" min="0.01" step="0.01" value="1"></td>',
+        '<td class="previous-request text-muted">&mdash;</td>',
+        '<td class="available text-muted">&mdash;</td>',
+        '<td><button class="btn btn-sm btn-outline-danger remove-line" type="button"><i class="bi bi-x"></i></button></td>',
+      ].join('');
+      editBody.appendChild(row);
+    });
+  }());
+</script>
 {% endblock %}

@@ -119,6 +119,10 @@ class UserPresenceRouteTests(unittest.TestCase):
         self.assertEqual(presence.last_path, "/admin/dashboard")
         self.assertIn("users.presence_heartbeat", AUTOMATED_ENDPOINTS)
 
+    def test_inventory_picker_lookups_are_not_audited_as_interactive_requests(self):
+        self.assertIn("portal.inventory_item_search_json", AUTOMATED_ENDPOINTS)
+        self.assertIn("portal.inventory_employee_request_items_search", AUTOMATED_ENDPOINTS)
+
     def test_active_users_page_is_admin_only_and_excludes_stale_users(self):
         client = self.app.test_client()
         self._login(client, self.active_user.id)

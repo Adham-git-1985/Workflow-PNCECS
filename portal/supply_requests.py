@@ -422,29 +422,46 @@ def _notify(row, recipient_ids, text):
     ])
 
 
-def _inventory_balances():
+def _inventory_balances(*, warehouse_ids=None, item_ids=None):
     from .routes import _inv_build_balances
 
-    return _inv_build_balances()
+    return _inv_build_balances(warehouse_ids=warehouse_ids, item_ids=item_ids)
 
 
-def _catalog_context(*, include_items=True):
+def _catalog_context(*, include_items=True, item_ids=None):
+    selected_item_ids = None
+    if item_ids is not None:
+        selected_item_ids = set()
+        for item_id in item_ids:
+            try:
+                item_id = int(item_id)
+            except (TypeError, ValueError):
+                continue
+            if item_id > 0:
+                selected_item_ids.add(item_id)
+
     item_query = InvItem.query.filter(InvItem.is_active.is_(True)).order_by(InvItem.name.asc())
     # The employee request screen resolves items through the small remote
     # lookup.  Do not render the complete catalogue three times in its form.
-    items = item_query.all() if include_items else []
+    if not include_items:
+        items = []
+    elif selected_item_ids is None:
+        items = item_query.all()
+    elif selected_item_ids:
+        items = item_query.filter(InvItem.id.in_(selected_item_ids)).all()
+    else:
+        items = []
     categories = InvItemCategory.query.filter(InvItemCategory.is_active.is_(True)).order_by(InvItemCategory.name.asc()).all()
     warehouses = InvWarehouse.query.filter(InvWarehouse.is_active.is_(True)).order_by(InvWarehouse.name.asc()).all()
-    balances = _inventory_balances() if include_items else {}
-    item_totals = {
-        item.id: sum(float(quantity or 0) for (warehouse_id, item_id), quantity in balances.items() if item_id == item.id)
-        for item in items
-    }
+    balances = _inventory_balances(item_ids=selected_item_ids) if include_items else {}
+    item_totals = defaultdict(float)
+    for (_warehouse_id, item_id), quantity in balances.items():
+        item_totals[item_id] += float(quantity or 0)
     warehouse_balances = {
         f"{warehouse_id}:{item_id}": float(quantity or 0)
         for (warehouse_id, item_id), quantity in balances.items()
     }
-    return items, categories, warehouses, item_totals, warehouse_balances
+    return items, categories, warehouses, dict(item_totals), warehouse_balances
 
 
 def _parse_requested_lines():
@@ -483,11 +500,14 @@ def _replace_lines(row, requested_lines):
 
 
 def _stock_errors(lines, warehouse_id):
-    balances = _inventory_balances()
     errors = []
     by_item = defaultdict(float)
     for line in lines:
         by_item[line.item_id] += float(line.approved_qty or 0)
+    balances = _inventory_balances(
+        warehouse_ids=(warehouse_id,),
+        item_ids=by_item.keys(),
+    )
     for item_id, quantity in by_item.items():
         available = float(balances.get((warehouse_id, item_id), 0) or 0)
         if quantity > available:
@@ -723,13 +743,19 @@ def inventory_employee_request_view(request_id):
     row = InvEmployeeRequest.query.get_or_404(request_id)
     if not _can_view(row):
         abort(403)
-    items, categories, warehouses, item_totals, warehouse_balances = _catalog_context()
     # The employee owns the requested quantities.  Managers record their
     # approval/comment in their own stage and cannot silently alter the form.
     can_edit = row.status == "SUBMITTED" and row.requester_user_id == current_user.id
+    request_item_ids = [line.item_id for line in row.lines if line.item_id]
+    # A request view only needs its own items' balances.  Loading every item
+    # and every historic movement here made ordinary approval pages slower as
+    # the warehouse catalogue grew.
+    items, categories, warehouses, item_totals, warehouse_balances = _catalog_context(
+        item_ids=request_item_ids,
+    )
     previous_requests = _latest_item_request_history(
         row.requester_user_id,
-        [line.item_id for line in row.lines],
+        request_item_ids,
         exclude_request_id=row.id,
     )
     returnable_lines = (

@@ -2,6 +2,8 @@
 (function () {
   'use strict';
   const defaultEndpoint = '/portal/inventory/items/search.json';
+  const minimumSearchLength = 2;
+  const resultCache = new Map();
   let timer;
 
   function escapeHtml(value) {
@@ -94,12 +96,32 @@
     }
     async function search() {
       const query = input.value.trim();
+      // A blank/one-character query used to fetch the first 60 catalogue
+      // items every time a voucher line was focused.  On a large catalogue
+      // that creates unnecessary database reads while the user is entering a
+      // multi-line stock voucher.  The placeholder already instructs users
+      // to search with at least two characters.
+      if (query.length < minimumSearchLength) {
+        hideResults();
+        return;
+      }
       try {
         const params = new URLSearchParams({q: query});
         if (categoryInput && categoryInput.value) params.set('category_id', categoryInput.value);
-        const response = await fetch(endpoint + '?' + params.toString(), {credentials: 'same-origin'});
+        const url = endpoint + '?' + params.toString();
+        if (resultCache.has(url)) {
+          show(resultCache.get(url));
+          return;
+        }
+        const response = await fetch(url, {credentials: 'same-origin'});
         if (!response.ok) throw new Error('lookup failed');
-        show((await response.json()).items || []);
+        const items = (await response.json()).items || [];
+        // Keep the cache intentionally small; it avoids repeated lookups for
+        // the same material without turning a long data-entry session into a
+        // client-side copy of the catalogue.
+        if (resultCache.size >= 100) resultCache.clear();
+        resultCache.set(url, items);
+        show(items);
       } catch (_) {
         results.innerHTML = '<span class="list-group-item text-danger small">تعذر البحث عن الأصناف.</span>';
         results.classList.remove('d-none');
