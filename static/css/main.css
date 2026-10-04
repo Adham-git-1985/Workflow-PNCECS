@@ -553,6 +553,12 @@ canvas {
     box-shadow: 0 0 0 1px rgba(0,0,0,0.08) inset;
 }
 
+/* The Masar artwork is wider than the circular committee mark.  Reducing
+   only its height keeps the two marks visually balanced beside each other. */
+.brand-logo--masar {
+    height: 50px;
+}
+
 .brand-title {
     font-weight: 800;
     font-size: 18px;
@@ -569,6 +575,7 @@ canvas {
 
 @media (max-width: 576px) {
     .brand-logo { height: 46px; padding: 3px; border-radius: 10px; }
+    .brand-logo--masar { height: 41px; }
     .brand-title { font-size: 16px; }
     .brand-subtitle { font-size: 11px; }
 }
@@ -604,7 +611,11 @@ canvas {
 
 
 .portal-brand-logo{height:34px;width:auto;padding:2px;border-radius:10px;}
-@media (max-width: 576px){.portal-brand-logo{height:30px;padding:2px;border-radius:9px;}}
+.portal-brand-logo.brand-logo--masar{height:30px;}
+@media (max-width: 576px){
+  .portal-brand-logo{height:30px;padding:2px;border-radius:9px;}
+  .portal-brand-logo.brand-logo--masar{height:26px;}
+}
 
 /* =========================
    Portal sortable tables
