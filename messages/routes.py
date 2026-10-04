@@ -8,10 +8,12 @@ from sqlalchemy import or_
 
 from flask import current_app, render_template, request, redirect, url_for, flash, abort, send_from_directory
 from flask_login import login_required, current_user
+from markupsafe import Markup
 
 from extensions import db
 from utils.events import emit_event
 from utils.file_uploads import clean_original_filename, is_allowed_attachment, random_storage_name
+from utils.rich_text import sanitize_notification_rich_text
 from . import messages_bp
 from models import (
     User, Department, Directorate,
@@ -729,6 +731,13 @@ def view_message(message_id):
 
     is_admin_broadcast_message = _is_admin_broadcast_message(msg)
     feedback_url = _admin_broadcast_feedback_url(msg, rec)
+    # Rich text is limited to administrative broadcasts.  Sanitise again at
+    # display time so older broadcasts, created before the rich-text editor,
+    # are also safe to render as formatted HTML.
+    broadcast_body_html = (
+        Markup(sanitize_notification_rich_text(msg.body))
+        if is_admin_broadcast_message else None
+    )
 
     # Optional: detect known internal links and show quick action buttons.
     payslip_url = None
@@ -788,4 +797,5 @@ def view_message(message_id):
         supply_request_url=supply_request_url,
         is_admin_broadcast_message=is_admin_broadcast_message,
         feedback_url=feedback_url,
+        broadcast_body_html=broadcast_body_html,
     )

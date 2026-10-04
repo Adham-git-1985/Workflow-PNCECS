@@ -187,11 +187,14 @@ class AdminBroadcastNotificationRouteTests(unittest.TestCase):
             form_response = client.get("/portal/admin/notifications/send")
             self.assertEqual(form_response.status_code, 200)
             self.assertIn("إرسال إشعار", form_response.get_data(as_text=True))
+            self.assertIn("عنوان الإشعار", form_response.get_data(as_text=True))
+            self.assertIn("نص الرسالة التفصيلي", form_response.get_data(as_text=True))
 
             response = client.post(
                 "/portal/admin/notifications/send",
                 data={
-                    "message": "يرجى مراجعة النظام اليوم.",
+                    "title": "مراجعة النظام اليوم",
+                    "body": "<p>يرجى مراجعة <strong>النظام</strong> اليوم.</p>",
                     "level": "URGENT",
                     "target_scope": "USERS",
                     "recipient_user_ids": [
@@ -211,11 +214,14 @@ class AdminBroadcastNotificationRouteTests(unittest.TestCase):
         self.assertTrue(all(row.source == "portal" for row in rows))
         self.assertTrue(all(row.type == "URGENT" for row in rows))
         self.assertTrue(all(row.is_visible is True for row in rows))
+        self.assertEqual({row.message for row in rows}, {"مراجعة النظام اليوم"})
         self.assertTrue(all(
             row.link_url == f"/messages/view/{internal_message.id}"
             for row in rows
         ))
         self.assertEqual(internal_message.target_kind, "ADMIN_BROADCAST")
+        self.assertEqual(internal_message.subject, "مراجعة النظام اليوم")
+        self.assertIn("<strong>النظام</strong>", internal_message.body)
         self.assertEqual(MessageRecipient.query.filter_by(message_id=internal_message.id).count(), 2)
         self.assertTrue(all(row.actor_id == self.admin.id for row in rows))
         self.assertEqual(len({row.event_key for row in rows}), 1)
@@ -231,13 +237,53 @@ class AdminBroadcastNotificationRouteTests(unittest.TestCase):
                 message_view = client.get(f"/messages/view/{internal_message.id}")
             denied = client.get("/portal/admin/notifications/send")
         self.assertEqual(notification_inbox.status_code, 200)
-        self.assertIn("يرجى مراجعة النظام اليوم.", notification_inbox.get_data(as_text=True))
+        self.assertIn("مراجعة النظام اليوم", notification_inbox.get_data(as_text=True))
         self.assertEqual(message_view.status_code, 200)
         self.assertEqual(
             render.call_args.kwargs["feedback_url"],
             f"/portal/trouble-tickets/feedback/{next(row.id for row in rows if row.user_id == self.department_employee.id)}",
         )
         self.assertEqual(denied.status_code, 403)
+
+    def test_rich_broadcast_body_is_sanitized_and_keeps_safe_formatting(self):
+        with self.app.test_client() as client:
+            self._login(client, self.admin.id)
+            response = client.post(
+                "/portal/admin/notifications/send",
+                data={
+                    "title": "تحديث واجهة النظام",
+                    "body": (
+                        '<h3 style="color:#0d6efd;background-color:rgb(255, 243, 205)">عنوان منسق</h3>'
+                        '<p><strong>نص مهم</strong> <a href="https://example.test">رابط</a></p>'
+                        '<script>alert(1)</script>'
+                        '<a href="javascript:alert(1)">رابط غير آمن</a>'
+                    ),
+                    "level": "INFO",
+                    "target_scope": "USERS",
+                    "recipient_user_ids": [str(self.department_employee.id)],
+                },
+            )
+        self.assertEqual(response.status_code, 302)
+
+        notification = Notification.query.filter_by(user_id=self.department_employee.id).one()
+        internal_message = Message.query.one()
+        self.assertEqual(notification.message, "تحديث واجهة النظام")
+        self.assertEqual(internal_message.subject, "تحديث واجهة النظام")
+        self.assertIn('style="color: #0d6efd;', internal_message.body)
+        self.assertIn("background-color: rgb(255, 243, 205)", internal_message.body)
+        self.assertIn('<strong>نص مهم</strong>', internal_message.body)
+        self.assertIn('href="https://example.test"', internal_message.body)
+        self.assertNotIn("script", internal_message.body.lower())
+        self.assertNotIn("javascript:", internal_message.body.lower())
+
+        with self.app.test_client() as client:
+            self._login(client, self.department_employee.id)
+            with patch("messages.routes.render_template", return_value="broadcast message") as render:
+                opened = client.get(f"/messages/view/{internal_message.id}")
+        self.assertEqual(opened.status_code, 200)
+        rendered_body = str(render.call_args.kwargs["broadcast_body_html"])
+        self.assertIn('<h3 style="color: #0d6efd; background-color: rgb(255, 243, 205)">عنوان منسق</h3>', rendered_body)
+        self.assertNotIn("script", rendered_body.lower())
 
     def test_super_admin_can_send_to_an_entire_directorate(self):
         with self.app.test_client() as client:
@@ -306,7 +352,8 @@ class AdminBroadcastNotificationRouteTests(unittest.TestCase):
         self.assertTrue(row.is_visible)
         self.assertFalse(internal_message.is_system_generated)
         self.assertEqual(internal_message.target_kind, "ADMIN_BROADCAST")
-        self.assertIn("لا يمكن الرد عليها", internal_message.body)
+        self.assertEqual(internal_message.subject, "تمت إضافة ميزة جديدة. راجع الدليل المرتبط.")
+        self.assertEqual(internal_message.body, "تمت إضافة ميزة جديدة. راجع الدليل المرتبط.")
         self.assertEqual(
             MessageRecipient.query.filter_by(
                 message_id=internal_message.id,

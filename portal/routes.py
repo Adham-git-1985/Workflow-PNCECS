@@ -61,6 +61,10 @@ from utils.delegation_privacy import (
     is_privileged_administrator,
 )
 from utils.role_codes import canonical_role_key, role_storage_variants
+from utils.rich_text import (
+    MAX_NOTIFICATION_RICH_TEXT_CHARS,
+    sanitize_notification_rich_text,
+)
 from utils.timezone import app_timezone, local_day_start_utc, to_local_time
 from utils.corr_stamps import CorrStampOptions, apply_corr_stamp, is_stampable_file
 from utils.corr_refs import correspondence_reference_label
@@ -7325,31 +7329,16 @@ def _admin_notification_correspondence_label(kind: str, item) -> str:
     return " — ".join(part for part in (kind_label, reference_label, subject) if part)
 
 
-def _admin_notification_system_message_subject(message: str, correspondence_label: str = "") -> str:
-    """Build a concise inbox subject for an administrator system update."""
-    prefix = "تحديث نظام"
-    if correspondence_label:
-        prefix = f"{prefix} — مراسلة مرتبطة"
-    text = (message or "").strip()
-    if text:
-        return f"{prefix}: {text}"[:200]
-    return prefix[:200]
+def _admin_notification_system_message_subject(title: str, correspondence_label: str = "") -> str:
+    """Return the short title used in both the notification and inbox."""
+    del correspondence_label
+    return (title or "").strip()[:200] or "تحديث نظام"
 
 
-def _admin_notification_system_message_body(message: str, correspondence_label: str = "") -> str:
-    """Render the one-way correspondence that accompanies a broadcast."""
-    lines = [
-        "هذه رسالة نظامية حول تحديث في النظام، ولا يمكن الرد عليها مباشرة.",
-        "",
-        (message or "").strip(),
-    ]
-    if correspondence_label:
-        lines.extend(("", "يرتبط هذا التحديث بمرجع مراسلة داخل النظام."))
-    lines.extend((
-        "",
-        "يمكنك إرسال ملاحظاتك أو تغذيتك الراجعة من زر «إرسال تغذية راجعة» في هذه المراسلة.",
-    ))
-    return "\n".join(line for line in lines if line is not None).strip()
+def _admin_notification_system_message_body(body: str, correspondence_label: str = "") -> str:
+    """Store the composed, sanitised rich-text update body for the inbox."""
+    del correspondence_label
+    return sanitize_notification_rich_text(body)
 
 
 def _admin_notification_message_url(notification) -> str | None:
@@ -7789,6 +7778,9 @@ def portal_admin_send_notifications():
     )
 
     def render_form(**values):
+        # A rejected submission is redisplayed in the editor.  Sanitize it at
+        # this boundary too, so invalid markup can never execute in the form.
+        values["body_html"] = sanitize_notification_rich_text(values.get("body", ""))
         return render_template(
             "portal/admin/notification_send.html",
             employees=employees,
@@ -7801,7 +7793,18 @@ def portal_admin_send_notifications():
         )
 
     if request.method == "POST":
-        message = (request.form.get("message") or "").strip()
+        # ``message`` remains a compatibility fallback for any older form or
+        # integration that still posts the previous one-field payload.
+        legacy_message = (request.form.get("message") or "").strip()
+        title = " ".join((request.form.get("title") or "").strip().split())
+        raw_body = request.form.get("body") or ""
+        if not title and legacy_message:
+            title = " ".join(legacy_message.split())
+        if not str(raw_body).strip() and legacy_message:
+            raw_body = legacy_message
+        raw_body = str(raw_body)
+        body_too_large = len(raw_body) > MAX_NOTIFICATION_RICH_TEXT_CHARS
+        body = "" if body_too_large else sanitize_notification_rich_text(raw_body)
         target_scope = (request.form.get("target_scope") or "").strip().upper()
         level = (request.form.get("level") or "INFO").strip().upper()
         if level not in {"INFO", "URGENT"}:
@@ -7816,7 +7819,8 @@ def portal_admin_send_notifications():
         ])), None)
         selected_correspondence = (request.form.get("linked_correspondence") or "").strip().upper()
         form_values = {
-            "message": message,
+            "title": title,
+            "body": body,
             "target_scope": target_scope or ADMIN_NOTIFICATION_SCOPE_USERS,
             "level": level,
             "selected_user_ids": selected_user_ids,
@@ -7825,11 +7829,17 @@ def portal_admin_send_notifications():
             "selected_correspondence": selected_correspondence,
         }
 
-        if not message:
-            flash("يرجى كتابة نص الإشعار.", "warning")
+        if not title:
+            flash("يرجى كتابة عنوان الإشعار.", "warning")
             return render_form(**form_values)
-        if len(message) > 255:
-            flash("نص الإشعار يجب ألا يتجاوز 255 حرفًا.", "warning")
+        if len(title) > 200:
+            flash("عنوان الإشعار يجب ألا يتجاوز 200 حرف.", "warning")
+            return render_form(**form_values)
+        if body_too_large:
+            flash("نص الرسالة التفصيلي كبير جدًا. الحد الأقصى 100000 حرف.", "warning")
+            return render_form(**form_values)
+        if not body:
+            flash("يرجى كتابة نص الرسالة التفصيلي.", "warning")
             return render_form(**form_values)
         if target_scope not in ADMIN_NOTIFICATION_SCOPES:
             flash("يرجى اختيار جهة مستهدفة صحيحة.", "warning")
@@ -7923,11 +7933,11 @@ def portal_admin_send_notifications():
             internal_message = Message(
                 sender_id=current_user.id,
                 subject=_admin_notification_system_message_subject(
-                    message,
+                    title,
                     linked_correspondence_label,
                 ),
                 body=_admin_notification_system_message_body(
-                    message,
+                    body,
                     linked_correspondence_label,
                 ),
                 target_kind=ADMIN_NOTIFICATION_MESSAGE_TARGET_KIND,
@@ -7960,7 +7970,7 @@ def portal_admin_send_notifications():
             db.session.add_all([
                 Notification(
                     user_id=user_id,
-                    message=message,
+                    message=title,
                     type=level,
                     source="portal",
                     link_url=notification_link_url,
@@ -8004,7 +8014,8 @@ def portal_admin_send_notifications():
         return redirect(url_for("portal.portal_admin_send_notifications"))
 
     return render_form(
-        message="",
+        title="",
+        body="",
         target_scope=ADMIN_NOTIFICATION_SCOPE_USERS,
         level="INFO",
         selected_user_ids=set(),

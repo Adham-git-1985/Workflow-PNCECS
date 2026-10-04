@@ -23,12 +23,84 @@
     </div>
   </div>
 
+  <style>
+    .notification-rich-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .35rem;
+      padding: .5rem;
+      background: var(--bs-tertiary-bg, #f8f9fa);
+      border: 1px solid var(--bs-border-color, #dee2e6);
+      border-bottom: 0;
+      border-radius: .375rem .375rem 0 0;
+    }
+    .notification-rich-toolbar .btn {
+      min-width: 2.4rem;
+    }
+    .notification-rich-toolbar label {
+      display: inline-flex;
+      align-items: center;
+      gap: .2rem;
+      margin: 0;
+      padding: .15rem .4rem;
+      background: #fff;
+      border: 1px solid var(--bs-border-color, #dee2e6);
+      border-radius: .25rem;
+      cursor: pointer;
+    }
+    .notification-rich-toolbar input[type="color"] {
+      width: 1.6rem;
+      height: 1.6rem;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+    }
+    .notification-rich-editor {
+      min-height: 17rem;
+      padding: .85rem 1rem;
+      background: #fff;
+      border: 1px solid var(--bs-border-color, #dee2e6);
+      border-radius: 0 0 .375rem .375rem;
+      line-height: 1.9;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+    .notification-rich-editor:focus {
+      outline: 0;
+      border-color: #86b7fe;
+      box-shadow: 0 0 0 .2rem rgba(13, 110, 253, .15);
+    }
+  </style>
+
   <form method="post" id="adminNotificationForm">
     <div class="mb-3">
-      <label class="form-label fw-semibold" for="notificationMessage">نص الإشعار</label>
-      <textarea class="form-control" id="notificationMessage" name="message" rows="5" maxlength="255"
-                aria-describedby="notificationMessageHelp" required>{{ message|default('') }}</textarea>
-      <div id="notificationMessageHelp" class="form-text">حتى 255 حرفًا.</div>
+      <label class="form-label fw-semibold" for="notificationTitle">عنوان الإشعار</label>
+      <input class="form-control" id="notificationTitle" name="title" maxlength="200" required
+             aria-describedby="notificationTitleHelp" value="{{ title|default('') }}"
+             placeholder="مثال: تحديثات جديدة في طلبات المواد">
+      <div id="notificationTitleHelp" class="form-text">يظهر هذا العنوان في الإشعارات وصندوق الوارد؛ الحد الأقصى 200 حرف.</div>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label fw-semibold" for="notificationRichEditor">نص الرسالة التفصيلي</label>
+      <div id="notificationRichToolbar" class="notification-rich-toolbar" hidden aria-label="أدوات تنسيق نص الرسالة">
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-command="bold" title="عريض"><strong>ع</strong></button>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-command="italic" title="مائل"><em>م</em></button>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-command="underline" title="تسطير"><u>ت</u></button>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-command="insertUnorderedList" title="قائمة نقطية"><i class="bi bi-list-ul"></i></button>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-command="insertOrderedList" title="قائمة مرقمة"><i class="bi bi-list-ol"></i></button>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-command="formatBlock" data-command-value="H3" title="عنوان فرعي">H</button>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-command="formatBlock" data-command-value="P" title="نص عادي">¶</button>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-action="link" title="إضافة رابط"><i class="bi bi-link-45deg"></i></button>
+        <label title="لون النص">A <input id="notificationTextColor" type="color" value="#0d6efd" aria-label="لون النص"></label>
+        <label title="لون الخلفية">▉ <input id="notificationBackgroundColor" type="color" value="#fff3cd" aria-label="لون الخلفية"></label>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-command="removeFormat" title="إزالة تنسيق النص المحدد"><i class="bi bi-eraser"></i></button>
+      </div>
+      <div id="notificationRichEditor" class="notification-rich-editor" contenteditable="true" dir="rtl" hidden aria-describedby="notificationBodyHelp">{{ body_html|safe }}</div>
+      <textarea class="form-control" id="notificationBody" name="body" rows="10" aria-describedby="notificationBodyHelp"
+                placeholder="اكتب نص الرسالة هنا...">{{ body|default('') }}</textarea>
+      <div id="notificationBodyHelp" class="form-text">يدعم النص العريض والمائل والألوان والقوائم والعناوين والروابط. سيصل النص الكامل إلى المراسلات، بينما يظهر العنوان فقط في الإشعار المختصر.</div>
     </div>
 
     <div class="row g-3 mb-3">
@@ -178,6 +250,78 @@
     userSearch.addEventListener('input', filterEmployees);
     linkedCorrespondenceSearch.addEventListener('input', filterCorrespondences);
     syncTargetFields();
+  });
+</script>
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var form = document.getElementById('adminNotificationForm');
+    var editor = document.getElementById('notificationRichEditor');
+    var toolbar = document.getElementById('notificationRichToolbar');
+    var bodyField = document.getElementById('notificationBody');
+    if (!form || !editor || !toolbar || !bodyField) return;
+
+    toolbar.hidden = false;
+    editor.hidden = false;
+    bodyField.classList.add('d-none');
+
+    var savedRange = null;
+    function saveSelection() {
+      var selection = window.getSelection();
+      if (!selection || !selection.rangeCount || !editor.contains(selection.anchorNode)) return;
+      savedRange = selection.getRangeAt(0).cloneRange();
+    }
+    function restoreSelection() {
+      if (!savedRange) return;
+      var selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(savedRange);
+    }
+    function syncBody() {
+      bodyField.value = editor.innerHTML;
+    }
+    function runCommand(command, value) {
+      restoreSelection();
+      editor.focus();
+      document.execCommand(command, false, value || null);
+      saveSelection();
+      syncBody();
+    }
+
+    document.addEventListener('selectionchange', saveSelection);
+    editor.addEventListener('input', syncBody);
+    editor.addEventListener('keyup', saveSelection);
+    editor.addEventListener('mouseup', saveSelection);
+
+    toolbar.querySelectorAll('button[data-command]').forEach(function (button) {
+      button.addEventListener('mousedown', function (event) { event.preventDefault(); });
+      button.addEventListener('click', function () {
+        runCommand(button.dataset.command, button.dataset.commandValue || null);
+      });
+    });
+    toolbar.querySelector('[data-action="link"]').addEventListener('mousedown', function (event) { event.preventDefault(); });
+    toolbar.querySelector('[data-action="link"]').addEventListener('click', function () {
+      var href = (window.prompt('أدخل رابطًا يبدأ بـ https:// أو http:// أو /', 'https://') || '').trim();
+      if (!href) return;
+      if (!/^(https?:\/\/|mailto:|\/|#)/i.test(href)) {
+        window.alert('الرابط غير صالح. استخدم رابطًا آمنًا أو رابطًا داخليًا يبدأ بـ /.');
+        return;
+      }
+      runCommand('createLink', href);
+    });
+    document.getElementById('notificationTextColor').addEventListener('change', function () {
+      runCommand('foreColor', this.value);
+    });
+    document.getElementById('notificationBackgroundColor').addEventListener('change', function () {
+      runCommand('hiliteColor', this.value);
+    });
+    form.addEventListener('submit', function (event) {
+      syncBody();
+      if (!(editor.innerText || '').replace(/\u00a0/g, ' ').trim()) {
+        event.preventDefault();
+        editor.focus();
+        window.alert('يرجى كتابة نص الرسالة التفصيلي.');
+      }
+    });
   });
 </script>
 {% endblock %}

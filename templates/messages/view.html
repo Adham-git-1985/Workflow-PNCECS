@@ -2,6 +2,25 @@
 {% block title %}عرض رسالة | المراسلات{% endblock %}
 
 {% block content %}
+<style>
+  .system-update-rich-body {
+    line-height: 1.9;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+  .system-update-rich-body p:first-child,
+  .system-update-rich-body h2:first-child,
+  .system-update-rich-body h3:first-child,
+  .system-update-rich-body h4:first-child {
+    margin-top: 0;
+  }
+  .system-update-rich-body p:last-child {
+    margin-bottom: 0;
+  }
+  .system-update-rich-body a {
+    text-decoration: underline;
+  }
+</style>
 <div class="container-fluid mt-4">
   <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
@@ -134,7 +153,11 @@
 
         <div class="col-12">
           <hr>
-          <div style="white-space:pre-wrap; line-height:1.8">{{ msg.body }}</div>
+          {% if is_admin_broadcast_message %}
+            <div class="system-update-rich-body" dir="rtl">{{ broadcast_body_html }}</div>
+          {% else %}
+            <div style="white-space:pre-wrap; line-height:1.8">{{ msg.body }}</div>
+          {% endif %}
         </div>
 
         {% if rec %}
