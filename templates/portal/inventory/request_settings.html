@@ -1,19 +1,60 @@
 {% extends "portal/layout.html" %}
 {% block content %}
-<h4>مسؤول اعتماد طلبات المواد</h4>
-<div class="alert alert-info">يسير الطلب من الموظف إلى مسؤوليه المباشرين بالتوازي، ويكفي اعتماد أحدهم، ثم يصل إلى مدير المستودع للاعتماد والصرف النهائي.</div>
-<div class="alert alert-warning">إذا كان مقدم الطلب هو مدير المستودع نفسه، أو لم يوجد معتمد مستودع متاح، ينتقل الطلب تلقائيًا إلى مدير الشؤون البشرية البديل.</div>
+<h4>مسارات اعتماد طلبات المواد</h4>
+<div class="alert alert-info">تبقى الطلبات العادية على مسار مدير المستودع والصرف النهائي. طلبات التكنولوجيا والإلكترونيات تمر بمدير المستودع التكنولوجي ثم مدير عام الإدارة العامة للتكنولوجيا والمطبوعات ثم مدير عام الشؤون الإدارية والمالية. أما الأثاث والصيانة فتمر بمسؤول المستودع الإداري ثم المدير العام نفسه.</div>
+<div class="alert alert-secondary">في المرحلة الأخيرة يستطيع مدير عام الشؤون الإدارية والمالية الاعتماد والصرف النهائي، أو إحالة الطلب إلى الأمين العام للاعتماد أو الرفض. يُمنح الحساب المختار صلاحية المرحلة تلقائيًا.</div>
 <form method="post" class="card card-body">
-  <label class="form-label">مدير المستودع</label>
-  <select class="form-select mb-3" name="warehouse_manager_user_id">
-    <option value="">—</option>
-    {% for user in users %}<option value="{{ user.id }}" {% if warehouse_manager_id == user.id %}selected{% endif %}>{{ user.name or user.email }}</option>{% endfor %}
-  </select>
-  <label class="form-label">مدير الشؤون البشرية البديل عند غياب معتمد المستودع</label>
-  <select class="form-select mb-3" name="hr_fallback_user_id">
-    <option value="">اكتشاف تلقائي حسب الدور/المسمى الوظيفي</option>
-    {% for user in users %}<option value="{{ user.id }}" {% if hr_fallback_user_id == user.id %}selected{% endif %}>{{ user.name or user.email }}{% if user.job_title %} — {{ user.job_title }}{% endif %}</option>{% endfor %}
-  </select>
+  <div class="row g-3">
+    <div class="col-lg-6">
+      <label class="form-label">مدير المستودع للطلبات العادية</label>
+      <select class="form-select" name="warehouse_manager_user_id">
+        <option value="">—</option>
+        {% for user in users %}<option value="{{ user.id }}" {% if warehouse_manager_id == user.id %}selected{% endif %}>{{ user.name or user.email }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-lg-6">
+      <label class="form-label">مدير الشؤون البشرية البديل للطلبات العادية</label>
+      <select class="form-select" name="hr_fallback_user_id">
+        <option value="">اكتشاف تلقائي حسب الدور/المسمى الوظيفي</option>
+        {% for user in users %}<option value="{{ user.id }}" {% if hr_fallback_user_id == user.id %}selected{% endif %}>{{ user.name or user.email }}{% if user.job_title %} — {{ user.job_title }}{% endif %}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-lg-6">
+      <label class="form-label">مدير المستودع التكنولوجي</label>
+      <select class="form-select" name="tech_warehouse_manager_user_id">
+        <option value="">—</option>
+        {% for user in users %}<option value="{{ user.id }}" {% if tech_warehouse_manager_user_id == user.id %}selected{% endif %}>{{ user.name or user.email }}{% if user.job_title %} — {{ user.job_title }}{% endif %}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-lg-6">
+      <label class="form-label">مسؤول المستودع الإداري للصيانة والأثاث</label>
+      <select class="form-select" name="admin_maintenance_user_id">
+        <option value="">—</option>
+        {% for user in users %}<option value="{{ user.id }}" {% if admin_maintenance_user_id == user.id %}selected{% endif %}>{{ user.name or user.email }}{% if user.job_title %} — {{ user.job_title }}{% endif %}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-lg-6">
+      <label class="form-label">مدير عام الإدارة العامة للتكنولوجيا والمطبوعات</label>
+      <select class="form-select" name="tech_director_user_id">
+        <option value="">—</option>
+        {% for user in users %}<option value="{{ user.id }}" {% if tech_director_user_id == user.id %}selected{% endif %}>{{ user.name or user.email }}{% if user.job_title %} — {{ user.job_title }}{% endif %}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-lg-6">
+      <label class="form-label">مدير عام الشؤون الإدارية والمالية</label>
+      <select class="form-select" name="admin_finance_director_user_id">
+        <option value="">—</option>
+        {% for user in users %}<option value="{{ user.id }}" {% if admin_finance_director_user_id == user.id %}selected{% endif %}>{{ user.name or user.email }}{% if user.job_title %} — {{ user.job_title }}{% endif %}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-lg-6">
+      <label class="form-label">الأمين العام (اختياري للإحالة)</label>
+      <select class="form-select" name="secretary_general_user_id">
+        <option value="">اكتشاف تلقائي حسب الدور/المسمى الوظيفي</option>
+        {% for user in users %}<option value="{{ user.id }}" {% if secretary_general_user_id == user.id %}selected{% endif %}>{{ user.name or user.email }}{% if user.job_title %} — {{ user.job_title }}{% endif %}</option>{% endfor %}
+      </select>
+    </div>
+  </div>
   <button class="btn btn-primary">حفظ</button>
 </form>
 {% endblock %}

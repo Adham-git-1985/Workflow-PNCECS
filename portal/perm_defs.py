@@ -176,6 +176,11 @@ PERMS: Dict[str, List[PermDef]] = {
         PermDef("STORE_READ", "عرض المستودع", "عرض ملفات المستودع.", module="STORE"),
         PermDef("STORE_MANAGE", "إدارة المستودع", "رفع/حذف/تنظيم ملفات المستودع.", module="STORE"),
         PermDef("INVENTORY_REQUEST_APPROVE", "مدير المستودع – اعتماد طلبات المواد", "عرض ومتابعة واعتماد طلبات مواد الموظفين في مرحلة المستودع.", module="INVENTORY_REQUESTS"),
+        PermDef("INVENTORY_TECH_WAREHOUSE_APPROVE", "مدير المستودع التكنولوجي", "مراجعة وتجهيز طلبات الحاسوب والبرامج والأجهزة الإلكترونية قبل إحالتها للاعتمادات التالية.", module="INVENTORY_REQUESTS"),
+        PermDef("INVENTORY_ADMIN_MAINTENANCE_APPROVE", "مسؤول المستودع الإداري للصيانة والأثاث", "مراجعة وتجهيز طلبات الأثاث والصيانة قبل إحالتها للاعتماد النهائي.", module="INVENTORY_REQUESTS"),
+        PermDef("INVENTORY_TECH_DIRECTOR_APPROVE", "مدير عام الإدارة العامة للتكنولوجيا والمطبوعات", "اعتماد طلبات التكنولوجيا والإلكترونيات بعد مراجعة المستودع التكنولوجي.", module="INVENTORY_REQUESTS"),
+        PermDef("INVENTORY_ADMIN_FINANCE_DIRECTOR_APPROVE", "مدير عام الشؤون الإدارية والمالية", "الاعتماد النهائي أو إحالة طلبات الأثاث والصيانة والتكنولوجيا إلى الأمين العام.", module="INVENTORY_REQUESTS"),
+        PermDef("INVENTORY_SECRETARY_GENERAL_APPROVE", "الأمين العام – اعتماد طلبات المواد", "اعتماد أو رفض طلبات المواد المُحالة إليه من مدير عام الشؤون الإدارية والمالية.", module="INVENTORY_REQUESTS"),
         PermDef("STORE_EXPORT", "تصدير المستودع", "تصدير/تحميل جماعي حسب السياسة.", module="STORE"),
     ],
     "الحركة والنقل": [

@@ -18,6 +18,14 @@
             <label class="form-label">الاسم</label>
             <input name="name" class="form-control" required value="{{ edit.name if edit else '' }}">
           </div>
+          <div class="mb-2">
+            <label class="form-label">مسار اعتماد طلبات المواد</label>
+            <select name="request_route" class="form-select">
+              {% set selected_route = edit.request_route if edit and edit.request_route else 'AUTO' %}
+              {% for value, label in category_route_options %}<option value="{{ value }}" {% if selected_route == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select>
+            <div class="form-text">التلقائي يصنّف الحاسوب/الإلكترونيات والبرامج، وكذلك الأثاث والصيانة، وفق اسم التصنيف. اختر مساراً صريحاً لتجاوزه عند الحاجة.</div>
+          </div>
           <div class="form-check mb-3">
             <input class="form-check-input" type="checkbox" name="is_active" value="1" id="catActive" {% if (edit and edit.is_active) or (not edit) %}checked{% endif %}>
             <label class="form-check-label" for="catActive">فعّال</label>
@@ -49,6 +57,8 @@
                 <div class="fw-semibold">{{ c.name }}</div>
                 <span class="badge text-bg-{{ 'success' if c.is_active else 'secondary' }}">{{ 'فعّال' if c.is_active else 'موقوف' }}</span>
               </div>
+              {% set route_labels = {'AUTO':'تلقائي','NORMAL':'عادي','TECH':'تكنولوجيا وإلكترونيات','ADMIN_MAINTENANCE':'أثاث وصيانة'} %}
+              <div class="small text-muted mb-1">مسار الطلب: {{ route_labels.get(c.request_route or 'AUTO', c.request_route or 'AUTO') }}</div>
               <div class="text-muted small mb-3">{{ item_counts.get(c.id, 0) }} صنفاً</div>
               <div class="mt-auto d-flex gap-2">
                 <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_categories', edit_id=c.id) }}">تعديل</a>

@@ -18,6 +18,7 @@ from models import (
     InvReturnVoucher,
     InvReturnVoucherLine,
     InvItem,
+    InvItemCategory,
     InvStocktakeVoucher,
     InvStocktakeVoucherLine,
     InvWarehouse,
@@ -88,12 +89,47 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
             password_hash="x",
             role="HR_MANAGER",
         )
+        self.tech_warehouse_manager = User(
+            email="tech-warehouse@example.test",
+            name="Technology Warehouse Manager",
+            password_hash="x",
+            role="employee",
+        )
+        self.tech_director = User(
+            email="tech-director@example.test",
+            name="Technology Director",
+            password_hash="x",
+            role="employee",
+        )
+        self.admin_maintenance_manager = User(
+            email="admin-maintenance@example.test",
+            name="Administrative Maintenance Manager",
+            password_hash="x",
+            role="employee",
+        )
+        self.admin_finance_director = User(
+            email="admin-finance@example.test",
+            name="Administrative Finance Director",
+            password_hash="x",
+            role="employee",
+        )
+        self.secretary_general = User(
+            email="secretary-general@example.test",
+            name="Secretary General",
+            password_hash="x",
+            role="employee",
+        )
         db.session.add_all((
             self.employee,
             self.first_manager,
             self.second_manager,
             self.warehouse_manager,
             self.hr_director,
+            self.tech_warehouse_manager,
+            self.tech_director,
+            self.admin_maintenance_manager,
+            self.admin_finance_director,
+            self.secretary_general,
         ))
         db.session.flush()
         self.warehouse = InvWarehouse(name="Main warehouse", code="MAIN", is_active=True)
@@ -122,6 +158,11 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
             InvItem(name="Printer paper", code="PAPER-001", is_active=True),
             UserPermission(user_id=self.employee.id, key="PORTAL_READ", is_allowed=True),
             UserPermission(user_id=self.warehouse_manager.id, key="INVENTORY_REQUEST_APPROVE", is_allowed=True),
+            UserPermission(user_id=self.tech_warehouse_manager.id, key="INVENTORY_TECH_WAREHOUSE_APPROVE", is_allowed=True),
+            UserPermission(user_id=self.tech_director.id, key="INVENTORY_TECH_DIRECTOR_APPROVE", is_allowed=True),
+            UserPermission(user_id=self.admin_maintenance_manager.id, key="INVENTORY_ADMIN_MAINTENANCE_APPROVE", is_allowed=True),
+            UserPermission(user_id=self.admin_finance_director.id, key="INVENTORY_ADMIN_FINANCE_DIRECTOR_APPROVE", is_allowed=True),
+            UserPermission(user_id=self.secretary_general.id, key="INVENTORY_SECRETARY_GENERAL_APPROVE", is_allowed=True),
         ))
         db.session.commit()
         self.client = self.app.test_client()
@@ -147,6 +188,36 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 302)
         return InvEmployeeRequest.query.order_by(InvEmployeeRequest.id.desc()).first()
+
+    def _special_route_item(self, *, category_name, item_name, item_code):
+        category = InvItemCategory(name=category_name, is_active=True)
+        db.session.add(category)
+        db.session.flush()
+        item = InvItem(
+            name=item_name,
+            code=item_code,
+            category_id=category.id,
+            is_active=True,
+        )
+        db.session.add(item)
+        db.session.commit()
+        return item
+
+    def _add_stock(self, item, quantity=10):
+        voucher = InvStocktakeVoucher(
+            voucher_no=f"STK-SPECIAL-{item.id}",
+            voucher_date=date.today().isoformat(),
+            warehouse_id=self.warehouse.id,
+            created_by_id=self.hr_director.id,
+        )
+        db.session.add(voucher)
+        db.session.flush()
+        db.session.add(InvStocktakeVoucherLine(
+            voucher_id=voucher.id,
+            item_id=item.id,
+            qty=quantity,
+        ))
+        db.session.commit()
 
     def test_legacy_manager_stage_is_routed_to_the_warehouse(self):
         self._login(self.second_manager.id)
@@ -406,6 +477,8 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
         for template_name in (
             "portal/inventory/employee_requests.html",
             "portal/inventory/employee_request_view.html",
+            "portal/inventory/request_settings.html",
+            "portal/inventory/admin_categories.html",
         ):
             with self.subTest(template=template_name):
                 self.app.jinja_env.get_template(template_name)
@@ -522,6 +595,203 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
         ).get_json()["items"][0]["last_request"]
         self.assertFalse(older["within_month"])
         self.assertIn("أكثر من شهر", older["label"])
+
+    def test_technology_request_uses_its_dedicated_route_and_can_go_to_secretary_general(self):
+        item = self._special_route_item(
+            category_name="أجهزة حاسوب وتوابعها",
+            item_name="Laptop",
+            item_code="LAPTOP-001",
+        )
+        self._add_stock(item)
+        self._login(self.employee.id)
+
+        response = self.client.post(
+            "/portal/inventory/employee-requests/new",
+            data={
+                "item_id": str(item.id),
+                "requested_qty": "2",
+                "purpose": "Technology request",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        row = InvEmployeeRequest.query.order_by(InvEmployeeRequest.id.desc()).first()
+        self.assertEqual(row.route_type, "TECH")
+        self.assertEqual(row.approval_stage, "TECH_WAREHOUSE")
+
+        self._login(self.warehouse_manager.id)
+        self.assertEqual(
+            self.client.post(
+                f"/portal/inventory/employee-requests/{row.id}/approve",
+                data={"decision": "approve"},
+            ).status_code,
+            403,
+        )
+
+        self._login(self.tech_warehouse_manager.id)
+        prepared = self.client.post(
+            f"/portal/inventory/employee-requests/{row.id}/approve",
+            data={
+                "decision": "approve",
+                "warehouse_id": str(self.warehouse.id),
+                f"approved_qty_{row.lines[0].id}": "2",
+            },
+        )
+        self.assertEqual(prepared.status_code, 302)
+        db.session.expire_all()
+        row = db.session.get(InvEmployeeRequest, row.id)
+        self.assertEqual(row.approval_stage, "TECH_DIRECTOR")
+        self.assertEqual(InvIssueVoucher.query.count(), 0)
+
+        self._login(self.tech_director.id)
+        self.assertEqual(
+            self.client.post(
+                f"/portal/inventory/employee-requests/{row.id}/approve",
+                data={"decision": "approve", "note": "Technology approved"},
+            ).status_code,
+            302,
+        )
+        db.session.expire_all()
+        row = db.session.get(InvEmployeeRequest, row.id)
+        self.assertEqual(row.approval_stage, "ADMIN_FINANCE")
+
+        self._login(self.admin_finance_director.id)
+        self.assertEqual(
+            self.client.post(
+                f"/portal/inventory/employee-requests/{row.id}/approve",
+                data={"decision": "forward_secretary", "note": "Needs secretary decision"},
+            ).status_code,
+            302,
+        )
+        db.session.expire_all()
+        row = db.session.get(InvEmployeeRequest, row.id)
+        self.assertEqual(row.approval_stage, "SECRETARY_GENERAL")
+        self.assertTrue(InvEmployeeRequestAction.query.filter_by(
+            request_id=row.id,
+            stage="ADMIN_FINANCE",
+            action="FORWARDED",
+        ).first())
+
+        self._login(self.secretary_general.id)
+        approved = self.client.post(
+            f"/portal/inventory/employee-requests/{row.id}/approve",
+            data={"decision": "approve", "note": "Secretary approved"},
+        )
+        self.assertEqual(approved.status_code, 302)
+        db.session.expire_all()
+        row = db.session.get(InvEmployeeRequest, row.id)
+        self.assertEqual(row.status, "APPROVED")
+        self.assertEqual(row.approval_stage, "DONE")
+        self.assertEqual(InvIssueVoucher.query.count(), 1)
+
+    def test_furniture_or_maintenance_route_can_end_with_director_final_approval(self):
+        item = self._special_route_item(
+            category_name="أثاث",
+            item_name="Office desk",
+            item_code="DESK-001",
+        )
+        self._add_stock(item)
+        self._login(self.employee.id)
+
+        response = self.client.post(
+            "/portal/inventory/employee-requests/new",
+            data={
+                "item_id": str(item.id),
+                "requested_qty": "1",
+                "purpose": "Furniture request",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        row = InvEmployeeRequest.query.order_by(InvEmployeeRequest.id.desc()).first()
+        self.assertEqual(row.route_type, "ADMIN_MAINTENANCE")
+        self.assertEqual(row.approval_stage, "ADMIN_MAINTENANCE")
+
+        self._login(self.admin_maintenance_manager.id)
+        prepared = self.client.post(
+            f"/portal/inventory/employee-requests/{row.id}/approve",
+            data={
+                "decision": "approve",
+                "warehouse_id": str(self.warehouse.id),
+                f"approved_qty_{row.lines[0].id}": "1",
+            },
+        )
+        self.assertEqual(prepared.status_code, 302)
+        db.session.expire_all()
+        row = db.session.get(InvEmployeeRequest, row.id)
+        self.assertEqual(row.approval_stage, "ADMIN_FINANCE")
+        self.assertEqual(InvIssueVoucher.query.count(), 0)
+
+        self._login(self.admin_finance_director.id)
+        approved = self.client.post(
+            f"/portal/inventory/employee-requests/{row.id}/approve",
+            data={"decision": "approve", "note": "Final director approval"},
+        )
+        self.assertEqual(approved.status_code, 302)
+        db.session.expire_all()
+        row = db.session.get(InvEmployeeRequest, row.id)
+        self.assertEqual(row.status, "APPROVED")
+        self.assertEqual(row.approval_stage, "DONE")
+        self.assertEqual(InvIssueVoucher.query.count(), 1)
+
+    def test_auto_categories_route_new_technology_and_maintenance_names(self):
+        technology_item = self._special_route_item(
+            category_name="ملحقات حاسوب",
+            item_name="Computer accessory",
+            item_code="ACCESSORY-001",
+        )
+        maintenance_item = self._special_route_item(
+            category_name="صيانة تجهيزات",
+            item_name="Equipment maintenance",
+            item_code="MAINT-001",
+        )
+        self._login(self.employee.id)
+
+        technology_response = self.client.post(
+            "/portal/inventory/employee-requests/new",
+            data={
+                "item_id": str(technology_item.id),
+                "requested_qty": "1",
+                "purpose": "Technology accessory request",
+            },
+        )
+        self.assertEqual(technology_response.status_code, 302)
+        technology_request = InvEmployeeRequest.query.order_by(InvEmployeeRequest.id.desc()).first()
+        self.assertEqual(technology_request.route_type, "TECH")
+        self.assertEqual(technology_request.approval_stage, "TECH_WAREHOUSE")
+
+        maintenance_response = self.client.post(
+            "/portal/inventory/employee-requests/new",
+            data={
+                "item_id": str(maintenance_item.id),
+                "requested_qty": "1",
+                "purpose": "Maintenance request",
+            },
+        )
+        self.assertEqual(maintenance_response.status_code, 302)
+        maintenance_request = InvEmployeeRequest.query.order_by(InvEmployeeRequest.id.desc()).first()
+        self.assertEqual(maintenance_request.route_type, "ADMIN_MAINTENANCE")
+        self.assertEqual(maintenance_request.approval_stage, "ADMIN_MAINTENANCE")
+
+    def test_a_request_must_not_mix_special_and_normal_routing_categories(self):
+        item = self._special_route_item(
+            category_name="أجهزة حاسوب وتوابعها",
+            item_name="Laptop",
+            item_code="LAPTOP-001",
+        )
+        regular_item = InvItem.query.filter_by(code="PAPER-001").one()
+        self._login(self.employee.id)
+
+        response = self.client.post(
+            "/portal/inventory/employee-requests/new",
+            data={
+                "item_id": [str(item.id), str(regular_item.id)],
+                "requested_qty": ["1", "1"],
+                "purpose": "Mixed request",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(InvEmployeeRequest.query.count(), 1)
 
 
 if __name__ == "__main__":

@@ -4452,6 +4452,11 @@ def _access_service_defs():
                 ("READ", "عرض المستودع", ["STORE_READ"]),
                 ("MANAGE", "رفع/إدارة المستودع", ["STORE_READ", "STORE_MANAGE"]),
                 ("REQUEST_APPROVE", "مدير المستودع (اعتماد طلبات المواد)", ["INVENTORY_REQUEST_APPROVE"]),
+                ("TECH_WAREHOUSE", "مدير المستودع التكنولوجي", ["INVENTORY_TECH_WAREHOUSE_APPROVE"]),
+                ("ADMIN_MAINTENANCE", "مسؤول مستودع الصيانة والأثاث", ["INVENTORY_ADMIN_MAINTENANCE_APPROVE"]),
+                ("TECH_DIRECTOR", "مدير عام التكنولوجيا والمطبوعات", ["INVENTORY_TECH_DIRECTOR_APPROVE"]),
+                ("ADMIN_FINANCE_DIRECTOR", "مدير عام الشؤون الإدارية والمالية", ["INVENTORY_ADMIN_FINANCE_DIRECTOR_APPROVE"]),
+                ("SECRETARY_GENERAL_APPROVE", "الأمين العام (طلبات المواد)", ["INVENTORY_SECRETARY_GENERAL_APPROVE"]),
             ],
         },
         "transport": {
@@ -39918,7 +39923,7 @@ def portal_admin_dashboard():
     add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "طلبات الصلاحيات", "مراجعة طلبات الموظفين لتفعيل خدمات البوابة.", "bi-inboxes", "portal.admin_access_requests")
     add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "صلاحيات البوابة", "تعديل الصلاحيات للأدوار أو للمستخدمين.", "bi-person-gear", "portal.portal_admin_permissions")
     add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "اعتماد طلبات الحركة", "تعيين مسؤول الحركة ومدير النقل البديل ومدير الشؤون الإدارية.", "bi-car-front", "portal.transport_approval_settings")
-    add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "اعتماد طلبات المواد", "تعيين مدير المستودع ومدير الشؤون البشرية البديل.", "bi-box-seam", "portal.inventory_request_settings")
+    add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "اعتماد طلبات المواد", "تعيين مسؤولي المسار العادي والتكنولوجي والأثاث/الصيانة والاعتماد النهائي.", "bi-box-seam", "portal.inventory_request_settings")
     add_card(PORTAL_MEETINGS_MANAGE, "الاجتماعات والمتابعة", "ترتيب الاجتماعات، الأجندة، التذكيرات، المحاضر، ومهام ما بعد الاجتماع.", "bi-calendar2-week", "portal.meetings_dashboard")
 
     # HR admin
@@ -47644,6 +47649,12 @@ def inventory_admin_warehouses():
 @login_required
 @_perm_any(STORE_MANAGE, "INVENTORY_REQUEST_APPROVE")
 def inventory_admin_categories():
+    category_route_options = (
+        ("AUTO", "تلقائي بحسب اسم التصنيف"),
+        ("NORMAL", "المسار العادي (مدير المستودع)"),
+        ("TECH", "مسار التكنولوجيا والإلكترونيات"),
+        ("ADMIN_MAINTENANCE", "مسار الأثاث والصيانة"),
+    )
     edit_id = request.args.get("edit_id")
     edit = InvItemCategory.query.get(int(edit_id)) if (edit_id and edit_id.isdigit()) else None
 
@@ -47660,9 +47671,13 @@ def inventory_admin_categories():
 
         name = (request.form.get("name") or "").strip()
         is_active = bool(request.form.get("is_active"))
+        request_route = (request.form.get("request_route") or "AUTO").strip().upper()
 
         if not name:
             flash("يرجى تعبئة الاسم.", "warning")
+            return redirect(url_for("portal.inventory_admin_categories", edit_id=edit.id) if edit else url_for("portal.inventory_admin_categories"))
+        if request_route not in {value for value, _label in category_route_options}:
+            flash("مسار اعتماد التصنيف غير صالح.", "warning")
             return redirect(url_for("portal.inventory_admin_categories", edit_id=edit.id) if edit else url_for("portal.inventory_admin_categories"))
 
         if action == "update":
@@ -47672,12 +47687,18 @@ def inventory_admin_categories():
                 flash("التصنيف غير موجود.", "warning")
                 return redirect(url_for("portal.inventory_admin_categories"))
             c.name = name
+            c.request_route = request_route
             c.is_active = is_active
             db.session.commit()
             flash("تم تحديث التصنيف.", "success")
             return redirect(url_for("portal.inventory_admin_categories"))
 
-        c = InvItemCategory(name=name, is_active=is_active, created_at=datetime.utcnow())
+        c = InvItemCategory(
+            name=name,
+            request_route=request_route,
+            is_active=is_active,
+            created_at=datetime.utcnow(),
+        )
         db.session.add(c)
         db.session.commit()
         flash("تم إضافة التصنيف.", "success")
@@ -47699,6 +47720,7 @@ def inventory_admin_categories():
         item_counts=item_counts,
         edit=edit,
         search=search,
+        category_route_options=category_route_options,
     )
 
 

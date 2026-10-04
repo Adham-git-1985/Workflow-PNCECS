@@ -42,19 +42,29 @@
     {% if can_process %}
     <div class="card shadow-sm mb-3" id="decision"><div class="card-header fw-bold">متابعة الاعتماد</div><div class="card-body">
       <form method="post" action="{{ url_for('portal.inventory_employee_request_approve', request_id=item.id) }}">
-        {% if active_approval_stage in ['WAREHOUSE', 'HR'] %}
+        {% if active_approval_stage in warehouse_review_stages %}
         <label class="form-label">مستودع الصرف *</label>
         <select class="form-select mb-3" name="warehouse_id" id="warehouseSelect" required><option value="">اختر المستودع</option>{% for warehouse in warehouses %}<option value="{{ warehouse.id }}">{{ warehouse.label }}</option>{% endfor %}</select>
         <div class="small text-muted mb-2">حدد الكمية التي سيصرفها المستودع:</div>
         {% for line in item.lines %}<div class="border rounded p-2 mb-2"><div class="fw-semibold">{{ line.item.label }}</div><div class="input-group mt-1"><span class="input-group-text">المعتمد</span><input class="form-control approved-qty" type="number" min="0" max="{{ line.requested_qty }}" step="0.01" name="approved_qty_{{ line.id }}" value="{{ line.requested_qty }}" data-item="{{ line.item_id }}"><span class="input-group-text stock-value">المتاح: —</span></div></div>{% endfor %}
         {% endif %}
         <label class="form-label mt-3">ملاحظة الاعتماد</label><textarea class="form-control mb-2" name="note" rows="2"></textarea>
-        <div class="d-grid gap-2"><button class="btn btn-success" name="decision" value="approve">{{ 'اعتماد وصرف المواد' if active_approval_stage in ['WAREHOUSE', 'HR'] else 'اعتماد الطلب' }}</button><button class="btn btn-outline-danger" name="decision" value="reject" formnovalidate onclick="return confirm('هل تريد رفض طلب المواد؟ يجب كتابة سبب الرفض.');"><i class="bi bi-x-circle"></i> رفض الطلب</button></div>
+        <div class="d-grid gap-2">
+          <button class="btn btn-success" name="decision" value="approve">
+            {% if active_approval_stage in ['WAREHOUSE', 'HR'] %}اعتماد وصرف المواد
+            {% elif active_approval_stage in [secretary_forward_stage, secretary_general_stage] %}اعتماد نهائي وصرف المواد
+            {% else %}اعتماد وإحالة للمرحلة التالية{% endif %}
+          </button>
+          {% if active_approval_stage == secretary_forward_stage %}
+          <button class="btn btn-outline-primary" name="decision" value="forward_secretary"><i class="bi bi-send"></i> إحالة إلى الأمين العام للاعتماد أو الرفض</button>
+          {% endif %}
+          <button class="btn btn-outline-danger" name="decision" value="reject" formnovalidate onclick="return confirm('هل تريد رفض طلب المواد؟ يجب كتابة سبب الرفض.');"><i class="bi bi-x-circle"></i> رفض الطلب</button>
+        </div>
       </form>
     </div></div>
     {% endif %}
     <div class="card shadow-sm"><div class="card-header fw-bold">سجل الإجراءات</div><div class="card-body">
-      {% for action in item.actions|sort(attribute='created_at') %}<div class="border rounded p-2 mb-2"><div class="fw-semibold">{{ stages.get(action.stage, action.stage) }} — {{ {'SUBMITTED':'إرسال الطلب','APPROVED':'متابعة الاعتماد','UPDATED':'تعديل الطلب','REJECTED':'رفض الطلب','CANCELLED':'إلغاء الطلب'}.get(action.action, action.action) }}</div><div class="small text-muted">{{ action.actor.full_name }} · {{ action.created_at.strftime('%Y-%m-%d %H:%M') }}</div>{% if action.note %}<div class="mt-1">{{ action.note }}</div>{% endif %}</div>{% endfor %}
+      {% for action in item.actions|sort(attribute='created_at') %}<div class="border rounded p-2 mb-2"><div class="fw-semibold">{{ stages.get(action.stage, action.stage) }} — {{ {'SUBMITTED':'إرسال الطلب','APPROVED':'متابعة الاعتماد','FORWARDED':'إحالة إلى الأمين العام','UPDATED':'تعديل الطلب','REJECTED':'رفض الطلب','CANCELLED':'إلغاء الطلب'}.get(action.action, action.action) }}</div><div class="small text-muted">{{ action.actor.full_name }} · {{ action.created_at.strftime('%Y-%m-%d %H:%M') }}</div>{% if action.note %}<div class="mt-1">{{ action.note }}</div>{% endif %}</div>{% endfor %}
     </div></div>
   </div>
 </div>

@@ -1680,6 +1680,33 @@ def _ensure_runtime_schema():
             if not _col_exists("inv_item", "variant"):
                 _add_column_retry("inv_item", "variant", "TEXT")
 
+            # Materials requests can follow a dedicated technology or
+            # furniture/maintenance path.  Keep existing SQLite deployments
+            # compatible without requiring a manual migration first.
+            if not _col_exists("inv_item_category", "request_route"):
+                _add_column_retry(
+                    "inv_item_category",
+                    "request_route",
+                    "TEXT NOT NULL DEFAULT 'AUTO'",
+                )
+            if not _col_exists("inv_employee_request", "route_type"):
+                _add_column_retry(
+                    "inv_employee_request",
+                    "route_type",
+                    "TEXT NOT NULL DEFAULT 'NORMAL'",
+                )
+            for _index_sql in [
+                "CREATE INDEX IF NOT EXISTS ix_inv_item_category_request_route "
+                "ON inv_item_category (request_route)",
+                "CREATE INDEX IF NOT EXISTS ix_inv_employee_request_route_type "
+                "ON inv_employee_request (route_type)",
+            ]:
+                try:
+                    db.session.execute(text(_index_sql))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
             # Employee-request returns can be linked back to the original
             # request/issue without breaking legacy generic return vouchers.
             for _table, _col, _ctype in [

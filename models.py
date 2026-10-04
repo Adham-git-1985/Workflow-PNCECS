@@ -4913,6 +4913,16 @@ class InvItemCategory(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(200), nullable=False, index=True, unique=True)
+    # ``AUTO`` retains the built-in routing for the legacy catalogue names;
+    # administrators can explicitly override any category when its contents
+    # need a different materials-request approval path.
+    request_route = db.Column(
+        db.String(30),
+        nullable=False,
+        default="AUTO",
+        server_default="AUTO",
+        index=True,
+    )
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
@@ -5306,6 +5316,15 @@ class InvEmployeeRequest(db.Model):
     purpose = db.Column(db.String(255), nullable=False)
     note = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(20), nullable=False, default="SUBMITTED", index=True)
+    # Snapshot the route selected when the request is submitted.  A later
+    # category edit must not redirect an in-flight request unexpectedly.
+    route_type = db.Column(
+        db.String(30),
+        nullable=False,
+        default="NORMAL",
+        server_default="NORMAL",
+        index=True,
+    )
     approval_stage = db.Column(db.String(20), nullable=False, default="WAREHOUSE", index=True)
     decided_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)

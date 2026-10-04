@@ -35,13 +35,70 @@ from services.official_request_forms import (
     build_supply_request_pdf,
     official_form_filename,
 )
+from services.hr_request_workflow import secretary_general_user_ids
 from utils.inventory_numbers import auto_inventory_voucher_no
 
+
+ROUTE_NORMAL = "NORMAL"
+ROUTE_TECH = "TECH"
+ROUTE_ADMIN_MAINTENANCE = "ADMIN_MAINTENANCE"
+
+STAGE_TECH_WAREHOUSE = "TECH_WAREHOUSE"
+STAGE_TECH_DIRECTOR = "TECH_DIRECTOR"
+STAGE_ADMIN_MAINTENANCE = "ADMIN_MAINTENANCE"
+STAGE_ADMIN_FINANCE = "ADMIN_FINANCE"
+STAGE_SECRETARY_GENERAL = "SECRETARY_GENERAL"
 
 STAGES = {
     "HR": "مدير الشؤون البشرية (بديل)",
     "WAREHOUSE": "مدير المستودع",
+    STAGE_TECH_WAREHOUSE: "مدير المستودع التكنولوجي",
+    STAGE_TECH_DIRECTOR: "مدير عام الإدارة العامة للتكنولوجيا والمطبوعات",
+    STAGE_ADMIN_MAINTENANCE: "مسؤول المستودع الإداري للصيانة والأثاث",
+    STAGE_ADMIN_FINANCE: "مدير عام الشؤون الإدارية والمالية",
+    STAGE_SECRETARY_GENERAL: "الأمين العام",
     "DONE": "مكتمل",
+}
+
+WAREHOUSE_REVIEW_STAGES = frozenset({
+    "WAREHOUSE",
+    "HR",
+    STAGE_TECH_WAREHOUSE,
+    STAGE_ADMIN_MAINTENANCE,
+})
+
+NEXT_APPROVAL_STAGE = {
+    STAGE_TECH_WAREHOUSE: STAGE_TECH_DIRECTOR,
+    STAGE_TECH_DIRECTOR: STAGE_ADMIN_FINANCE,
+    STAGE_ADMIN_MAINTENANCE: STAGE_ADMIN_FINANCE,
+}
+
+SPECIAL_ROUTE_REQUIRED_STAGES = {
+    ROUTE_TECH: (
+        STAGE_TECH_WAREHOUSE,
+        STAGE_TECH_DIRECTOR,
+        STAGE_ADMIN_FINANCE,
+    ),
+    ROUTE_ADMIN_MAINTENANCE: (
+        STAGE_ADMIN_MAINTENANCE,
+        STAGE_ADMIN_FINANCE,
+    ),
+}
+
+STAGE_ASSIGNMENT_SETTINGS = {
+    STAGE_TECH_WAREHOUSE: "INVENTORY_TECH_WAREHOUSE_MANAGER_USER_ID",
+    STAGE_TECH_DIRECTOR: "INVENTORY_TECH_DIRECTOR_USER_ID",
+    STAGE_ADMIN_MAINTENANCE: "INVENTORY_ADMIN_MAINTENANCE_USER_ID",
+    STAGE_ADMIN_FINANCE: "INVENTORY_ADMIN_FINANCE_DIRECTOR_USER_ID",
+    STAGE_SECRETARY_GENERAL: "INVENTORY_SECRETARY_GENERAL_USER_ID",
+}
+
+STAGE_APPROVAL_PERMISSIONS = {
+    STAGE_TECH_WAREHOUSE: "INVENTORY_TECH_WAREHOUSE_APPROVE",
+    STAGE_TECH_DIRECTOR: "INVENTORY_TECH_DIRECTOR_APPROVE",
+    STAGE_ADMIN_MAINTENANCE: "INVENTORY_ADMIN_MAINTENANCE_APPROVE",
+    STAGE_ADMIN_FINANCE: "INVENTORY_ADMIN_FINANCE_DIRECTOR_APPROVE",
+    STAGE_SECRETARY_GENERAL: "INVENTORY_SECRETARY_GENERAL_APPROVE",
 }
 
 STATUS_LABELS = {
@@ -181,6 +238,117 @@ def _compact_user_text(value):
     return "".join(character for character in str(value or "").upper() if character.isalnum())
 
 
+def _compact_category_text(value):
+    """Normalize Arabic category labels for the legacy automatic route map."""
+    translation = str.maketrans({
+        "أ": "ا",
+        "إ": "ا",
+        "آ": "ا",
+        "ى": "ي",
+        "ة": "ه",
+        "ؤ": "و",
+        "ئ": "ي",
+    })
+    return _compact_user_text(value).translate(translation)
+
+
+DEFAULT_CATEGORY_ROUTES = {
+    _compact_category_text("أجهزة اتصالات وتوابعها"): ROUTE_TECH,
+    _compact_category_text("أجهزة إلكترونية"): ROUTE_TECH,
+    _compact_category_text("أجهزة حاسوب وتوابعها"): ROUTE_TECH,
+    _compact_category_text("برامج حاسوب وخدمات إلكترونية"): ROUTE_TECH,
+    _compact_category_text("أثاث"): ROUTE_ADMIN_MAINTENANCE,
+    _compact_category_text("صيانة وإصلاحات"): ROUTE_ADMIN_MAINTENANCE,
+}
+
+
+# The imported catalogue uses the exact labels above, but new catalogues may
+# use more specific names (for example, "ملحقات حاسوب" or "صيانة تجهيزات").
+# Keep AUTO useful for those normal variations while allowing the category
+# configuration to explicitly override the result whenever needed.
+TECH_CATEGORY_ROUTE_KEYWORDS = tuple(
+    _compact_category_text(value)
+    for value in (
+        "حاسوب",
+        "كمبيوتر",
+        "إلكترون",
+        "تكنولوج",
+        "برامج",
+        "اتصالات",
+    )
+)
+ADMIN_MAINTENANCE_ROUTE_KEYWORDS = tuple(
+    _compact_category_text(value)
+    for value in (
+        "أثاث",
+        "صيانة",
+        "إصلاح",
+    )
+)
+
+
+def _automatic_category_route(category_name):
+    """Resolve the route for an AUTO catalogue category."""
+    normalized_name = _compact_category_text(category_name)
+    exact_route = DEFAULT_CATEGORY_ROUTES.get(normalized_name)
+    if exact_route:
+        return exact_route
+    # Maintenance remains its own route even when the maintained asset is
+    # technological (for example, a computer-repair category).
+    if any(keyword in normalized_name for keyword in ADMIN_MAINTENANCE_ROUTE_KEYWORDS):
+        return ROUTE_ADMIN_MAINTENANCE
+    if any(keyword in normalized_name for keyword in TECH_CATEGORY_ROUTE_KEYWORDS):
+        return ROUTE_TECH
+    return ROUTE_NORMAL
+
+
+def _category_request_route(category):
+    """Return the route selected for one catalogue category.
+
+    ``AUTO`` preserves the requested out-of-the-box mapping for the imported
+    catalogue.  Administrators may use the category screen to explicitly mark
+    any category as normal, technology, or furniture/maintenance.
+    """
+    configured = (getattr(category, "request_route", None) or "AUTO").strip().upper()
+    if configured in {ROUTE_NORMAL, ROUTE_TECH, ROUTE_ADMIN_MAINTENANCE}:
+        return configured
+    return _automatic_category_route(getattr(category, "name", None))
+
+
+def _route_for_requested_lines(requested_lines):
+    """Resolve one safe route for a newly submitted set of request lines."""
+    item_ids = {int(item_id) for item_id, _quantity in requested_lines if item_id}
+    if not item_ids:
+        return ROUTE_NORMAL
+    items = {
+        item.id: item
+        for item in InvItem.query.filter(InvItem.id.in_(item_ids)).all()
+    }
+    routes = {
+        _category_request_route(getattr(items.get(item_id), "category", None))
+        for item_id in item_ids
+        if items.get(item_id) is not None
+    }
+    routes.discard("")
+    if not routes:
+        return ROUTE_NORMAL
+    if len(routes) > 1:
+        raise ValueError(
+            "لا يمكن جمع أصناف ذات مسارات اعتماد مختلفة في طلب واحد. "
+            "يرجى فصل طلب التكنولوجيا، أو الأثاث/الصيانة، عن الطلب العادي."
+        )
+    return routes.pop()
+
+
+def _initial_stage_for_route(route_type, exclude_user_id=None):
+    route_type = (route_type or ROUTE_NORMAL).upper()
+    if route_type == ROUTE_TECH:
+        return STAGE_TECH_WAREHOUSE
+    if route_type == ROUTE_ADMIN_MAINTENANCE:
+        return STAGE_ADMIN_MAINTENANCE
+    return _warehouse_or_hr_stage(exclude_user_id)
+
+
 def _hr_fallback_approver_ids(exclude_user_id=None):
     """Resolve the HR director used when the warehouse stage has no delegate."""
     configured = _unique_user_ids(
@@ -259,6 +427,42 @@ def _warehouse_approver_ids(exclude_user_id=None):
     return _unique_user_ids(candidates, exclude_user_id=exclude_user_id)
 
 
+def _special_stage_approver_ids(stage, exclude_user_id=None):
+    """Resolve one dedicated special-route approval audience.
+
+    The selected account in settings is authoritative.  If no account is
+    selected, a user granted the corresponding permission can still process
+    the stage, just like the existing warehouse-manager permission works.
+    """
+    stage = (stage or "").strip().upper()
+    configured = _setting(STAGE_ASSIGNMENT_SETTINGS.get(stage, ""))
+    if configured and configured != exclude_user_id:
+        resolved = _unique_user_ids([configured], exclude_user_id=exclude_user_id)
+        if resolved:
+            return resolved
+
+    permission = STAGE_APPROVAL_PERMISSIONS.get(stage)
+    candidates = []
+    if permission:
+        candidates.extend(
+            user.id
+            for user in User.query.all()
+            if user.id != exclude_user_id
+            and _user_has_permission_without_delegation(user, permission)
+        )
+    if stage == STAGE_SECRETARY_GENERAL:
+        candidates.extend(secretary_general_user_ids())
+    return _unique_user_ids(candidates, exclude_user_id=exclude_user_id)
+
+
+def _missing_route_stages(route_type, exclude_user_id=None):
+    return [
+        stage
+        for stage in SPECIAL_ROUTE_REQUIRED_STAGES.get(route_type, ())
+        if not _special_stage_approver_ids(stage, exclude_user_id)
+    ]
+
+
 def _warehouse_or_hr_stage(exclude_user_id=None):
     return "WAREHOUSE" if _warehouse_approver_ids(exclude_user_id) else "HR"
 
@@ -290,6 +494,8 @@ def _recipient_ids(row):
         return _warehouse_approver_ids(row.requester_user_id)
     if stage == "HR":
         return _hr_fallback_approver_ids(row.requester_user_id)
+    if stage in STAGE_APPROVAL_PERMISSIONS:
+        return _special_stage_approver_ids(stage, row.requester_user_id)
     return []
 
 
@@ -303,18 +509,24 @@ def _can_process(row):
         return current_user.id in _warehouse_approver_ids(row.requester_user_id)
     if stage == "HR":
         return current_user.id in _hr_fallback_approver_ids(row.requester_user_id)
+    if stage in STAGE_APPROVAL_PERMISSIONS:
+        return current_user.id in _special_stage_approver_ids(stage, row.requester_user_id)
     return False
 
 
 def _can_manage():
     configured_ids = {
         _setting("INVENTORY_WAREHOUSE_MANAGER_USER_ID"),
+        *(_setting(setting_key) for setting_key in STAGE_ASSIGNMENT_SETTINGS.values()),
     }
+    special_permissions = tuple(STAGE_APPROVAL_PERMISSIONS.values())
     return (
         _is_system_admin(current_user)
         or current_user.id in configured_ids
         or current_user.id in _hr_fallback_approver_ids()
         or current_user.has_perm("INVENTORY_REQUEST_APPROVE")
+        or any(current_user.has_perm(permission) for permission in special_permissions)
+        or current_user.id in _special_stage_approver_ids(STAGE_SECRETARY_GENERAL)
         or current_user.has_perm("STORE_MANAGE")
     )
 
@@ -490,6 +702,71 @@ def _replace_lines(row, requested_lines):
     row.items_text = _request_summary(row.lines)
 
 
+def _route_configuration_error(route_type, requester_user_id):
+    """Describe any special-route roles that must be configured first."""
+    missing = _missing_route_stages(route_type, exclude_user_id=requester_user_id)
+    if not missing:
+        return None
+    return "لا يمكن إرسال الطلب قبل تعيين: " + "، ".join(
+        STAGES.get(stage, stage) for stage in missing
+    ) + "."
+
+
+def _prepared_issue_error(row):
+    """Validate material quantities selected during the warehouse review."""
+    grouped = defaultdict(list)
+    total_approved = 0.0
+    for line in row.lines:
+        approved_qty = float(line.approved_qty or 0)
+        if approved_qty < 0 or approved_qty > float(line.requested_qty or 0):
+            return f"الكمية المعتمدة للصنف {line.item.name if line.item else line.item_id} غير صحيحة."
+        if approved_qty <= 0:
+            continue
+        if not line.warehouse_id:
+            return "لم يتم اختيار مستودع صرف لكل صنف معتمد."
+        grouped[line.warehouse_id].append(line)
+        total_approved += approved_qty
+    if total_approved <= 0:
+        return "اعتمد كمية موجبة لصنف واحد على الأقل."
+    for warehouse_id, lines in grouped.items():
+        warehouse = InvWarehouse.query.filter_by(id=warehouse_id, is_active=True).first()
+        if not warehouse:
+            return "مستودع الصرف المختار غير صالح."
+        errors = _stock_errors(lines, warehouse_id)
+        if errors:
+            return "الرصيد غير كافٍ: " + "؛ ".join(errors)
+    return None
+
+
+def _prepare_issue_from_warehouse_review(row):
+    """Store the warehouse and quantities; the final route step creates vouchers."""
+    warehouse_id_raw = request.form.get("warehouse_id") or ""
+    if not warehouse_id_raw.isdigit():
+        raise ValueError("اختر مستودع الصرف.")
+    warehouse_id = int(warehouse_id_raw)
+    warehouse = InvWarehouse.query.filter_by(id=warehouse_id, is_active=True).first()
+    if not warehouse:
+        raise ValueError("مستودع الصرف غير صالح.")
+    total_approved = 0.0
+    for line in row.lines:
+        try:
+            approved_qty = float(request.form.get(f"approved_qty_{line.id}") or 0)
+        except ValueError:
+            approved_qty = 0
+        if approved_qty < 0 or approved_qty > float(line.requested_qty or 0):
+            raise ValueError(
+                f"الكمية المعتمدة للصنف {line.item.name if line.item else line.item_id} غير صحيحة."
+            )
+        line.approved_qty = approved_qty
+        line.warehouse_id = warehouse_id
+        total_approved += approved_qty
+    if total_approved <= 0:
+        raise ValueError("اعتمد كمية موجبة لصنف واحد على الأقل.")
+    errors = _stock_errors(row.lines, warehouse_id)
+    if errors:
+        raise ValueError("الرصيد غير كافٍ: " + "؛ ".join(errors))
+
+
 def _stock_errors(lines, warehouse_id):
     errors = []
     by_item = defaultdict(float)
@@ -576,24 +853,76 @@ def _create_issue_vouchers(row):
 @login_required
 @perm_required("PORTAL_ADMIN_PERMISSIONS_MANAGE")
 def inventory_request_settings():
+    assignment_fields = (
+        (
+            "warehouse_manager_user_id",
+            "INVENTORY_WAREHOUSE_MANAGER_USER_ID",
+            "INVENTORY_REQUEST_APPROVE",
+            "مدير المستودع",
+        ),
+        (
+            "tech_warehouse_manager_user_id",
+            "INVENTORY_TECH_WAREHOUSE_MANAGER_USER_ID",
+            "INVENTORY_TECH_WAREHOUSE_APPROVE",
+            "مدير المستودع التكنولوجي",
+        ),
+        (
+            "admin_maintenance_user_id",
+            "INVENTORY_ADMIN_MAINTENANCE_USER_ID",
+            "INVENTORY_ADMIN_MAINTENANCE_APPROVE",
+            "مسؤول المستودع الإداري للصيانة والأثاث",
+        ),
+        (
+            "tech_director_user_id",
+            "INVENTORY_TECH_DIRECTOR_USER_ID",
+            "INVENTORY_TECH_DIRECTOR_APPROVE",
+            "مدير عام الإدارة العامة للتكنولوجيا والمطبوعات",
+        ),
+        (
+            "admin_finance_director_user_id",
+            "INVENTORY_ADMIN_FINANCE_DIRECTOR_USER_ID",
+            "INVENTORY_ADMIN_FINANCE_DIRECTOR_APPROVE",
+            "مدير عام الشؤون الإدارية والمالية",
+        ),
+        (
+            "secretary_general_user_id",
+            "INVENTORY_SECRETARY_GENERAL_USER_ID",
+            "INVENTORY_SECRETARY_GENERAL_APPROVE",
+            "الأمين العام",
+        ),
+    )
     if request.method == "POST":
-        warehouse_manager_id = request.form.get("warehouse_manager_user_id") or ""
         hr_fallback_user_id = request.form.get("hr_fallback_user_id") or ""
         if hr_fallback_user_id and not hr_fallback_user_id.isdigit():
             flash("اختر مستخدمًا صالحًا لمدير الشؤون البشرية البديل.", "warning")
             return redirect(url_for("portal.inventory_request_settings"))
-        _set_setting("INVENTORY_WAREHOUSE_MANAGER_USER_ID", warehouse_manager_id)
+        values = {}
+        for field_name, setting_key, _permission, label in assignment_fields:
+            value = request.form.get(field_name) or ""
+            if value and not value.isdigit():
+                flash(f"اختر مستخدمًا صالحًا لـ {label}.", "warning")
+                return redirect(url_for("portal.inventory_request_settings"))
+            values[field_name] = value
+            _set_setting(setting_key, value)
+        warehouse_manager_id = values["warehouse_manager_user_id"]
         _set_setting("INVENTORY_REQUEST_HR_FALLBACK_USER_ID", hr_fallback_user_id)
-        _grant_permission(int(warehouse_manager_id) if warehouse_manager_id.isdigit() else None, "INVENTORY_REQUEST_APPROVE")
+        for field_name, _setting_key, permission, _label in assignment_fields:
+            user_id = values[field_name]
+            _grant_permission(int(user_id) if user_id.isdigit() else None, permission)
         _grant_permission(int(warehouse_manager_id) if warehouse_manager_id.isdigit() else None, "PORTAL_REPORTS_READ")
         db.session.commit()
-        flash("تم حفظ مسؤولي اعتماد طلبات المواد.", "success")
+        flash("تم حفظ مسؤولي مسارات اعتماد طلبات المواد.", "success")
         return redirect(url_for("portal.inventory_request_settings"))
     return render_template(
         "portal/inventory/request_settings.html",
         users=User.query.order_by(User.name.asc()).all(),
         warehouse_manager_id=_setting("INVENTORY_WAREHOUSE_MANAGER_USER_ID"),
         hr_fallback_user_id=_setting("INVENTORY_REQUEST_HR_FALLBACK_USER_ID"),
+        tech_warehouse_manager_user_id=_setting("INVENTORY_TECH_WAREHOUSE_MANAGER_USER_ID"),
+        admin_maintenance_user_id=_setting("INVENTORY_ADMIN_MAINTENANCE_USER_ID"),
+        tech_director_user_id=_setting("INVENTORY_TECH_DIRECTOR_USER_ID"),
+        admin_finance_director_user_id=_setting("INVENTORY_ADMIN_FINANCE_DIRECTOR_USER_ID"),
+        secretary_general_user_id=_setting("INVENTORY_SECRETARY_GENERAL_USER_ID"),
     )
 
 
@@ -818,12 +1147,39 @@ def inventory_employee_request_new():
                 catalog_has_items=catalog_has_items,
                 can_manage_catalog=_can_manage_catalog(),
             )
+        try:
+            route_type = _route_for_requested_lines(requested_lines)
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return render_template(
+                "portal/inventory/employee_request_form.html",
+                item=None,
+                items=items,
+                categories=categories,
+                item_totals=item_totals,
+                catalog_has_items=catalog_has_items,
+                can_manage_catalog=_can_manage_catalog(),
+            )
+        configuration_error = _route_configuration_error(route_type, current_user.id)
+        if configuration_error:
+            flash(configuration_error, "danger")
+            return render_template(
+                "portal/inventory/employee_request_form.html",
+                item=None,
+                items=items,
+                categories=categories,
+                item_totals=item_totals,
+                catalog_has_items=catalog_has_items,
+                can_manage_catalog=_can_manage_catalog(),
+            )
+        approval_stage = _initial_stage_for_route(route_type, current_user.id)
         row = InvEmployeeRequest(
             requester_user_id=current_user.id,
             items_text="",
             purpose=purpose,
             note=(request.form.get("note") or "").strip() or None,
-            approval_stage=_warehouse_or_hr_stage(current_user.id),
+            route_type=route_type,
+            approval_stage=approval_stage,
         )
         db.session.add(row)
         db.session.flush()
@@ -835,7 +1191,7 @@ def inventory_employee_request_new():
             actor_user_id=current_user.id,
             note="تم إرسال طلب المواد للاعتماد.",
         ))
-        _notify(row, _recipient_ids(row), f"طلب مواد #{row.id} بانتظار متابعتك لدى {STAGES[row.approval_stage]}.")
+        _notify(row, _recipient_ids(row), f"طلب مواد #{row.id} بانتظار متابعتك لدى {STAGES.get(row.approval_stage, row.approval_stage)}.")
         db.session.commit()
         flash("تم إرسال طلب المواد للاعتماد.", "success")
         return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
@@ -889,9 +1245,19 @@ def inventory_employee_request_view(request_id):
         row.purpose = purpose
         row.note = (request.form.get("note") or "").strip() or None
         if old_signature != new_signature:
+            try:
+                route_type = _route_for_requested_lines(requested_lines)
+            except ValueError as exc:
+                flash(str(exc), "danger")
+                return redirect(request.url)
+            configuration_error = _route_configuration_error(route_type, row.requester_user_id)
+            if configuration_error:
+                flash(configuration_error, "danger")
+                return redirect(request.url)
             _replace_lines(row, requested_lines)
-            row.approval_stage = _warehouse_or_hr_stage(row.requester_user_id)
-            _notify(row, _recipient_ids(row), f"تم تعديل طلب المواد #{row.id} ويحتاج إعادة المتابعة لدى {STAGES[row.approval_stage]}.")
+            row.route_type = route_type
+            row.approval_stage = _initial_stage_for_route(route_type, row.requester_user_id)
+            _notify(row, _recipient_ids(row), f"تم تعديل طلب المواد #{row.id} ويحتاج إعادة المتابعة لدى {STAGES.get(row.approval_stage, row.approval_stage)}.")
         db.session.add(InvEmployeeRequestAction(
             request_id=row.id,
             stage=row.approval_stage,
@@ -913,6 +1279,9 @@ def inventory_employee_request_view(request_id):
         stages=STAGES,
         status_label=_request_status_label(row),
         approval_stage=_effective_approval_stage(row),
+        warehouse_review_stages=WAREHOUSE_REVIEW_STAGES,
+        secretary_forward_stage=STAGE_ADMIN_FINANCE,
+        secretary_general_stage=STAGE_SECRETARY_GENERAL,
         previous_requests=previous_requests,
         can_process=_can_process(row),
         can_edit=can_edit,
@@ -1111,36 +1480,49 @@ def inventory_employee_request_approve(request_id):
         db.session.commit()
         flash("تم رفض الطلب وإبلاغ الموظف.", "success")
         return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
-    if decision != "approve":
+    action = "APPROVED"
+    if decision == "forward_secretary":
+        if current_stage != STAGE_ADMIN_FINANCE:
+            abort(400)
+        if not _special_stage_approver_ids(STAGE_SECRETARY_GENERAL, row.requester_user_id):
+            flash("لا يمكن الإحالة إلى الأمين العام قبل تعيين حسابه أو منحه صلاحية اعتماد طلبات المواد.", "danger")
+            return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
+        row.approval_stage = STAGE_SECRETARY_GENERAL
+        action = "FORWARDED"
+        note = note or "تمت إحالة الطلب إلى الأمين العام للاعتماد أو الرفض."
+    elif decision != "approve":
         abort(400)
-    if current_stage in {"WAREHOUSE", "HR"}:
-        warehouse_id_raw = request.form.get("warehouse_id") or ""
-        if not warehouse_id_raw.isdigit():
-            flash("اختر مستودع الصرف.", "danger")
+    elif current_stage in WAREHOUSE_REVIEW_STAGES:
+        next_stage = NEXT_APPROVAL_STAGE.get(current_stage)
+        if next_stage and not _special_stage_approver_ids(next_stage, row.requester_user_id):
+            flash(f"لا يمكن إحالة الطلب قبل تعيين {STAGES.get(next_stage, next_stage)}.", "danger")
             return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
-        warehouse_id = int(warehouse_id_raw)
-        warehouse = InvWarehouse.query.filter_by(id=warehouse_id, is_active=True).first()
-        if not warehouse:
-            flash("مستودع الصرف غير صالح.", "danger")
+        try:
+            _prepare_issue_from_warehouse_review(row)
+        except ValueError as exc:
+            flash(str(exc), "danger")
             return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
-        total_approved = 0.0
-        for line in row.lines:
+        if next_stage:
+            row.approval_stage = next_stage
+        else:
             try:
-                approved_qty = float(request.form.get(f"approved_qty_{line.id}") or 0)
-            except ValueError:
-                approved_qty = 0
-            if approved_qty < 0 or approved_qty > float(line.requested_qty or 0):
-                flash(f"الكمية المعتمدة للصنف {line.item.name} غير صحيحة.", "danger")
+                _create_issue_vouchers(row)
+            except ValueError as exc:
+                flash(str(exc), "danger")
                 return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
-            line.approved_qty = approved_qty
-            line.warehouse_id = warehouse_id
-            total_approved += approved_qty
-        if total_approved <= 0:
-            flash("اعتمد كمية موجبة لصنف واحد على الأقل.", "danger")
+            row.status = "APPROVED"
+            row.approval_stage = "DONE"
+            row.decided_at = datetime.utcnow()
+    elif current_stage == STAGE_TECH_DIRECTOR:
+        next_stage = NEXT_APPROVAL_STAGE[current_stage]
+        if not _special_stage_approver_ids(next_stage, row.requester_user_id):
+            flash(f"لا يمكن إحالة الطلب قبل تعيين {STAGES.get(next_stage, next_stage)}.", "danger")
             return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
-        errors = _stock_errors(row.lines, warehouse_id)
-        if errors:
-            flash("الرصيد غير كافٍ: " + "؛ ".join(errors), "danger")
+        row.approval_stage = next_stage
+    elif current_stage in {STAGE_ADMIN_FINANCE, STAGE_SECRETARY_GENERAL}:
+        prepared_error = _prepared_issue_error(row)
+        if prepared_error:
+            flash(prepared_error, "danger")
             return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
         try:
             _create_issue_vouchers(row)
@@ -1155,12 +1537,12 @@ def inventory_employee_request_approve(request_id):
     db.session.add(InvEmployeeRequestAction(
         request_id=row.id,
         stage=current_stage,
-        action="APPROVED",
+        action=action,
         actor_user_id=current_user.id,
         note=note,
     ))
     if row.status == "SUBMITTED":
-        _notify(row, _recipient_ids(row), f"طلب المواد #{row.id} بانتظار متابعتك لدى {STAGES[row.approval_stage]}.")
+        _notify(row, _recipient_ids(row), f"طلب المواد #{row.id} بانتظار متابعتك لدى {STAGES.get(row.approval_stage, row.approval_stage)}.")
     else:
         _notify(row, [row.requester_user_id], f"تم اعتماد طلب المواد #{row.id} نهائياً وصرف المواد من المستودع.")
     db.session.commit()
