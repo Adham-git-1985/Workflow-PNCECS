@@ -203,11 +203,12 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
         db.session.commit()
         return item
 
-    def _add_stock(self, item, quantity=10):
+    def _add_stock(self, item, quantity=10, warehouse=None):
+        warehouse = warehouse or self.warehouse
         voucher = InvStocktakeVoucher(
             voucher_no=f"STK-SPECIAL-{item.id}",
             voucher_date=date.today().isoformat(),
-            warehouse_id=self.warehouse.id,
+            warehouse_id=warehouse.id,
             created_by_id=self.hr_director.id,
         )
         db.session.add(voucher)
@@ -322,6 +323,72 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
         self.assertEqual(voucher.issue_kind, "EMPLOYEE")
         self.assertEqual(voucher.from_warehouse_id, self.warehouse.id)
         self.assertEqual(updated.lines[0].issue_voucher_id, voucher.id)
+
+    def test_warehouse_review_assigns_each_line_to_its_own_warehouse_in_one_stock_lookup(self):
+        first_item = InvItem.query.filter_by(code="PAPER-001").one()
+        second_item = InvItem(name="Ink cartridge", code="INK-001", is_active=True)
+        second_warehouse = InvWarehouse(name="Technology warehouse", code="TECH", is_active=True)
+        db.session.add_all((second_item, second_warehouse))
+        db.session.commit()
+        self._add_stock(first_item, quantity=10)
+        self._add_stock(second_item, quantity=10, warehouse=second_warehouse)
+
+        self._login(self.employee.id)
+        created = self.client.post(
+            "/portal/inventory/employee-requests/new",
+            data={
+                "item_id": [str(first_item.id), str(second_item.id)],
+                "requested_qty": ["2", "3"],
+                "purpose": "Request from separate warehouses",
+            },
+        )
+        self.assertEqual(created.status_code, 302)
+        row = InvEmployeeRequest.query.order_by(InvEmployeeRequest.id.desc()).first()
+        lines = {line.item_id: line for line in row.lines}
+
+        self._login(self.warehouse_manager.id)
+        review = self.client.get(f"/portal/inventory/employee-requests/{row.id}")
+        self.assertEqual(review.status_code, 200)
+        review_markup = review.get_data(as_text=True)
+        self.assertIn(f'name="warehouse_id_{lines[first_item.id].id}"', review_markup)
+        self.assertIn(f'name="warehouse_id_{lines[second_item.id].id}"', review_markup)
+        self.assertNotIn('name="warehouse_id" id="warehouseSelect"', review_markup)
+
+        with patch(
+            "portal.supply_requests._inventory_balances",
+            wraps=_inv_build_balances,
+        ) as build_balances:
+            approved = self.client.post(
+                f"/portal/inventory/employee-requests/{row.id}/approve",
+                data={
+                    "decision": "approve",
+                    f"warehouse_id_{lines[first_item.id].id}": str(self.warehouse.id),
+                    f"approved_qty_{lines[first_item.id].id}": "2",
+                    f"warehouse_id_{lines[second_item.id].id}": str(second_warehouse.id),
+                    f"approved_qty_{lines[second_item.id].id}": "3",
+                },
+            )
+
+        self.assertEqual(approved.status_code, 302)
+        self.assertEqual(build_balances.call_count, 1)
+        self.assertEqual(
+            set(build_balances.call_args.kwargs["warehouse_ids"]),
+            {self.warehouse.id, second_warehouse.id},
+        )
+        db.session.expire_all()
+        updated = db.session.get(InvEmployeeRequest, row.id)
+        updated_lines = {line.item_id: line for line in updated.lines}
+        self.assertEqual(updated.status, "APPROVED")
+        self.assertEqual(updated_lines[first_item.id].warehouse_id, self.warehouse.id)
+        self.assertEqual(updated_lines[second_item.id].warehouse_id, second_warehouse.id)
+        self.assertEqual(InvIssueVoucher.query.count(), 2)
+        self.assertEqual(
+            {
+                db.session.get(InvIssueVoucher, line.issue_voucher_id).from_warehouse_id
+                for line in updated_lines.values()
+            },
+            {self.warehouse.id, second_warehouse.id},
+        )
 
     def test_same_day_issue_is_deducted_from_the_opening_balance(self):
         row = self._submit_warehouse_manager_request()

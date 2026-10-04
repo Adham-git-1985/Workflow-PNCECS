@@ -43,10 +43,8 @@
     <div class="card shadow-sm mb-3" id="decision"><div class="card-header fw-bold">متابعة الاعتماد</div><div class="card-body">
       <form method="post" action="{{ url_for('portal.inventory_employee_request_approve', request_id=item.id) }}">
         {% if active_approval_stage in warehouse_review_stages %}
-        <label class="form-label">مستودع الصرف *</label>
-        <select class="form-select mb-3" name="warehouse_id" id="warehouseSelect" required><option value="">اختر المستودع</option>{% for warehouse in warehouses %}<option value="{{ warehouse.id }}">{{ warehouse.label }}</option>{% endfor %}</select>
-        <div class="small text-muted mb-2">حدد الكمية التي سيصرفها المستودع:</div>
-        {% for line in item.lines %}<div class="border rounded p-2 mb-2"><div class="fw-semibold">{{ line.item.label }}</div><div class="input-group mt-1"><span class="input-group-text">المعتمد</span><input class="form-control approved-qty" type="number" min="0" max="{{ line.requested_qty }}" step="0.01" name="approved_qty_{{ line.id }}" value="{{ line.requested_qty }}" data-item="{{ line.item_id }}"><span class="input-group-text stock-value">المتاح: —</span></div></div>{% endfor %}
+        <div class="small text-muted mb-2">حدد مستودع الصرف والكمية المعتمدة لكل صنف. يمكن توزيع الطلب على أكثر من مستودع.</div>
+        {% for line in item.lines %}<div class="border rounded p-2 mb-2 request-review-line"><div class="fw-semibold">{{ line.item.label }}</div><div class="row g-2 mt-1"><div class="col-md-6"><label class="form-label small mb-1">مستودع الصرف</label><select class="form-select line-warehouse" name="warehouse_id_{{ line.id }}" data-item="{{ line.item_id }}"><option value="">اختر المستودع</option>{% for warehouse in warehouses %}<option value="{{ warehouse.id }}" {% if line.warehouse_id == warehouse.id %}selected{% endif %}>{{ warehouse.label }}</option>{% endfor %}</select></div><div class="col-md-6"><label class="form-label small mb-1">الكمية المعتمدة</label><div class="input-group"><input class="form-control approved-qty" type="number" min="0" max="{{ line.requested_qty }}" step="0.01" name="approved_qty_{{ line.id }}" value="{{ line.requested_qty }}" data-item="{{ line.item_id }}"><span class="input-group-text stock-value">المتاح: —</span></div></div></div></div>{% endfor %}
         {% endif %}
         <label class="form-label mt-3">ملاحظة الاعتماد</label><textarea class="form-control mb-2" name="note" rows="2"></textarea>
         <div class="d-grid gap-2">
@@ -72,9 +70,22 @@
 {% block scripts %}
 <script>
   const balances = {{ warehouse_balances|tojson }};
-  const warehouseSelect = document.getElementById('warehouseSelect');
-  function refreshStocks() { if (!warehouseSelect) return; document.querySelectorAll('.approved-qty').forEach(input => { const value = balances[warehouseSelect.value + ':' + input.dataset.item] || 0; input.closest('.input-group').querySelector('.stock-value').textContent = 'المتاح: ' + Number(value).toLocaleString('ar'); }); }
-  if (warehouseSelect) warehouseSelect.addEventListener('change', refreshStocks);
+  function refreshReviewLine(line) {
+    const warehouse = line.querySelector('.line-warehouse');
+    const input = line.querySelector('.approved-qty');
+    if (!warehouse || !input) return;
+    const approvedQty = Number(input.value || 0);
+    warehouse.required = approvedQty > 0;
+    const value = balances[warehouse.value + ':' + input.dataset.item] || 0;
+    line.querySelector('.stock-value').textContent = 'المتاح: ' + Number(value).toLocaleString('ar');
+  }
+  document.querySelectorAll('.request-review-line').forEach(line => {
+    const warehouse = line.querySelector('.line-warehouse');
+    const input = line.querySelector('.approved-qty');
+    warehouse.addEventListener('change', () => refreshReviewLine(line));
+    input.addEventListener('input', () => refreshReviewLine(line));
+    refreshReviewLine(line);
+  });
   const editBody = document.querySelector('#editLines tbody');
   const editSearch = document.getElementById('editItemSearch');
   const editCategory = document.getElementById('editItemCategory');

@@ -712,9 +712,67 @@ def _route_configuration_error(route_type, requester_user_id):
     ) + "."
 
 
+def _issue_allocation_error(allocations):
+    """Validate per-line issue allocations with one set-wise stock lookup.
+
+    Each allocation is ``(line, warehouse_id, approved_qty)``.  Grouping the
+    quantities before calculating balances avoids a balance query per selected
+    warehouse, even when a request is distributed across many warehouses.
+    """
+    requested_by_stock = defaultdict(float)
+    item_labels = {}
+    warehouse_ids = set()
+    for line, warehouse_id, approved_qty in allocations:
+        try:
+            warehouse_id = int(warehouse_id)
+        except (TypeError, ValueError):
+            return "مستودع الصرف المختار غير صالح."
+        if warehouse_id <= 0:
+            return "مستودع الصرف المختار غير صالح."
+        quantity = float(approved_qty or 0)
+        if quantity <= 0:
+            continue
+        item_id = int(line.item_id)
+        requested_by_stock[(warehouse_id, item_id)] += quantity
+        warehouse_ids.add(warehouse_id)
+        item_labels.setdefault(
+            item_id,
+            line.item.label if line.item else str(item_id),
+        )
+
+    if not requested_by_stock:
+        return None
+
+    warehouse_ids = tuple(sorted(warehouse_ids))
+    warehouses = {
+        warehouse.id: warehouse
+        for warehouse in InvWarehouse.query.filter(
+            InvWarehouse.id.in_(warehouse_ids),
+            InvWarehouse.is_active.is_(True),
+        ).all()
+    }
+    if len(warehouses) != len(warehouse_ids):
+        return "مستودع الصرف المختار غير صالح."
+
+    balances = _inventory_balances(
+        warehouse_ids=warehouse_ids,
+        item_ids=tuple(sorted({item_id for _warehouse_id, item_id in requested_by_stock})),
+    )
+    errors = []
+    for (warehouse_id, item_id), quantity in sorted(requested_by_stock.items()):
+        available = float(balances.get((warehouse_id, item_id), 0) or 0)
+        if quantity > available:
+            warehouse_label = warehouses[warehouse_id].label
+            errors.append(
+                f"{item_labels[item_id]} ({warehouse_label}): "
+                f"المطلوب {quantity:g} والمتاح {available:g}"
+            )
+    return "الرصيد غير كافٍ: " + "؛ ".join(errors) if errors else None
+
+
 def _prepared_issue_error(row):
-    """Validate material quantities selected during the warehouse review."""
-    grouped = defaultdict(list)
+    """Validate the per-line warehouse and quantity choices already saved."""
+    allocations = []
     total_approved = 0.0
     for line in row.lines:
         approved_qty = float(line.approved_qty or 0)
@@ -724,64 +782,57 @@ def _prepared_issue_error(row):
             continue
         if not line.warehouse_id:
             return "لم يتم اختيار مستودع صرف لكل صنف معتمد."
-        grouped[line.warehouse_id].append(line)
+        allocations.append((line, line.warehouse_id, approved_qty))
         total_approved += approved_qty
     if total_approved <= 0:
         return "اعتمد كمية موجبة لصنف واحد على الأقل."
-    for warehouse_id, lines in grouped.items():
-        warehouse = InvWarehouse.query.filter_by(id=warehouse_id, is_active=True).first()
-        if not warehouse:
-            return "مستودع الصرف المختار غير صالح."
-        errors = _stock_errors(lines, warehouse_id)
-        if errors:
-            return "الرصيد غير كافٍ: " + "؛ ".join(errors)
-    return None
+    return _issue_allocation_error(allocations)
 
 
 def _prepare_issue_from_warehouse_review(row):
-    """Store the warehouse and quantities; the final route step creates vouchers."""
-    warehouse_id_raw = request.form.get("warehouse_id") or ""
-    if not warehouse_id_raw.isdigit():
-        raise ValueError("اختر مستودع الصرف.")
-    warehouse_id = int(warehouse_id_raw)
-    warehouse = InvWarehouse.query.filter_by(id=warehouse_id, is_active=True).first()
-    if not warehouse:
-        raise ValueError("مستودع الصرف غير صالح.")
+    """Store a warehouse and approved quantity independently for each line."""
+    allocations = []
+    selected_values = []
     total_approved = 0.0
+    # Preserve compatibility with an already deployed form or integration that
+    # still sends a single warehouse_id. The current screen sends one value per
+    # line and never relies on this fallback.
+    legacy_warehouse_id = (request.form.get("warehouse_id") or "").strip()
+
     for line in row.lines:
         try:
             approved_qty = float(request.form.get(f"approved_qty_{line.id}") or 0)
-        except ValueError:
+        except (TypeError, ValueError):
             approved_qty = 0
         if approved_qty < 0 or approved_qty > float(line.requested_qty or 0):
             raise ValueError(
                 f"الكمية المعتمدة للصنف {line.item.name if line.item else line.item_id} غير صحيحة."
             )
-        line.approved_qty = approved_qty
-        line.warehouse_id = warehouse_id
-        total_approved += approved_qty
+
+        warehouse_id = None
+        if approved_qty > 0:
+            warehouse_id_raw = (
+                request.form.get(f"warehouse_id_{line.id}") or legacy_warehouse_id
+            ).strip()
+            if not warehouse_id_raw.isdigit():
+                raise ValueError(
+                    f"اختر مستودع صرف للصنف {line.item.name if line.item else line.item_id}."
+                )
+            warehouse_id = int(warehouse_id_raw)
+            allocations.append((line, warehouse_id, approved_qty))
+            total_approved += approved_qty
+        selected_values.append((line, approved_qty, warehouse_id))
+
     if total_approved <= 0:
         raise ValueError("اعتمد كمية موجبة لصنف واحد على الأقل.")
-    errors = _stock_errors(row.lines, warehouse_id)
-    if errors:
-        raise ValueError("الرصيد غير كافٍ: " + "؛ ".join(errors))
+    allocation_error = _issue_allocation_error(allocations)
+    if allocation_error:
+        raise ValueError(allocation_error)
 
-
-def _stock_errors(lines, warehouse_id):
-    errors = []
-    by_item = defaultdict(float)
-    for line in lines:
-        by_item[line.item_id] += float(line.approved_qty or 0)
-    balances = _inventory_balances(
-        warehouse_ids=(warehouse_id,),
-        item_ids=by_item.keys(),
-    )
-    for item_id, quantity in by_item.items():
-        available = float(balances.get((warehouse_id, item_id), 0) or 0)
-        if quantity > available:
-            item = InvItem.query.get(item_id)
-            errors.append(f"{item.name if item else item_id}: المطلوب {quantity:g} والمتاح {available:g}")
-    return errors
+    for line, approved_qty, warehouse_id in selected_values:
+        line.approved_qty = approved_qty
+        # A rejected/zero-quantity line has no source warehouse to preserve.
+        line.warehouse_id = warehouse_id
 
 
 def _returned_quantities(line_ids):
@@ -814,15 +865,16 @@ def _request_returnable_lines(row):
     return result
 
 
-def _create_issue_vouchers(row):
+def _create_issue_vouchers(row, *, validated=False):
+    if not validated:
+        prepared_error = _prepared_issue_error(row)
+        if prepared_error:
+            raise ValueError(prepared_error)
     grouped = defaultdict(list)
     for line in row.lines:
         if line.warehouse_id and float(line.approved_qty or 0) > 0:
             grouped[line.warehouse_id].append(line)
     for warehouse_id, lines in grouped.items():
-        errors = _stock_errors(lines, warehouse_id)
-        if errors:
-            raise ValueError("الرصيد غير كافٍ: " + "؛ ".join(errors))
         voucher = InvIssueVoucher(
             issue_kind="EMPLOYEE",
             voucher_no="",
@@ -1506,7 +1558,7 @@ def inventory_employee_request_approve(request_id):
             row.approval_stage = next_stage
         else:
             try:
-                _create_issue_vouchers(row)
+                _create_issue_vouchers(row, validated=True)
             except ValueError as exc:
                 flash(str(exc), "danger")
                 return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
@@ -1525,7 +1577,7 @@ def inventory_employee_request_approve(request_id):
             flash(prepared_error, "danger")
             return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
         try:
-            _create_issue_vouchers(row)
+            _create_issue_vouchers(row, validated=True)
         except ValueError as exc:
             flash(str(exc), "danger")
             return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
