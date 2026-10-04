@@ -1,0 +1,33 @@
+{% extends "portal/layout.html" %}
+{% block title %}مرجع الإشعار #{{ notification.id }}{% endblock %}
+{% block content %}
+<div class="p-4 bg-white rounded-3 shadow-sm">
+  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+    <div>
+      <div class="text-muted small">مرجع مرتبط بتذكرة الدعم #{{ ticket.id }}</div>
+      <h4 class="mb-1"><i class="bi bi-bell"></i> الإشعار #{{ notification.id }}</h4>
+      <div class="text-muted">الإشعار الأصلي الذي استندت إليه ملاحظة المستخدم.</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.trouble_ticket_view', ticket_id=ticket.id) }}">
+      <i class="bi bi-arrow-right"></i> العودة إلى التذكرة
+    </a>
+  </div>
+
+  <hr class="my-3" />
+
+  <div class="alert alert-light border mb-3">
+    <div class="fw-semibold mb-1">نص الإشعار</div>
+    <div style="white-space:pre-wrap">{{ notification.message }}</div>
+  </div>
+
+  {% if message %}
+    <div class="border rounded-3 p-3">
+      <div class="fw-semibold mb-1">{{ message.subject }}</div>
+      <div class="text-muted small mb-3">رسالة نظامية غير قابلة للرد</div>
+      <div style="white-space:pre-wrap">{{ message.body }}</div>
+    </div>
+  {% else %}
+    <div class="text-muted">لا تتوفر نسخة مراسلة داخلية لهذا الإشعار القديم.</div>
+  {% endif %}
+</div>
+{% endblock %}

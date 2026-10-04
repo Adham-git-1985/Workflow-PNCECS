@@ -397,6 +397,7 @@ class AdminBroadcastNotificationRouteTests(unittest.TestCase):
         self.assertEqual(ticket.requester_id, self.department_employee.id)
         self.assertEqual(ticket.category, "SYSTEM")
         self.assertIn("ملاحظات حول تحديث النظام", ticket.subject)
+        self.assertIn(f"إشعار #{notification.id}", ticket.subject)
         self.assertNotIn("محاولة تغيير عنوان التذكرة", ticket.subject)
         self.assertIn("أقترح شرحاً أوضح لإعدادات الخصوصية.", ticket.description)
         self.assertIn(f"مرجع الإشعار: #{notification.id}", ticket.description)
@@ -408,11 +409,32 @@ class AdminBroadcastNotificationRouteTests(unittest.TestCase):
         ).first())
 
         with self.app.test_client() as client:
+            self._login(client, self.admin.id)
+            ticket_view = client.get(f"/portal/trouble-tickets/{ticket.id}")
+            notification_reference = client.get(
+                f"/portal/trouble-tickets/{ticket.id}/notification-reference"
+            )
+        self.assertEqual(ticket_view.status_code, 200)
+        self.assertIn(
+            f"/portal/trouble-tickets/{ticket.id}/notification-reference",
+            ticket_view.get_data(as_text=True),
+        )
+        self.assertEqual(notification_reference.status_code, 200)
+        reference_body = notification_reference.get_data(as_text=True)
+        self.assertIn(f"الإشعار #{notification.id}", reference_body)
+        self.assertIn(internal_message.subject, reference_body)
+        self.assertIn(internal_message.body, reference_body)
+
+        with self.app.test_client() as client:
             self._login(client, self.other_employee.id)
             forbidden_feedback = client.get(
                 f"/portal/trouble-tickets/feedback/{notification.id}"
             )
+            forbidden_reference = client.get(
+                f"/portal/trouble-tickets/{ticket.id}/notification-reference"
+            )
         self.assertEqual(forbidden_feedback.status_code, 404)
+        self.assertEqual(forbidden_reference.status_code, 403)
 
 
 if __name__ == "__main__":

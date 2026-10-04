@@ -5332,14 +5332,43 @@ def trouble_ticket_view(ticket_id: int):
             return redirect(url_for("portal.trouble_ticket_view", ticket_id=ticket.id))
 
     assignees = _trouble_ticket_assignable_users() if is_manager else []
+    notification_reference = _admin_notification_feedback_reference_context_for_ticket(ticket)
     return render_template(
         "portal/trouble_tickets/view.html",
         ticket=ticket,
         is_manager=is_manager,
+        notification_reference=notification_reference,
         assignees=assignees,
         categories=TROUBLE_TICKET_CATEGORIES,
         priorities=TROUBLE_TICKET_PRIORITIES,
         statuses=TROUBLE_TICKET_STATUSES,
+    )
+
+
+@portal_bp.route("/trouble-tickets/<int:ticket_id>/notification-reference")
+@login_required
+def trouble_ticket_notification_reference(ticket_id: int):
+    """Show the original system update referenced by a feedback ticket."""
+    ticket = TroubleTicket.query.get_or_404(ticket_id)
+    if not _can_access_trouble_ticket(ticket):
+        abort(403)
+
+    reference = _admin_notification_feedback_reference_context_for_ticket(ticket)
+    if not reference:
+        abort(404)
+
+    notification = reference["notification"]
+    message = None
+    message_url = _admin_notification_message_url(notification)
+    message_match = re.fullmatch(r"/messages/view/(\d+)", message_url or "")
+    if message_match:
+        message = db.session.get(Message, int(message_match.group(1)))
+
+    return render_template(
+        "portal/trouble_tickets/notification_reference.html",
+        ticket=ticket,
+        notification=notification,
+        message=message,
     )
 
 
@@ -7489,7 +7518,7 @@ def _admin_notification_feedback_context_for_notification(
         "message_url": message_url,
         "return_url": return_url,
         "ticket_subject": (
-            f"ملاحظات حول تحديث النظام — {correspondence_label}"
+            f"ملاحظات حول تحديث النظام (إشعار #{notification.id}) — {correspondence_label}"
         )[:250],
         "ticket_url": url_for(
             "portal.trouble_ticket_feedback",
@@ -7545,6 +7574,58 @@ def _admin_notification_feedback_ticket_description(context: dict, comment: str)
         lines.append(f"رابط رسالة التحديث: {context['message_url']}")
     lines.extend(("", "ملاحظات المستخدم:", comment))
     return "\n".join(lines)
+
+
+_ADMIN_NOTIFICATION_FEEDBACK_REFERENCE_RE = re.compile(
+    r"(?m)^مرجع الإشعار:\s*#(?P<notification_id>\d+)\s*$"
+)
+
+
+def _admin_notification_feedback_reference_context_for_ticket(ticket: TroubleTicket) -> dict | None:
+    """Return a safe, clickable broadcast reference for a feedback ticket.
+
+    The notification belongs to the feedback author, not the administrator
+    reviewing the ticket. We validate both the broadcast type and the original
+    recipient before exposing its content through the ticket workflow.
+    """
+    description = str(getattr(ticket, "description", "") or "")
+    match = _ADMIN_NOTIFICATION_FEEDBACK_REFERENCE_RE.search(description)
+    if not match:
+        return None
+
+    try:
+        notification_id = int(match.group("notification_id"))
+    except (TypeError, ValueError):
+        return None
+    if notification_id <= 0:
+        return None
+
+    notification = (
+        Notification.query
+        .filter(Notification.id == notification_id)
+        .filter(Notification.user_id == ticket.requester_id)
+        .filter(Notification.source == "portal")
+        .filter(Notification.is_mirror.is_(False))
+        .filter(Notification.target_type.in_((
+            ADMIN_NOTIFICATION_TARGET_TYPE,
+            ADMIN_NOTIFICATION_CORR_IN_TARGET_TYPE,
+            ADMIN_NOTIFICATION_CORR_OUT_TARGET_TYPE,
+        )))
+        .first()
+    )
+    if not notification:
+        return None
+
+    return {
+        "id": notification.id,
+        "notification": notification,
+        "before": description[:match.start()],
+        "after": description[match.end():],
+        "url": url_for(
+            "portal.trouble_ticket_notification_reference",
+            ticket_id=ticket.id,
+        ),
+    }
 
 
 def _positive_integer_ids(values) -> set[int]:
