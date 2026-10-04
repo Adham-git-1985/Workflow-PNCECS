@@ -1,0 +1,183 @@
+{% extends "portal/layout.html" %}
+{% block title %}إرسال إشعار{% endblock %}
+
+{% block content %}
+<div class="p-4 bg-white rounded-3 shadow-sm">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-bell-fill"></i> إرسال إشعار</h4>
+      <div class="text-muted">إشعار مباشر داخل النظام للموظفين المحددين أو لموظفي إدارة أو دائرة.</div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      {% if current_user.has_role('SUPER_ADMIN') or current_user.has_role('SUPERADMIN') %}
+        <a class="btn btn-outline-primary" href="{{ url_for('portal.portal_admin_notifications') }}"><i class="bi bi-bell-slash"></i> إدارة الإشعارات</a>
+      {% endif %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}"><i class="bi bi-arrow-right"></i> رجوع للإدارة</a>
+    </div>
+  </div>
+
+  <div class="alert alert-info d-flex gap-2 align-items-start" role="status">
+    <i class="bi bi-info-circle mt-1"></i>
+    <div>
+      سيظهر الإشعار فورًا في صندوق إشعارات المستلمين داخل البوابة. هذه رسالة نظامية أحادية الاتجاه ولا يمكن الرد عليها، ولا يُرسل هذا النموذج بريدًا إلكترونيًا أو رسالة خارجية.
+    </div>
+  </div>
+
+  <form method="post" id="adminNotificationForm">
+    <div class="mb-3">
+      <label class="form-label fw-semibold" for="notificationMessage">نص الإشعار</label>
+      <textarea class="form-control" id="notificationMessage" name="message" rows="5" maxlength="255"
+                aria-describedby="notificationMessageHelp" required>{{ message|default('') }}</textarea>
+      <div id="notificationMessageHelp" class="form-text">حتى 255 حرفًا.</div>
+    </div>
+
+    <div class="row g-3 mb-3">
+      <div class="col-md-6">
+        <label class="form-label fw-semibold" for="notificationLevel">نوع الإشعار</label>
+        <select class="form-select" id="notificationLevel" name="level">
+          <option value="INFO" {% if level|default('INFO') == 'INFO' %}selected{% endif %}>معلومة</option>
+          <option value="URGENT" {% if level == 'URGENT' %}selected{% endif %}>مستعجل</option>
+        </select>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label fw-semibold" for="notificationTargetScope">الجهة المستهدفة</label>
+        <select class="form-select" id="notificationTargetScope" name="target_scope" required>
+          <option value="USERS" {% if target_scope|default('USERS') == 'USERS' %}selected{% endif %}>موظف أو موظفون محددون</option>
+          <option value="DIRECTORATE" {% if target_scope == 'DIRECTORATE' %}selected{% endif %}>إدارة</option>
+          <option value="DEPARTMENT" {% if target_scope == 'DEPARTMENT' %}selected{% endif %}>دائرة</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="usersTargetWrap" class="border rounded-3 p-3 mb-3">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+        <label class="form-label fw-semibold mb-0" for="recipientUserIds">الموظفون المستهدفون</label>
+        <span class="text-muted small">يمكن اختيار أكثر من موظف.</span>
+      </div>
+      <input class="form-control mb-2" type="search" id="recipientUserSearch" placeholder="ابحث بالاسم أو البريد أو اسم المستخدم" autocomplete="off">
+      <select class="form-select" id="recipientUserIds" name="recipient_user_ids" multiple size="12">
+        {% for employee in employees %}
+          <option value="{{ employee.id }}" {% if employee.id in selected_user_ids %}selected{% endif %}
+                  data-search="{{ (employee.full_name ~ ' ' ~ (employee.email or '') ~ ' ' ~ (employee.username or ''))|lower }}">
+            {{ employee.full_name }}{% if employee.email %} — {{ employee.email }}{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+      {% if not employees %}
+        <div class="form-text text-warning">لا توجد حسابات موظفين متاحة حاليًا.</div>
+      {% endif %}
+    </div>
+
+    <div id="directorateTargetWrap" class="border rounded-3 p-3 mb-3" hidden>
+      <label class="form-label fw-semibold" for="targetDirectorate">الإدارة المستهدفة</label>
+      <select class="form-select" id="targetDirectorate" name="target_directorate_id">
+        <option value="">— اختر الإدارة —</option>
+        {% for directorate in directorates %}
+          <option value="{{ directorate.id }}" {% if directorate.id == selected_directorate_id %}selected{% endif %}>
+            {{ directorate.name_ar }}{% if directorate.code %} ({{ directorate.code }}){% endif %}
+          </option>
+        {% endfor %}
+      </select>
+      <div class="form-text">يشمل الإشعار الموظفين المرتبطين بالإدارة ودوائرها وأقسامها ووحداتها الفرعية.</div>
+    </div>
+
+    <div id="departmentTargetWrap" class="border rounded-3 p-3 mb-3" hidden>
+      <label class="form-label fw-semibold" for="targetDepartment">الدائرة المستهدفة</label>
+      <select class="form-select" id="targetDepartment" name="target_department_id">
+        <option value="">— اختر الدائرة —</option>
+        {% for department in departments %}
+          <option value="{{ department.id }}" {% if department.id == selected_department_id %}selected{% endif %}>
+            {{ department.name_ar }}
+            {% if department.directorate %} — {{ department.directorate.name_ar }}{% elif department.unit %} — {{ department.unit.name_ar }}{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+      <div class="form-text">يشمل الإشعار الموظفين المرتبطين بالدائرة وأقسامها ووحداتها الفرعية.</div>
+    </div>
+
+    <div class="border rounded-3 p-3 mb-3">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+        <label class="form-label fw-semibold mb-0" for="linkedCorrespondence">ربط بمراسلة <span class="text-muted fw-normal">(اختياري)</span></label>
+        <span class="text-muted small">لا يضيف الربط صلاحيات جديدة للمستلمين.</span>
+      </div>
+      <input class="form-control mb-2" type="search" id="linkedCorrespondenceSearch" placeholder="ابحث برقم المراسلة أو موضوعها" autocomplete="off">
+      <select class="form-select" id="linkedCorrespondence" name="linked_correspondence">
+        <option value="">— إرسال رسالة نظامية دون مراسلة مرتبطة —</option>
+        {% for correspondence in correspondence_options %}
+          <option value="{{ correspondence.value }}" {% if correspondence.selected %}selected{% endif %}
+                  data-search="{{ correspondence.search }}">
+            {{ correspondence.label }}
+          </option>
+        {% endfor %}
+      </select>
+      <div class="form-text">
+        تظهر المراسلات العادية غير السرية التي تملك صلاحية الاطلاع عليها. عند فتح الإشعار، يمكن للمستلم عرض المراسلة فقط إذا كانت لديه صلاحيتها مسبقًا.
+      </div>
+      {% if not correspondence_options %}
+        <div class="form-text text-warning">لا توجد مراسلات متاحة للربط حاليًا.</div>
+      {% endif %}
+    </div>
+
+    <button class="btn btn-primary" type="submit"><i class="bi bi-send-fill"></i> إرسال الإشعار</button>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var scope = document.getElementById('notificationTargetScope');
+    var usersWrap = document.getElementById('usersTargetWrap');
+    var directorateWrap = document.getElementById('directorateTargetWrap');
+    var departmentWrap = document.getElementById('departmentTargetWrap');
+    var users = document.getElementById('recipientUserIds');
+    var directorate = document.getElementById('targetDirectorate');
+    var department = document.getElementById('targetDepartment');
+    var userSearch = document.getElementById('recipientUserSearch');
+    var linkedCorrespondence = document.getElementById('linkedCorrespondence');
+    var linkedCorrespondenceSearch = document.getElementById('linkedCorrespondenceSearch');
+
+    function syncTargetFields() {
+      var target = scope.value;
+      var isUsers = target === 'USERS';
+      var isDirectorate = target === 'DIRECTORATE';
+      var isDepartment = target === 'DEPARTMENT';
+
+      usersWrap.hidden = !isUsers;
+      directorateWrap.hidden = !isDirectorate;
+      departmentWrap.hidden = !isDepartment;
+
+      users.disabled = !isUsers;
+      users.required = isUsers;
+      directorate.disabled = !isDirectorate;
+      directorate.required = isDirectorate;
+      department.disabled = !isDepartment;
+      department.required = isDepartment;
+      userSearch.disabled = !isUsers;
+    }
+
+    function filterEmployees() {
+      var query = (userSearch.value || '').trim().toLowerCase();
+      Array.prototype.forEach.call(users.options, function (option) {
+        option.hidden = Boolean(query) && option.dataset.search.indexOf(query) === -1;
+      });
+    }
+
+    function filterCorrespondences() {
+      var query = (linkedCorrespondenceSearch.value || '').trim().toLowerCase();
+      Array.prototype.forEach.call(linkedCorrespondence.options, function (option) {
+        if (!option.value) {
+          option.hidden = false;
+          return;
+        }
+        option.hidden = Boolean(query) && option.dataset.search.indexOf(query) === -1;
+      });
+    }
+
+    scope.addEventListener('change', syncTargetFields);
+    userSearch.addEventListener('input', filterEmployees);
+    linkedCorrespondenceSearch.addEventListener('input', filterCorrespondences);
+    syncTargetFields();
+  });
+</script>
+{% endblock %}

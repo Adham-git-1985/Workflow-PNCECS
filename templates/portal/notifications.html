@@ -31,9 +31,15 @@
       {% for n in rows %}
         <div class="list-group-item d-flex justify-content-between align-items-start gap-3">
           <div class="flex-grow-1">
+            {% set notification_target_type = (n.target_type or '')|upper %}
+            {% set is_admin_system_message = notification_target_type in ['ADMIN_BROADCAST', 'ADMIN_BROADCAST_CORR_INBOUND', 'ADMIN_BROADCAST_CORR_OUTBOUND'] %}
+            {% set has_linked_correspondence = notification_target_type in ['ADMIN_BROADCAST_CORR_INBOUND', 'ADMIN_BROADCAST_CORR_OUTBOUND'] %}
             <div class="d-flex align-items-center gap-2 flex-wrap">
               {% if not n.is_read %}
                 <span class="badge text-bg-danger">جديد</span>
+              {% endif %}
+              {% if is_admin_system_message %}
+                <span class="badge text-bg-primary">رسالة نظامية — دون رد</span>
               {% endif %}
               {% if n.type %}
                 {% set t = (n.type or '')|upper %}
@@ -50,7 +56,18 @@
             <div class="mt-2">
               <a class="text-decoration-none" href="{{ url_for('portal.portal_open_notification', notif_id=n.id) }}">{{ n.message }}</a>
             </div>
-            <a class="btn btn-sm btn-primary mt-2" href="{{ url_for('portal.portal_open_notification', notif_id=n.id) }}">فتح الحركة</a>
+            {% if is_admin_system_message %}
+              <div class="text-muted small mt-1">
+                {% if has_linked_correspondence %}
+                  هذه رسالة نظامية لا يمكن الرد عليها. فتح المراسلة يخضع لصلاحياتك الحالية.
+                {% else %}
+                  هذه رسالة نظامية أحادية الاتجاه لا يمكن الرد عليها.
+                {% endif %}
+              </div>
+            {% endif %}
+            <a class="btn btn-sm btn-primary mt-2" href="{{ url_for('portal.portal_open_notification', notif_id=n.id) }}">
+              {% if has_linked_correspondence %}فتح المراسلة{% elif is_admin_system_message %}عرض الرسالة{% else %}فتح الحركة{% endif %}
+            </a>
           </div>
           <div class="text-end">
             {% if not n.is_read %}

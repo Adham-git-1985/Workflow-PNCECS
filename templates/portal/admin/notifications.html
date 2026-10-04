@@ -8,7 +8,10 @@
       <h4 class="mb-1"><i class="bi bi-bell-slash"></i> إدارة إشعارات الموظفين</h4>
       <div class="text-muted">اختر موظفاً ثم حدّد الإشعار المطلوب حذفه من حسابه. لا يمكن تنفيذ هذه العملية إلا من السوبر أدمن.</div>
     </div>
-    <a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}"><i class="bi bi-arrow-right"></i> رجوع للإدارة</a>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-primary" href="{{ url_for('portal.portal_admin_send_notifications') }}"><i class="bi bi-send-fill"></i> إرسال إشعار</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}"><i class="bi bi-arrow-right"></i> رجوع للإدارة</a>
+    </div>
   </div>
 
   <form method="get" class="row g-2 mb-3">

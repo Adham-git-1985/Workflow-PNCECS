@@ -26,6 +26,16 @@
   </div>
 </div>
 
+{% if feedback_context %}
+  <div class="alert alert-primary d-flex flex-wrap align-items-center justify-content-between gap-3">
+    <div>
+      <div class="fw-semibold"><i class="bi bi-chat-square-text"></i> هل لديك ملاحظات حول هذا التحديث؟</div>
+      <div class="small">يمكنك إرسال اقتراح أو ملاحظة استخدام أو تعليق متعلق بالخصوصية. ستُراجع ملاحظتك عبر تذكرة دعم.</div>
+    </div>
+    <a class="btn btn-primary" href="{{ feedback_context.ticket_url }}"><i class="bi bi-send"></i> إرسال تغذية راجعة</a>
+  </div>
+{% endif %}
+
 {% if source_inbound %}
   <div class="alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2">
     <div>

@@ -1,0 +1,61 @@
+{% extends "portal/layout.html" %}
+{% block title %}إرسال ملاحظات حول تحديث النظام{% endblock %}
+
+{% block content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mx-auto" style="max-width:850px">
+  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-chat-square-text"></i> إرسال ملاحظات حول تحديث النظام</h4>
+      <p class="text-muted mb-0">اكتب ملاحظاتك أو اقتراحاتك حول التحديث. لن تُنشأ التذكرة إلا بعد الضغط على «إرسال الملاحظات».</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ feedback_context.return_url }}"><i class="bi bi-arrow-right"></i> رجوع إلى المراسلة</a>
+  </div>
+
+  <div class="alert alert-info mt-4 mb-0">
+    <div class="fw-semibold mb-1"><i class="bi bi-link-45deg"></i> التحديث المرتبط</div>
+    <div>{{ feedback_context.correspondence_label }}</div>
+  </div>
+
+  <form method="post" enctype="multipart/form-data" class="mt-4">
+    <div class="row g-3">
+      <div class="col-12">
+        <label class="form-label" for="feedbackSubject">عنوان التذكرة</label>
+        <input class="form-control" id="feedbackSubject" value="{{ feedback_context.ticket_subject }}" readonly>
+        <div class="form-text">يُعبّأ العنوان تلقائيًا لضمان ربط الملاحظة بالتحديث الصحيح.</div>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label" for="feedbackCategory">التصنيف</label>
+        <input class="form-control" id="feedbackCategory" value="النظام والصلاحيات" readonly>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label" for="feedbackPriority">الأولوية</label>
+        <select class="form-select" id="feedbackPriority" name="priority">
+          {% for code, label in priorities.items() %}
+            <option value="{{ code }}" {% if request.form.get('priority', 'NORMAL') == code %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label" for="feedbackDescription">ملاحظاتك <span class="text-danger">*</span></label>
+        <textarea class="form-control" id="feedbackDescription" name="description" rows="8" required
+                  placeholder="مثال: أحتاج إلى توضيح هذه الميزة، أو أقترح تعديلًا على طريقة عملها...">{{ request.form.get('description', '') }}</textarea>
+        <div class="form-text">يمكنك إضافة ملاحظات تتعلق بالاستخدام أو التحسين أو الخصوصية.</div>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label" for="feedbackAttachments">مرفقات (اختياري)</label>
+        <input class="form-control" id="feedbackAttachments" type="file" name="attachments" multiple accept="image/*,.pdf">
+        <div class="form-text">يمكن رفع صور أو ملفات متعددة، بحد أقصى 10 ملفات و50 م.ب إجمالاً.</div>
+      </div>
+    </div>
+
+    <div class="mt-4 d-flex gap-2 flex-wrap">
+      <button class="btn btn-primary" type="submit"><i class="bi bi-send"></i> إرسال الملاحظات</button>
+      <a class="btn btn-light" href="{{ feedback_context.return_url }}">إلغاء</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

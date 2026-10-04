@@ -781,6 +781,16 @@ def _is_super_admin() -> bool:
         return False
 
 
+def _is_admin_or_super_admin() -> bool:
+    """Return whether the current working identity is a system administrator."""
+    try:
+        # User.has_role("ADMIN") intentionally includes SUPER_ADMIN, but keep
+        # the explicit super-admin check for legacy role labels as well.
+        return bool(current_user.has_role("ADMIN") or _is_super_admin())
+    except Exception:
+        return False
+
+
 def _can_delete_corr() -> bool:
     if _is_super_admin():
         return True
@@ -5128,6 +5138,84 @@ def trouble_ticket_new():
     )
 
 
+@portal_bp.route("/trouble-tickets/feedback/<int:notification_id>", methods=["GET", "POST"])
+@login_required
+def trouble_ticket_feedback(notification_id: int):
+    """Create a support ticket containing feedback on a linked system update."""
+    feedback_context = _admin_notification_feedback_context_for_notification(notification_id)
+    if not feedback_context:
+        abort(404)
+
+    if request.method == "POST":
+        comment = (request.form.get("description") or "").strip()
+        priority = (request.form.get("priority") or "NORMAL").strip().upper()
+        if not comment:
+            flash("يرجى كتابة ملاحظتك قبل إرسال التذكرة.", "danger")
+        elif priority not in TROUBLE_TICKET_PRIORITIES:
+            flash("أولوية التذكرة غير صالحة.", "danger")
+        else:
+            ticket = TroubleTicket(
+                requester_id=current_user.id,
+                subject=feedback_context["ticket_subject"],
+                description=_admin_notification_feedback_ticket_description(
+                    feedback_context,
+                    comment,
+                ),
+                category="SYSTEM",
+                priority=priority,
+                status="OPEN",
+            )
+            db.session.add(ticket)
+            db.session.flush()
+            try:
+                _save_trouble_ticket_attachments(ticket, request.files.getlist("attachments"))
+                db.session.add(AuditLog(
+                    user_id=current_user.id,
+                    action="TROUBLE_TICKET_FEEDBACK_CREATE",
+                    note=(
+                        f"تذكرة ملاحظات #{ticket.id} من إشعار "
+                        f"#{feedback_context['notification_id']} للمراسلة "
+                        f"{feedback_context['correspondence_kind']}:"
+                        f"{feedback_context['correspondence_id']}"
+                    ),
+                    target_type="TROUBLE_TICKET",
+                    target_id=ticket.id,
+                ))
+                for recipient_id in _trouble_ticket_notification_recipient_ids(
+                    ticket,
+                    exclude_user_id=current_user.id,
+                ):
+                    db.session.add(Notification(
+                        user_id=recipient_id,
+                        message=(
+                            f"تغذية راجعة جديدة على تحديث النظام #{ticket.id}: "
+                            f"{ticket.subject}"
+                        )[:255],
+                        type=TROUBLE_TICKET_NOTIFICATION_TYPE,
+                        source="portal",
+                        is_read=False,
+                        created_at=datetime.utcnow(),
+                        link_url=url_for("portal.trouble_ticket_view", ticket_id=ticket.id),
+                    ))
+            except ValueError as exc:
+                db.session.rollback()
+                flash(str(exc), "danger")
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception("Unable to save update-feedback ticket attachments")
+                flash("تعذر حفظ المرفقات. يرجى المحاولة مرة أخرى.", "danger")
+            else:
+                db.session.commit()
+                flash("تم إرسال ملاحظتك كتذكرة دعم بنجاح.", "success")
+                return redirect(url_for("portal.trouble_ticket_view", ticket_id=ticket.id))
+
+    return render_template(
+        "portal/trouble_tickets/feedback_new.html",
+        priorities=TROUBLE_TICKET_PRIORITIES,
+        feedback_context=feedback_context,
+    )
+
+
 @portal_bp.route("/trouble-tickets/<int:ticket_id>/attachments/<int:attachment_id>/download")
 @login_required
 def trouble_ticket_attachment_download(ticket_id: int, attachment_id: int):
@@ -7102,6 +7190,8 @@ def portal_open_notification(notif_id):
         if ticket_match:
             target_url = notification_target_path("TROUBLE_TICKET", ticket_match.group(1))
 
+    target_url = _admin_notification_feedback_open_url(notification, target_url)
+
     return redirect(target_url or url_for("portal.portal_notifications"))
 
 
@@ -7172,6 +7262,570 @@ def portal_notifications():
         rows=rows,
         unread_only=unread_only,
         unread_count=unread_count,
+    )
+
+
+ADMIN_NOTIFICATION_SCOPE_USERS = "USERS"
+ADMIN_NOTIFICATION_SCOPE_DIRECTORATE = "DIRECTORATE"
+ADMIN_NOTIFICATION_SCOPE_DEPARTMENT = "DEPARTMENT"
+ADMIN_NOTIFICATION_SCOPES = {
+    ADMIN_NOTIFICATION_SCOPE_USERS,
+    ADMIN_NOTIFICATION_SCOPE_DIRECTORATE,
+    ADMIN_NOTIFICATION_SCOPE_DEPARTMENT,
+}
+ADMIN_NOTIFICATION_TARGET_TYPE = "ADMIN_BROADCAST"
+ADMIN_NOTIFICATION_CORR_IN_TARGET_TYPE = "ADMIN_BROADCAST_CORR_INBOUND"
+ADMIN_NOTIFICATION_CORR_OUT_TARGET_TYPE = "ADMIN_BROADCAST_CORR_OUTBOUND"
+
+
+def _admin_notification_correspondence_label(kind: str, item) -> str:
+    """Return a concise, non-sensitive label for a linked correspondence."""
+    kind_label = "وارد" if kind == "IN" else "صادر"
+    reference = (getattr(item, "ref_no", None) or "").strip()
+    reference_label = reference or f"#{item.id}"
+    subject = (getattr(item, "subject", None) or "").strip()
+    if len(subject) > 120:
+        subject = f"{subject[:117]}..."
+    return " — ".join(part for part in (kind_label, reference_label, subject) if part)
+
+
+def _admin_notification_linkable_correspondences(
+    *,
+    selected_value: str | None = None,
+    limit_per_kind: int = 120,
+) -> list[dict]:
+    """Return recent ordinary correspondence the sender may safely link.
+
+    An administrator broadcast does not itself grant access to the linked
+    correspondence. Secret records are deliberately excluded from this
+    announcement-oriented composer to avoid accidental disclosure.
+    """
+    rows: list[dict] = []
+    selected_value = (selected_value or "").strip().upper()
+
+    for kind, model in (("IN", InboundMail), ("OUT", OutboundMail)):
+        candidates = (
+            model.query
+            .filter(func.upper(func.coalesce(model.confidentiality, "NORMAL")) != "SECRET")
+            .order_by(model.created_at.desc(), model.id.desc())
+            .limit(limit_per_kind)
+            .all()
+        )
+        for item in candidates:
+            if not _corr_can_access(item):
+                continue
+            value = f"{kind}:{item.id}"
+            label = _admin_notification_correspondence_label(kind, item)
+            rows.append({
+                "value": value,
+                "label": label,
+                "search": f"{value} {label}".lower(),
+                "created_at": getattr(item, "created_at", None),
+                "selected": value == selected_value,
+            })
+
+    rows.sort(
+        key=lambda row: (
+            row["created_at"] is not None,
+            row["created_at"] or datetime.min,
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _admin_notification_resolve_correspondence(value: str | None):
+    """Resolve one form value only when it is safe to attach to a broadcast."""
+    match = re.fullmatch(r"(IN|OUT):(\d+)", (value or "").strip().upper())
+    if not match:
+        return None
+
+    kind, raw_id = match.groups()
+    item = db.session.get(InboundMail if kind == "IN" else OutboundMail, int(raw_id))
+    if not item:
+        return None
+    if (getattr(item, "confidentiality", "NORMAL") or "NORMAL").strip().upper() == "SECRET":
+        return None
+    if not _corr_can_access(item):
+        return None
+    return kind, item
+
+
+def _admin_notification_correspondence_kind_from_target_type(target_type: str | None) -> str | None:
+    normalized = (target_type or "").strip().upper()
+    if normalized == ADMIN_NOTIFICATION_CORR_IN_TARGET_TYPE:
+        return "IN"
+    if normalized == ADMIN_NOTIFICATION_CORR_OUT_TARGET_TYPE:
+        return "OUT"
+    return None
+
+
+def _admin_notification_feedback_context_for_notification(
+    notification_id: int,
+    *,
+    expected_kind: str | None = None,
+    expected_item_id: int | None = None,
+) -> dict | None:
+    """Return feedback context only for a recipient of a linked broadcast.
+
+    The notification is the authorization context for feedback. A guessed id,
+    a hidden notification, or a correspondence mismatch never produces a form.
+    """
+    try:
+        notification_id = int(notification_id)
+    except (TypeError, ValueError):
+        return None
+    if notification_id <= 0 or not getattr(current_user, "id", None):
+        return None
+
+    notification = (
+        Notification.query
+        .filter(Notification.id == notification_id)
+        .filter(Notification.user_id == current_user.id)
+        .filter(Notification.source == "portal")
+        .filter(Notification.is_mirror.is_(False))
+        .filter(Notification.is_visible.is_(True))
+        .filter(Notification.target_type.in_((
+            ADMIN_NOTIFICATION_CORR_IN_TARGET_TYPE,
+            ADMIN_NOTIFICATION_CORR_OUT_TARGET_TYPE,
+        )))
+        .first()
+    )
+    if not notification:
+        return None
+
+    kind = _admin_notification_correspondence_kind_from_target_type(notification.target_type)
+    if not kind or (expected_kind and kind != expected_kind):
+        return None
+    try:
+        correspondence_id = int(notification.target_id or 0)
+    except (TypeError, ValueError):
+        return None
+    if correspondence_id <= 0 or (
+        expected_item_id is not None and correspondence_id != int(expected_item_id)
+    ):
+        return None
+
+    item = db.session.get(InboundMail if kind == "IN" else OutboundMail, correspondence_id)
+    if not item or not _corr_can_access(item):
+        return None
+
+    correspondence_url = notification_target_path(
+        "CORR_INBOUND" if kind == "IN" else "CORR_OUTBOUND",
+        item.id,
+    )
+    if not correspondence_url:
+        return None
+
+    correspondence_label = _admin_notification_correspondence_label(kind, item)
+    return {
+        "notification_id": notification.id,
+        "correspondence_id": item.id,
+        "correspondence_kind": kind,
+        "correspondence_label": correspondence_label,
+        "correspondence_url": correspondence_url,
+        "return_url": f"{correspondence_url}?feedback_notification={notification.id}",
+        "ticket_subject": (
+            f"ملاحظات حول تحديث النظام — {correspondence_label}"
+        )[:250],
+        "ticket_url": url_for(
+            "portal.trouble_ticket_feedback",
+            notification_id=notification.id,
+        ),
+    }
+
+
+def _admin_notification_feedback_context_for_current_item(kind: str, item) -> dict | None:
+    """Read the optional feedback query parameter on a correspondence view."""
+    try:
+        notification_id = int(request.args.get("feedback_notification") or 0)
+    except (TypeError, ValueError):
+        return None
+    if notification_id <= 0:
+        return None
+    return _admin_notification_feedback_context_for_notification(
+        notification_id,
+        expected_kind=kind,
+        expected_item_id=getattr(item, "id", None),
+    )
+
+
+def _admin_notification_feedback_open_url(notification, target_url: str | None) -> str | None:
+    """Carry a verified broadcast id into its linked correspondence view."""
+    kind = _admin_notification_correspondence_kind_from_target_type(
+        getattr(notification, "target_type", None)
+    )
+    if not kind or not target_url:
+        return target_url
+    expected_target = notification_target_path(
+        "CORR_INBOUND" if kind == "IN" else "CORR_OUTBOUND",
+        getattr(notification, "target_id", None),
+    )
+    if not expected_target or target_url != expected_target:
+        return target_url
+    separator = "&" if "?" in target_url else "?"
+    return f"{target_url}{separator}feedback_notification={notification.id}"
+
+
+def _admin_notification_feedback_ticket_description(context: dict, comment: str) -> str:
+    """Keep a readable, durable source reference with the user's feedback."""
+    return "\n".join((
+        "مصدر الملاحظة: تحديث نظام مُرسل عبر إشعار داخلي.",
+        f"المراسلة المرتبطة: {context['correspondence_label']}",
+        f"مرجع الإشعار: #{context['notification_id']}",
+        f"رابط المراسلة: {context['correspondence_url']}",
+        "",
+        "ملاحظات المستخدم:",
+        comment,
+    ))
+
+
+def _positive_integer_ids(values) -> set[int]:
+    """Parse a form list of positive integer ids without raising."""
+    parsed: set[int] = set()
+    for value in values or []:
+        try:
+            parsed_value = int(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed_value > 0:
+            parsed.add(parsed_value)
+    return parsed
+
+
+def _admin_notification_org_recipient_ids(
+    *,
+    directorate_id: int | None = None,
+    department_id: int | None = None,
+) -> list[int]:
+    """Resolve every account assigned anywhere inside an org scope.
+
+    Employee placement is stored in both legacy user columns and the HR employee
+    file in existing installations.  Include both sources, plus section/division
+    assignments, so a message addressed to an administration or department does
+    not miss employees whose parent fields have not yet been synchronised.
+    """
+    department_ids: set[int] = set()
+    if department_id:
+        department_ids.add(int(department_id))
+    elif directorate_id:
+        department_ids.update(
+            int(row_id)
+            for (row_id,) in (
+                db.session.query(Department.id)
+                .filter(Department.directorate_id == int(directorate_id))
+                .all()
+            )
+            if row_id
+        )
+
+    section_filters = []
+    if directorate_id:
+        section_filters.append(Section.directorate_id == int(directorate_id))
+    if department_ids:
+        section_filters.append(Section.department_id.in_(sorted(department_ids)))
+    section_ids: set[int] = set()
+    if section_filters:
+        section_ids.update(
+            int(row_id)
+            for (row_id,) in (
+                db.session.query(Section.id)
+                .filter(or_(*section_filters))
+                .all()
+            )
+            if row_id
+        )
+
+    division_filters = []
+    if department_ids:
+        division_filters.append(Division.department_id.in_(sorted(department_ids)))
+    if section_ids:
+        division_filters.append(Division.section_id.in_(sorted(section_ids)))
+    division_ids: set[int] = set()
+    if division_filters:
+        division_ids.update(
+            int(row_id)
+            for (row_id,) in (
+                db.session.query(Division.id)
+                .filter(or_(*division_filters))
+                .all()
+            )
+            if row_id
+        )
+
+    user_filters = []
+    employee_file_filters = []
+    if directorate_id:
+        user_filters.append(User.directorate_id == int(directorate_id))
+        employee_file_filters.append(EmployeeFile.directorate_id == int(directorate_id))
+    if department_ids:
+        target_department_ids = sorted(department_ids)
+        user_filters.append(User.department_id.in_(target_department_ids))
+        employee_file_filters.append(EmployeeFile.department_id.in_(target_department_ids))
+    if section_ids:
+        target_section_ids = sorted(section_ids)
+        user_filters.append(User.section_id.in_(target_section_ids))
+        employee_file_filters.append(EmployeeFile.section_id.in_(target_section_ids))
+    if division_ids:
+        target_division_ids = sorted(division_ids)
+        user_filters.append(User.division_id.in_(target_division_ids))
+        employee_file_filters.append(EmployeeFile.division_id.in_(target_division_ids))
+
+    if not user_filters:
+        return []
+
+    recipient_ids = {
+        int(user_id)
+        for (user_id,) in db.session.query(User.id).filter(or_(*user_filters)).all()
+        if user_id
+    }
+    recipient_ids.update(
+        int(user_id)
+        for (user_id,) in (
+            db.session.query(EmployeeFile.user_id)
+            .filter(or_(*employee_file_filters))
+            .all()
+        )
+        if user_id
+    )
+    return sorted(recipient_ids)
+
+
+def _admin_notification_recipient_ids(
+    target_scope: str,
+    *,
+    selected_user_ids: set[int] | None = None,
+    directorate_id: int | None = None,
+    department_id: int | None = None,
+) -> list[int]:
+    """Resolve recipients for the manual administrator notification composer."""
+    if target_scope == ADMIN_NOTIFICATION_SCOPE_USERS:
+        requested_ids = {int(value) for value in (selected_user_ids or set()) if value}
+        if not requested_ids:
+            return []
+        return sorted({
+            int(user_id)
+            for (user_id,) in (
+                db.session.query(User.id)
+                .filter(User.id.in_(sorted(requested_ids)))
+                .all()
+            )
+            if user_id
+        })
+    if target_scope == ADMIN_NOTIFICATION_SCOPE_DIRECTORATE and directorate_id:
+        return _admin_notification_org_recipient_ids(directorate_id=int(directorate_id))
+    if target_scope == ADMIN_NOTIFICATION_SCOPE_DEPARTMENT and department_id:
+        return _admin_notification_org_recipient_ids(department_id=int(department_id))
+    return []
+
+
+@portal_bp.route("/admin/notifications/send", methods=["GET", "POST"])
+@login_required
+def portal_admin_send_notifications():
+    """Let system administrators send a direct portal notification by audience."""
+    if not _is_admin_or_super_admin():
+        abort(403)
+
+    employees = User.query.order_by(User.name.asc(), User.email.asc(), User.id.asc()).all()
+    directorates = (
+        Directorate.query
+        .filter(Directorate.is_active.is_(True))
+        .order_by(Directorate.name_ar.asc(), Directorate.id.asc())
+        .all()
+    )
+    departments = (
+        Department.query
+        .filter(Department.is_active.is_(True))
+        .order_by(Department.name_ar.asc(), Department.id.asc())
+        .all()
+    )
+
+    def render_form(**values):
+        return render_template(
+            "portal/admin/notification_send.html",
+            employees=employees,
+            directorates=directorates,
+            departments=departments,
+            correspondence_options=_admin_notification_linkable_correspondences(
+                selected_value=values.get("selected_correspondence"),
+            ),
+            **values,
+        )
+
+    if request.method == "POST":
+        message = (request.form.get("message") or "").strip()
+        target_scope = (request.form.get("target_scope") or "").strip().upper()
+        level = (request.form.get("level") or "INFO").strip().upper()
+        if level not in {"INFO", "URGENT"}:
+            level = "INFO"
+
+        selected_user_ids = _positive_integer_ids(request.form.getlist("recipient_user_ids"))
+        selected_directorate_id = next(iter(_positive_integer_ids([
+            request.form.get("target_directorate_id"),
+        ])), None)
+        selected_department_id = next(iter(_positive_integer_ids([
+            request.form.get("target_department_id"),
+        ])), None)
+        selected_correspondence = (request.form.get("linked_correspondence") or "").strip().upper()
+        form_values = {
+            "message": message,
+            "target_scope": target_scope or ADMIN_NOTIFICATION_SCOPE_USERS,
+            "level": level,
+            "selected_user_ids": selected_user_ids,
+            "selected_directorate_id": selected_directorate_id,
+            "selected_department_id": selected_department_id,
+            "selected_correspondence": selected_correspondence,
+        }
+
+        if not message:
+            flash("يرجى كتابة نص الإشعار.", "warning")
+            return render_form(**form_values)
+        if len(message) > 255:
+            flash("نص الإشعار يجب ألا يتجاوز 255 حرفًا.", "warning")
+            return render_form(**form_values)
+        if target_scope not in ADMIN_NOTIFICATION_SCOPES:
+            flash("يرجى اختيار جهة مستهدفة صحيحة.", "warning")
+            return render_form(**form_values)
+        if not notifications_enabled():
+            flash("إرسال الإشعارات داخل النظام موقوف حاليًا من إعدادات النظام.", "warning")
+            return render_form(**form_values)
+
+        linked_correspondence = None
+        if selected_correspondence:
+            linked_correspondence = _admin_notification_resolve_correspondence(
+                selected_correspondence
+            )
+            if not linked_correspondence:
+                flash(
+                    "لا يمكن ربط المراسلة المحددة. اختر مراسلة عادية لديك صلاحية الاطلاع عليها.",
+                    "warning",
+                )
+                return render_form(**form_values)
+
+        target_label = ""
+        target_id = None
+        if target_scope == ADMIN_NOTIFICATION_SCOPE_USERS:
+            if not selected_user_ids:
+                flash("اختر موظفًا واحدًا على الأقل.", "warning")
+                return render_form(**form_values)
+            recipient_ids = _admin_notification_recipient_ids(
+                target_scope,
+                selected_user_ids=selected_user_ids,
+            )
+            if set(recipient_ids) != selected_user_ids:
+                flash("تتضمن قائمة الموظفين حسابًا غير موجود. حدّث الاختيار ثم أعد الإرسال.", "warning")
+                return render_form(**form_values)
+            target_label = f"{len(recipient_ids)} موظف"
+        elif target_scope == ADMIN_NOTIFICATION_SCOPE_DIRECTORATE:
+            directorate = (
+                db.session.get(Directorate, selected_directorate_id)
+                if selected_directorate_id else None
+            )
+            if not directorate or not directorate.is_active:
+                flash("يرجى اختيار إدارة فعّالة.", "warning")
+                return render_form(**form_values)
+            recipient_ids = _admin_notification_recipient_ids(
+                target_scope,
+                directorate_id=directorate.id,
+            )
+            target_label = directorate.name_ar or f"الإدارة #{directorate.id}"
+            target_id = directorate.id
+        else:
+            department = (
+                db.session.get(Department, selected_department_id)
+                if selected_department_id else None
+            )
+            if not department or not department.is_active:
+                flash("يرجى اختيار دائرة فعّالة.", "warning")
+                return render_form(**form_values)
+            recipient_ids = _admin_notification_recipient_ids(
+                target_scope,
+                department_id=department.id,
+            )
+            target_label = department.name_ar or f"الدائرة #{department.id}"
+            target_id = department.id
+
+        if not recipient_ids:
+            flash("لا يوجد موظفون مرتبطون بالجهة المختارة لإرسال الإشعار إليهم.", "warning")
+            return render_form(**form_values)
+
+        notification_target_type = ADMIN_NOTIFICATION_TARGET_TYPE
+        notification_target_id = target_id
+        notification_link_url = url_for("portal.portal_notifications")
+        linked_correspondence_label = ""
+        if linked_correspondence:
+            linked_kind, linked_item = linked_correspondence
+            notification_target_type = (
+                ADMIN_NOTIFICATION_CORR_IN_TARGET_TYPE
+                if linked_kind == "IN"
+                else ADMIN_NOTIFICATION_CORR_OUT_TARGET_TYPE
+            )
+            notification_target_id = linked_item.id
+            notification_link_url = notification_target_path(
+                "CORR_INBOUND" if linked_kind == "IN" else "CORR_OUTBOUND",
+                linked_item.id,
+            )
+            linked_correspondence_label = _admin_notification_correspondence_label(
+                linked_kind,
+                linked_item,
+            )
+
+        now = datetime.utcnow()
+        event_key = uuid.uuid4().hex
+        try:
+            db.session.add_all([
+                Notification(
+                    user_id=user_id,
+                    message=message,
+                    type=level,
+                    source="portal",
+                    link_url=notification_link_url,
+                    created_at=now,
+                    is_read=False,
+                    is_mirror=False,
+                    actor_id=current_user.id,
+                    event_key=event_key,
+                    target_type=notification_target_type,
+                    target_id=notification_target_id,
+                )
+                for user_id in recipient_ids
+            ])
+            _portal_audit(
+                "PORTAL_ADMIN_NOTIFICATION_SEND",
+                (
+                    f"scope={target_scope} audience_target_id={target_id or 0} "
+                    f"linked_correspondence={selected_correspondence or 'NONE'} "
+                    f"recipients={len(recipient_ids)} level={level} event_key={event_key}"
+                ),
+                target_type=notification_target_type,
+                target_id=notification_target_id,
+            )
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception("Failed to send administrator notification")
+            flash("تعذّر إرسال الإشعار. لم يتم إرسال أي نسخة.", "danger")
+            return render_form(**form_values)
+
+        linked_suffix = (
+            f" وربطه بالمراسلة «{linked_correspondence_label}»."
+            if linked_correspondence_label
+            else "."
+        )
+        flash(
+            f"تم إرسال الإشعار إلى {len(recipient_ids)} مستلمًا ضمن «{target_label}»{linked_suffix}",
+            "success",
+        )
+        return redirect(url_for("portal.portal_admin_send_notifications"))
+
+    return render_form(
+        message="",
+        target_scope=ADMIN_NOTIFICATION_SCOPE_USERS,
+        level="INFO",
+        selected_user_ids=set(),
+        selected_directorate_id=None,
+        selected_department_id=None,
+        selected_correspondence="",
     )
 
 
@@ -37727,6 +38381,7 @@ def outbound_view(outbound_id: int):
     _ensure_corr_competence_schema()
     item = OutboundMail.query.get_or_404(outbound_id)
     _corr_require_access(item)
+    feedback_context = _admin_notification_feedback_context_for_current_item("OUT", item)
     attachments = CorrAttachment.query.filter_by(outbound_id=item.id).order_by(CorrAttachment.id.desc()).all()
     try:
         _ensure_corr_attachments_archived(attachments)
@@ -37764,6 +38419,7 @@ def outbound_view(outbound_id: int):
             workflow_templates,
         ),
         source_inbound=getattr(item, "source_inbound", None),
+        feedback_context=feedback_context,
         **procedure_context,
     )
 
@@ -37774,6 +38430,7 @@ def inbound_view(inbound_id: int):
     _ensure_corr_competence_schema()
     item = InboundMail.query.get_or_404(inbound_id)
     _corr_require_access(item)
+    feedback_context = _admin_notification_feedback_context_for_current_item("IN", item)
     attachments = CorrAttachment.query.filter_by(inbound_id=item.id).order_by(CorrAttachment.id.desc()).all()
     try:
         _ensure_corr_attachments_archived(attachments)
@@ -37813,6 +38470,7 @@ def inbound_view(inbound_id: int):
         workflow_templates=workflow_templates,
         workflow_template_steps=_corr_workflow_template_steps_data(workflow_templates),
         official_replies=official_replies,
+        feedback_context=feedback_context,
         **procedure_context,
     )
 
@@ -39043,6 +39701,13 @@ def portal_admin_dashboard():
         pending_access = 0
 
     # Core admin cards
+    if _is_admin_or_super_admin():
+        cards.append({
+            "title": "إرسال إشعارات",
+            "desc": "إرسال إشعار مباشر إلى موظفين محددين أو إلى إدارة أو دائرة.",
+            "icon": "bi-bell-fill",
+            "url": url_for("portal.portal_admin_send_notifications"),
+        })
     if _is_super_admin():
         cards.append({
             "title": "إدارة إشعارات الموظفين",
