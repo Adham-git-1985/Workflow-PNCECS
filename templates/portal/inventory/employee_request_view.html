@@ -62,7 +62,7 @@
     </div></div>
     {% endif %}
     <div class="card shadow-sm"><div class="card-header fw-bold">سجل الإجراءات</div><div class="card-body">
-      {% for action in item.actions|sort(attribute='created_at') %}<div class="border rounded p-2 mb-2"><div class="fw-semibold">{{ stages.get(action.stage, action.stage) }} — {{ {'SUBMITTED':'إرسال الطلب','APPROVED':'متابعة الاعتماد','FORWARDED':'إحالة إلى الأمين العام','UPDATED':'تعديل الطلب','REJECTED':'رفض الطلب','CANCELLED':'إلغاء الطلب'}.get(action.action, action.action) }}</div><div class="small text-muted">{{ action.actor.full_name }} · {{ action.created_at.strftime('%Y-%m-%d %H:%M') }}</div>{% if action.note %}<div class="mt-1">{{ action.note }}</div>{% endif %}</div>{% endfor %}
+      {% for action in item.actions|sort(attribute='created_at') %}{% set responsible = stage_responsibles.get(action.stage) %}<div class="border rounded p-2 mb-2"><div class="fw-semibold">{{ stages.get(action.stage, action.stage) }}{% if responsible %} ({{ responsible }}){% endif %} — {{ {'SUBMITTED':'إرسال الطلب','APPROVED':'متابعة الاعتماد','FORWARDED':'إحالة إلى الأمين العام','UPDATED':'تعديل الطلب','REJECTED':'رفض الطلب','CANCELLED':'إلغاء الطلب'}.get(action.action, action.action) }}</div><div class="small text-muted">{{ action.actor.full_name }} · {{ action.created_at.strftime('%Y-%m-%d %H:%M') }}</div>{% if action.note %}<div class="mt-1">{{ action.note }}</div>{% endif %}</div>{% endfor %}
     </div></div>
   </div>
 </div>

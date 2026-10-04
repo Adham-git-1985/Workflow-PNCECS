@@ -488,15 +488,57 @@ def _effective_approval_stage(row):
     return stage
 
 
-def _recipient_ids(row):
-    stage = _effective_approval_stage(row)
+def _stage_approver_ids(row, stage):
+    """Return the responsible users for one named materials-request stage."""
+    stage = (stage or "").strip().upper()
+    requester_user_id = getattr(row, "requester_user_id", None)
     if stage == "WAREHOUSE":
-        return _warehouse_approver_ids(row.requester_user_id)
+        return _warehouse_approver_ids(requester_user_id)
     if stage == "HR":
-        return _hr_fallback_approver_ids(row.requester_user_id)
+        return _hr_fallback_approver_ids(requester_user_id)
     if stage in STAGE_APPROVAL_PERMISSIONS:
-        return _special_stage_approver_ids(stage, row.requester_user_id)
+        return _special_stage_approver_ids(stage, requester_user_id)
     return []
+
+
+def _stage_responsible_labels(row):
+    """Build role-to-person labels for the request's action history."""
+    approver_ids_by_stage = {
+        stage: _stage_approver_ids(row, stage)
+        for stage in ("WAREHOUSE", "HR", *STAGE_APPROVAL_PERMISSIONS)
+    }
+    all_ids = {
+        user_id
+        for user_ids in approver_ids_by_stage.values()
+        for user_id in user_ids
+    }
+    users_by_id = {
+        user.id: user
+        for user in User.query.filter(User.id.in_(all_ids)).all()
+    } if all_ids else {}
+
+    labels = {}
+    for stage, user_ids in approver_ids_by_stage.items():
+        names = []
+        for user_id in user_ids:
+            user = users_by_id.get(user_id)
+            if not user:
+                continue
+            name = (
+                getattr(user, "full_name", None)
+                or getattr(user, "name", None)
+                or getattr(user, "email", None)
+                or str(user.id)
+            )
+            if name:
+                names.append(str(name).strip())
+        if names:
+            labels[stage] = "، ".join(names)
+    return labels
+
+
+def _recipient_ids(row):
+    return _stage_approver_ids(row, _effective_approval_stage(row))
 
 
 def _can_process(row):
@@ -504,14 +546,7 @@ def _can_process(row):
         return False
     if _is_system_admin(current_user):
         return True
-    stage = _effective_approval_stage(row)
-    if stage == "WAREHOUSE":
-        return current_user.id in _warehouse_approver_ids(row.requester_user_id)
-    if stage == "HR":
-        return current_user.id in _hr_fallback_approver_ids(row.requester_user_id)
-    if stage in STAGE_APPROVAL_PERMISSIONS:
-        return current_user.id in _special_stage_approver_ids(stage, row.requester_user_id)
-    return False
+    return current_user.id in _stage_approver_ids(row, _effective_approval_stage(row))
 
 
 def _can_manage():
@@ -1329,6 +1364,7 @@ def inventory_employee_request_view(request_id):
         item_totals=item_totals,
         warehouse_balances=warehouse_balances,
         stages=STAGES,
+        stage_responsibles=_stage_responsible_labels(row),
         status_label=_request_status_label(row),
         approval_stage=_effective_approval_stage(row),
         warehouse_review_stages=WAREHOUSE_REVIEW_STAGES,

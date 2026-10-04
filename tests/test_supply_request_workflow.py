@@ -631,6 +631,43 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
             [item.id],
         )
         self.assertEqual(render.call_args.kwargs["approval_stage"], "WAREHOUSE")
+        self.assertEqual(
+            render.call_args.kwargs["stage_responsibles"]["WAREHOUSE"],
+            self.warehouse_manager.full_name,
+        )
+        self.assertEqual(
+            render.call_args.kwargs["stage_responsibles"]["TECH_WAREHOUSE"],
+            self.tech_warehouse_manager.full_name,
+        )
+        self.assertEqual(
+            render.call_args.kwargs["stage_responsibles"]["ADMIN_MAINTENANCE"],
+            self.admin_maintenance_manager.full_name,
+        )
+        self.assertEqual(
+            render.call_args.kwargs["stage_responsibles"]["TECH_DIRECTOR"],
+            self.tech_director.full_name,
+        )
+        self.assertEqual(
+            render.call_args.kwargs["stage_responsibles"]["ADMIN_FINANCE"],
+            self.admin_finance_director.full_name,
+        )
+
+    def test_action_log_displays_the_responsible_approver_name(self):
+        action = InvEmployeeRequestAction.query.filter_by(request_id=self.request.id).one()
+        self.request.approval_stage = "WAREHOUSE"
+        action.stage = "WAREHOUSE"
+        db.session.commit()
+        self._login(self.employee.id)
+
+        response = self.client.get(
+            f"/portal/inventory/employee-requests/{self.request.id}"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            f"مدير المستودع ({self.warehouse_manager.full_name})",
+            response.get_data(as_text=True),
+        )
 
     def test_material_search_shows_the_employee_last_request_and_month_marker(self):
         item = InvItem.query.filter_by(code="PAPER-001").one()
