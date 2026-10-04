@@ -86,6 +86,33 @@
     .hr-reports-canvas .accordion-body{ padding-top:.5rem; }
     .hr-reports-canvas .list-group-item{ border:0; border-radius:10px; margin-bottom:.35rem; font-weight:700; }
     .hr-reports-canvas .list-group-item i{ margin-left:.5rem; }
+
+    /* Wide attendance screens: keep the additional workplace column readable
+       without squeezing the attendance metrics into narrow cells. */
+    .attendance-table-scroll {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .attendance-wide-table {
+      min-width: 1360px;
+    }
+    .attendance-wide-table th,
+    .attendance-wide-table td {
+      white-space: nowrap;
+    }
+    .attendance-wide-table .attendance-employee-name,
+    .attendance-wide-table .attendance-work-location {
+      white-space: normal;
+      min-width: 11rem;
+    }
+    .attendance-wide-table .attendance-work-location {
+      min-width: 10rem;
+    }
+    body.attendance-wide-layout .container.py-4 {
+      max-width: none;
+      width: 100%;
+      padding-inline: clamp(.75rem, 1.5vw, 1.5rem);
+    }
     @media (max-width: 575.98px){
       .hr-reports-canvas{ width: 100%; }
     }
@@ -129,6 +156,36 @@
 {% block scripts %}
   {{ super() }}
   <script>
+    // Attendance tables have many time-related columns. The wide layout expands
+    // the main content container and keeps that preference for this browser
+    // session only.
+    document.addEventListener('DOMContentLoaded', function () {
+      var toggles = document.querySelectorAll('[data-attendance-wide-toggle]');
+      if (!toggles.length) return;
+
+      var storageKey = 'wf-attendance-wide-layout';
+      var isWide = sessionStorage.getItem(storageKey) !== 'off';
+
+      function updateWideLayout() {
+        document.body.classList.toggle('attendance-wide-layout', isWide);
+        toggles.forEach(function (toggle) {
+          toggle.setAttribute('aria-pressed', String(isWide));
+          toggle.innerHTML = isWide
+            ? '<i class="bi bi-arrows-collapse"></i> عرض عادي'
+            : '<i class="bi bi-arrows-expand"></i> عرض واسع';
+        });
+      }
+
+      toggles.forEach(function (toggle) {
+        toggle.addEventListener('click', function () {
+          isWide = !isWide;
+          sessionStorage.setItem(storageKey, isWide ? 'on' : 'off');
+          updateWideLayout();
+        });
+      });
+      updateWideLayout();
+    });
+
     // Lightweight multi-level dropdown support (RTL-friendly).
     document.addEventListener('DOMContentLoaded', function () {
       try {

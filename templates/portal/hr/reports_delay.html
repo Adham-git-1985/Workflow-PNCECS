@@ -2,13 +2,16 @@
 {% block title %}تقرير التأخير{% endblock %}
 
 {% block hr_content %}
-<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3 attendance-wide-card">
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
       <h4 class="mb-1"><i class="bi bi-exclamation-triangle"></i> تقرير التأخير</h4>
       <div class="text-muted">فلترة حسب الموظف/موقع العمل/نطاق التاريخ + نوع التأخير + مقارنة مدة التأخير (بالساعات).</div>
     </div>
     <div class="d-flex gap-2">
+      <button class="btn btn-outline-secondary" type="button" data-attendance-wide-toggle aria-pressed="true">
+        <i class="bi bi-arrows-collapse"></i> عرض عادي
+      </button>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_home') }}"><i class="bi bi-arrow-right"></i> العودة إلى شاشات الدوام</a>
       {% if can_export %}
         <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_delay', user_id=selected_user_id, work_location_id=selected_work_location_id, from_date=from_date, to_date=to_date, delay_type=delay_type, dur_op=dur_op, hours=hours_value, export='xlsx') }}"><i class="bi bi-file-earmark-excel"></i> تصدير Excel</a>
@@ -79,17 +82,18 @@
   </form>
 </div>
 
-<div class="bg-white rounded-3 shadow-sm p-3">
+<div class="bg-white rounded-3 shadow-sm p-3 attendance-wide-card">
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
     <div class="text-muted small">عدد النتائج: {{ rows|length }}</div>
   </div>
 
-  <div class="table-responsive">
-    <table class="table table-sm align-middle">
+  <div class="table-responsive attendance-table-scroll">
+    <table class="table table-sm align-middle attendance-wide-table">
       <thead>
         <tr>
           <th>التاريخ</th>
           <th>الموظف</th>
+          <th>مقر العمل</th>
           <th>وقت الدخول</th>
           <th>تأخير صباحي (دقيقة)</th>
           <th>خروج مبكر (دقيقة)</th>
@@ -102,6 +106,7 @@
           <tr>
             <td>{{ r.date or '—' }}</td>
             <td>{{ (r.user.full_name or r.user.name or r.user.email) if r.user else '—' }}</td>
+            <td class="attendance-work-location">{{ r.work_location or '—' }}</td>
             <td>{{ r.check_in_time or '—' }}</td>
             <td>{{ r.late_minutes }}</td>
             <td>{{ r.early_minutes }}</td>

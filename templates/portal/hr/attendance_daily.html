@@ -62,10 +62,13 @@
     box-shadow: 0 .2rem .65rem rgba(33, 37, 41, .10);
   }
 </style>
-<div class="bg-white rounded-3 shadow-sm p-4">
+<div class="bg-white rounded-3 shadow-sm p-4 attendance-wide-card">
   <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
     <h5 class="mb-0"><i class="bi bi-graph-up"></i> ملخص الدوام اليومي</h5>
     <div class="d-flex gap-2">
+      <button class="btn btn-outline-secondary" type="button" data-attendance-wide-toggle aria-pressed="true">
+        <i class="bi bi-arrows-collapse"></i> عرض عادي
+      </button>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_home') }}"><i class="bi bi-arrow-right"></i> العودة إلى شاشات الدوام</a>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_import') }}">استيراد</a>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_events') }}">سجل الدخول والخروج والمغادرات</a>
@@ -152,14 +155,15 @@
 
   <hr class="my-3">
 
-  <div class="table-responsive">
-    <table id="attendance-daily-table" class="table table-sm align-middle attendance-daily-table">
+  <div class="table-responsive attendance-table-scroll">
+    <table id="attendance-daily-table" class="table table-sm align-middle attendance-daily-table attendance-wide-table">
       <thead>
         <tr>
-          <th>م اليوم</th>
-          <th>{{ portal_sort_link('اليوم', 'day') }}</th>
-          <th>{{ portal_sort_link('الموظف', 'user') }}</th>
-          <th>المصدر</th>
+           <th>م اليوم</th>
+           <th>{{ portal_sort_link('اليوم', 'day') }}</th>
+           <th>{{ portal_sort_link('الموظف', 'user') }}</th>
+           <th>مقر العمل</th>
+           <th>المصدر</th>
           <th>{{ portal_sort_link('أول دخول', 'first_in') }}</th>
           <th>{{ portal_sort_link('آخر خروج', 'last_out') }}</th>
           <th>ساعات العمل</th>
@@ -176,10 +180,11 @@
       <tbody>
         {% for r in rows %}
         <tr>
-          <td class="fw-semibold">{{ r.daily_employee_number or '—' }}</td>
-          <td><code>{{ r.day }}</code></td>
-          <td class="attendance-employee-name">{{ r.name or r.email }}</td>
-          <td>
+           <td class="fw-semibold">{{ r.daily_employee_number or '—' }}</td>
+           <td><code>{{ r.day }}</code></td>
+           <td class="attendance-employee-name">{{ r.name or r.email }}</td>
+           <td class="attendance-work-location">{{ r.work_location or '—' }}</td>
+           <td>
             {% if r.is_manual %}<span class="badge bg-warning text-dark"><i class="bi bi-pencil-square"></i> إدخال يدوي</span>
             {% elif r.source %}<span class="text-muted">{{ r.source }}</span>
             {% else %}—{% endif %}
@@ -210,7 +215,7 @@
           {% endif %}
         </tr>
         {% else %}
-        <tr><td colspan="{% if can_edit_attendance %}15{% else %}14{% endif %}" class="text-center text-muted py-4">لا توجد بيانات مطابقة للفلاتر المحددة.</td></tr>
+          <tr><td colspan="{% if can_edit_attendance %}16{% else %}15{% endif %}" class="text-center text-muted py-4">لا توجد بيانات مطابقة للفلاتر المحددة.</td></tr>
         {% endfor %}
       </tbody>
     </table>

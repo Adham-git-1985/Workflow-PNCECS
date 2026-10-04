@@ -16,13 +16,16 @@
 {%- endmacro %}
 
 {% block hr_content %}
-<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3 attendance-wide-card">
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
       <h4 class="mb-1"><i class="bi bi-clock-history"></i> تقرير الحضور والانصراف والمغادرات</h4>
       <div class="text-muted">فلترة حسب الموظف/موقع العمل/نطاق التاريخ + نوع التعيين + نوع الحركات + مقارنة المدة الفعلية.</div>
     </div>
     <div class="d-flex gap-2">
+      <button class="btn btn-outline-secondary" type="button" data-attendance-wide-toggle aria-pressed="true">
+        <i class="bi bi-arrows-collapse"></i> عرض عادي
+      </button>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_home') }}"><i class="bi bi-arrow-right"></i> العودة إلى شاشات الدوام</a>
       {% if can_export %}
         <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_attendance_permissions', user_id=selected_user_id or '', work_location_id=selected_work_location_id or '', appointment_type_id=selected_appointment_type_id or '', from_date=from_date, to_date=to_date, move_kind=move_kind, dur_op=dur_op, hours=hours_value, export='xlsx') }}">
@@ -103,15 +106,16 @@
   </form>
 </div>
 
-<div class="bg-white rounded-3 shadow-sm p-3">
+<div class="bg-white rounded-3 shadow-sm p-3 attendance-wide-card">
   <div class="text-muted small mb-2">عدد النتائج: {{ rows|length }}</div>
 
-  <div class="table-responsive">
-    <table class="table table-sm align-middle">
+  <div class="table-responsive attendance-table-scroll">
+    <table class="table table-sm align-middle attendance-wide-table">
       <thead>
         <tr>
           <th>التاريخ</th>
           <th>الموظف</th>
+          <th>مقر العمل</th>
           <th>نوع الحركة</th>
           <th>من</th>
           <th>إلى</th>
@@ -124,6 +128,7 @@
           <tr>
             <td>{{ r.get('date') or '—' }}</td>
             <td>{{ (r.get('user').full_name or r.get('user').name or r.get('user').email) if r.get('user') else '—' }}</td>
+            <td class="attendance-work-location">{{ r.get('work_location') or '—' }}</td>
             <td>{{ r.get('label') or '—' }}</td>
             <td>{{ fmt_time(r.get('from')) }}</td>
             <td>{{ fmt_time(r.get('to')) }}</td>

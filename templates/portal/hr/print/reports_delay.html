@@ -1,6 +1,6 @@
 {% extends "portal/hr/print/base.html" %}
 {% set print_title = "تقرير التأخير والخروج المبكر" %}
-{% set print_orientation = "portrait" %}
+{% set print_orientation = "landscape" %}
 {% block report %}
 <header class="report-header">
   <div>
@@ -10,11 +10,11 @@
   <div class="report-count"><strong>{{ rows|length }}</strong><span>نتيجة</span></div>
 </header>
 <table>
-  <thead><tr><th>التاريخ</th><th>الموظف</th><th>وقت الدخول</th><th>تأخير صباحي</th><th>خروج مبكر</th><th>المدة</th></tr></thead>
+  <thead><tr><th>التاريخ</th><th>الموظف</th><th>مقر العمل</th><th>وقت الدخول</th><th>تأخير صباحي</th><th>خروج مبكر</th><th>المدة</th></tr></thead>
   <tbody>
     {% for row in rows %}
-    <tr><td class="center ltr">{{ row.date or '—' }}</td><td>{{ row.user.full_name if row.user else '—' }}</td><td class="center ltr">{{ row.check_in_time or '—' }}</td><td class="center">{{ row.late_minutes }} د</td><td class="center">{{ row.early_minutes }} د</td><td class="center">{{ '%.2f'|format(row.hours) }} س</td></tr>
-    {% else %}<tr><td colspan="6" class="center muted">لا توجد حالات مطابقة.</td></tr>{% endfor %}
+    <tr><td class="center ltr">{{ row.date or '—' }}</td><td>{{ row.user.full_name if row.user else '—' }}</td><td>{{ row.work_location or '—' }}</td><td class="center ltr">{{ row.check_in_time or '—' }}</td><td class="center">{{ row.late_minutes }} د</td><td class="center">{{ row.early_minutes }} د</td><td class="center">{{ '%.2f'|format(row.hours) }} س</td></tr>
+    {% else %}<tr><td colspan="7" class="center muted">لا توجد حالات مطابقة.</td></tr>{% endfor %}
   </tbody>
 </table>
 {% endblock %}

@@ -2,13 +2,16 @@
 {% block title %}تقرير دوام موظفين{% endblock %}
 
 {% block hr_content %}
-<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3 attendance-wide-card">
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
       <h4 class="mb-1"><i class="bi bi-people"></i> تقرير دوام موظفين</h4>
       <div class="text-muted">موقع العمل + الهيكل التنظيمي + نوع التعيين + نطاق التاريخ.</div>
     </div>
     <div class="d-flex gap-2">
+      <button class="btn btn-outline-secondary" type="button" data-attendance-wide-toggle aria-pressed="true">
+        <i class="bi bi-arrows-collapse"></i> عرض عادي
+      </button>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
       {% if can_export %}
         <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_employees_attendance',
@@ -106,10 +109,10 @@
   <div class="text-muted small mt-2">ملاحظة: في حال عدم تحديد التاريخ، يتم افتراض الشهر الحالي تلقائياً.</div>
 </div>
 
-<div class="bg-white rounded-3 shadow-sm p-3">
+<div class="bg-white rounded-3 shadow-sm p-3 attendance-wide-card">
   <div class="text-muted small mb-2">عدد النتائج: {{ rows|length }}</div>
-  <div class="table-responsive">
-    <table class="table table-sm align-middle">
+  <div class="table-responsive attendance-table-scroll">
+    <table class="table table-sm align-middle attendance-wide-table">
       <thead>
         <tr>
           <th>#</th>

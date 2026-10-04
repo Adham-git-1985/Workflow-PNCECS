@@ -9837,6 +9837,12 @@ def hr_report_attendance_permissions():
     users = _list_hr_users(exclude_attendance_exempt=True)
     work_locations = _hr_lookup_options('WORK_LOCATION')
     appointment_types = _hr_lookup_options('APPOINTMENT_TYPE')
+    work_location_labels = {
+        int(location.id): location.label
+        for location in HRLookupItem.query.filter(
+            HRLookupItem.category == 'WORK_LOCATION'
+        ).all()
+    }
 
     user_ids = _filtered_user_ids(
         employee_id=employee_id,
@@ -9844,6 +9850,21 @@ def hr_report_attendance_permissions():
         appointment_type_id=appointment_type_id,
         exclude_attendance_exempt=True,
     )
+    employee_work_location_by_user_id = {
+        int(employee_file.user_id): work_location_labels.get(
+            int(employee_file.work_location_lookup_id),
+            '',
+        )
+        for employee_file in EmployeeFile.query.filter(
+            EmployeeFile.user_id.in_(user_ids)
+        ).all()
+        if getattr(employee_file, 'work_location_lookup_id', None)
+    } if user_ids else {}
+
+    def _work_location_for_user(user):
+        user_id = getattr(user, 'id', None)
+        return employee_work_location_by_user_id.get(int(user_id), '') if user_id else ''
+
     if not user_ids:
         rows_view = []
     else:
@@ -9874,6 +9895,7 @@ def hr_report_attendance_permissions():
                 rows_view.append({
                     'date': a.day,
                     'user': u,
+                    'work_location': _work_location_for_user(u),
                     'kind': 'ATTENDANCE',
                     'label': 'الدوام',
                     'from': a.first_in,
@@ -9908,6 +9930,9 @@ def hr_report_attendance_permissions():
                 rows_view.append({
                     'date': departure.get('day'),
                     'user': users_by_id.get(departure.get('user_id')),
+                    'work_location': _work_location_for_user(
+                        users_by_id.get(departure.get('user_id'))
+                    ),
                     'kind': 'PERMISSION',
                     'label': departure.get('label'),
                     'from': departure.get('from_dt'),
@@ -9924,13 +9949,14 @@ def hr_report_attendance_permissions():
     if (request.args.get('export') or '').lower() == 'xlsx':
         if not current_user.has_perm(HR_REPORTS_EXPORT):
             abort(403)
-        headers = ['التاريخ', 'الموظف', 'نوع الحركة', 'من', 'إلى', 'المدة (ساعات)', 'ملاحظات']
+        headers = ['التاريخ', 'الموظف', 'مقر العمل', 'نوع الحركة', 'من', 'إلى', 'المدة (ساعات)', 'ملاحظات']
         xrows = []
         for r in rows_view:
             u = r.get('user')
             xrows.append([
                 r.get('date') or '',
                 (u.full_name or u.name or u.email) if u else '',
+                r.get('work_location') or '',
                 r.get('label') or '',
                 r.get('from') or '',
                 r.get('to') or '',
@@ -9982,12 +10008,28 @@ def hr_report_delay():
 
     users = _list_hr_users(exclude_attendance_exempt=True)
     work_locations = _hr_lookup_options('WORK_LOCATION')
+    work_location_labels = {
+        int(location.id): location.label
+        for location in HRLookupItem.query.filter(
+            HRLookupItem.category == 'WORK_LOCATION'
+        ).all()
+    }
 
     user_ids = _filtered_user_ids(
         employee_id=employee_id,
         work_location_id=work_location_id,
         exclude_attendance_exempt=True,
     )
+    employee_work_location_by_user_id = {
+        int(employee_file.user_id): work_location_labels.get(
+            int(employee_file.work_location_lookup_id),
+            '',
+        )
+        for employee_file in EmployeeFile.query.filter(
+            EmployeeFile.user_id.in_(user_ids)
+        ).all()
+        if getattr(employee_file, 'work_location_lookup_id', None)
+    } if user_ids else {}
     if not user_ids:
         rows_view = []
     else:
@@ -10039,6 +10081,7 @@ def hr_report_delay():
                 'summary_id': a.id,
                 'date': a.day,
                 'user': u,
+                'work_location': employee_work_location_by_user_id.get(a.user_id, ''),
                 'check_in_time': a.first_in.strftime('%H:%M') if a.first_in else '',
                 'late_minutes': late,
                 'early_minutes': early,
@@ -10056,13 +10099,14 @@ def hr_report_delay():
     if (request.args.get('export') or '').lower() == 'xlsx':
         if not current_user.has_perm(HR_REPORTS_EXPORT):
             abort(403)
-        headers = ['التاريخ', 'الموظف', 'وقت الدخول', 'تأخير صباحي (دقيقة)', 'خروج مبكر (دقيقة)', 'المدة (ساعات)']
+        headers = ['التاريخ', 'الموظف', 'مقر العمل', 'وقت الدخول', 'تأخير صباحي (دقيقة)', 'خروج مبكر (دقيقة)', 'المدة (ساعات)']
         xrows = []
         for r in rows_view:
             u = r.get('user')
             xrows.append([
                 r.get('date') or '',
                 (u.full_name or u.name or u.email) if u else '',
+                r.get('work_location') or '',
                 r.get('check_in_time') or '',
                 r.get('late_minutes') or 0,
                 r.get('early_minutes') or 0,
@@ -10423,6 +10467,25 @@ def hr_report_employee_attendance():
 
     users = _list_hr_users(exclude_attendance_exempt=True)
     work_locations = _hr_lookup_options('WORK_LOCATION')
+    work_location_labels = {
+        int(location.id): location.label
+        for location in work_locations
+    }
+
+    selected_user = None
+    selected_work_location = ''
+    if employee_id and not _is_attendance_exempt_user(employee_id):
+        try:
+            selected_user = User.query.get(employee_id)
+        except Exception:
+            selected_user = None
+        employee_file = getattr(selected_user, 'employee_file', None)
+        location_id = getattr(employee_file, 'work_location_lookup_id', None)
+        if location_id:
+            selected_work_location = work_location_labels.get(int(location_id), '')
+            if not selected_work_location:
+                location = HRLookupItem.query.get(int(location_id))
+                selected_work_location = location.label if location else ''
 
     rows_view = []
     if employee_id:
@@ -10446,25 +10509,19 @@ def hr_report_employee_attendance():
     if (request.args.get('export') or '').lower() == 'xlsx':
         if not current_user.has_perm(HR_REPORTS_EXPORT):
             abort(403)
-        headers = ['التاريخ', 'أول دخول', 'آخر خروج', 'ساعات العمل', 'تأخير (دقيقة)', 'خروج مبكر (دقيقة)', 'مغادرات شخصية (دقيقة)', 'مغادرات رسمية (دقيقة)', 'عمل إضافي (دقيقة)', 'الحالة']
+        headers = ['التاريخ', 'مقر العمل', 'أول دخول', 'آخر خروج', 'ساعات العمل', 'تأخير (دقيقة)', 'خروج مبكر (دقيقة)', 'مغادرات شخصية (دقيقة)', 'مغادرات رسمية (دقيقة)', 'عمل إضافي (دقيقة)', 'الحالة']
         xrows = []
         for a in rows_view:
             hours = round(float(a.work_minutes or 0) / 60.0, 2) if a.work_minutes is not None else ''
-            xrows.append([a.day, a.first_in or '', a.last_out or '', hours, int(a.late_minutes or 0), int(a.early_leave_minutes or 0), int(a.private_departure_minutes or 0), int(a.official_departure_minutes or 0), int(a.overtime_minutes or 0), a.status or ''])
+            xrows.append([a.day, selected_work_location, a.first_in or '', a.last_out or '', hours, int(a.late_minutes or 0), int(a.early_leave_minutes or 0), int(a.private_departure_minutes or 0), int(a.official_departure_minutes or 0), int(a.overtime_minutes or 0), a.status or ''])
         return _export_xlsx('hr_employee_attendance.xlsx', headers, xrows)
-
-    selected_user = None
-    if employee_id and not _is_attendance_exempt_user(employee_id):
-        try:
-            selected_user = User.query.get(employee_id)
-        except Exception:
-            selected_user = None
 
     return render_template(
         'portal/hr/reports_employee_attendance.html',
         rows=rows_view,
         users=users,
         selected_user=selected_user,
+        selected_work_location=selected_work_location,
         selected_user_id=employee_id,
         work_locations=work_locations,
         selected_work_location_id=work_location_id,
@@ -27122,6 +27179,47 @@ def hr_attendance_events():
     except Exception:
         locs = []
 
+    # The attendance event itself is not tied to a location.  Show the
+    # employee's current workplace from the employee file beside each event.
+    # Include inactive lookup values as well, so old employee records remain
+    # intelligible after a workplace is deactivated in master data.
+    event_user_ids = {
+        int(event.user_id)
+        for event in events
+        if getattr(event, 'user_id', None)
+    }
+    work_location_by_user_id = {}
+    if event_user_ids:
+        employee_files = (
+            EmployeeFile.query
+            .filter(EmployeeFile.user_id.in_(event_user_ids))
+            .all()
+        )
+        location_ids = {
+            int(employee_file.work_location_lookup_id)
+            for employee_file in employee_files
+            if getattr(employee_file, 'work_location_lookup_id', None)
+        }
+        location_labels = {
+            int(location.id): location.label
+            for location in locs
+        }
+        missing_location_ids = location_ids - set(location_labels)
+        if missing_location_ids:
+            location_labels.update({
+                int(location.id): location.label
+                for location in HRLookupItem.query.filter(
+                    HRLookupItem.id.in_(missing_location_ids)
+                ).all()
+            })
+        work_location_by_user_id = {
+            int(employee_file.user_id): location_labels.get(
+                int(employee_file.work_location_lookup_id)
+            ) or ''
+            for employee_file in employee_files
+            if getattr(employee_file, 'work_location_lookup_id', None)
+        }
+
     # Excel export (same filters)
     export = (request.args.get("export") or "").strip().lower()
     if export in ("1", "true", "excel", "xlsx"):
@@ -27132,6 +27230,7 @@ def hr_attendance_events():
                 "تسلسل الموظف في اليوم",
                 "الموظف",
                 "البريد",
+                "مقر العمل",
                 "التاريخ والوقت",
                 "الحركة",
                 "المصدر",
@@ -27145,6 +27244,7 @@ def hr_attendance_events():
                     e.daily_employee_number or '',
                     (u.full_name or u.name or u.email) if u else '',
                     (u.email if u else ""),
+                    work_location_by_user_id.get(e.user_id, ''),
                     str(e.event_dt),
                     getattr(e, 'display_event_label', None) or _attendance_event_label(e),
                     (
@@ -27173,6 +27273,7 @@ def hr_attendance_events():
         events=events,
         users=users,
         locs=locs,
+        work_location_by_user_id=work_location_by_user_id,
         q=q,
         date_from=date_from,
         date_to=date_to,
@@ -36216,7 +36317,7 @@ def hr_attendance_daily_export_xlsx():
     ws = wb.active
     ws.title = 'Daily Attendance'
 
-    headers = ['م اليوم', 'اليوم', 'الموظف', 'البريد', 'المصدر', 'الجدول', 'أول دخول', 'آخر خروج', 'ساعات عمل', 'استراحة (د)', 'تأخير (د)', 'خروج مبكر (د)', 'مغادرات شخصية (د)', 'مغادرات رسمية (د)', 'إضافي (د)', 'الحالة', 'التفصيل']
+    headers = ['م اليوم', 'اليوم', 'الموظف', 'مقر العمل', 'البريد', 'المصدر', 'الجدول', 'أول دخول', 'آخر خروج', 'ساعات عمل', 'استراحة (د)', 'تأخير (د)', 'خروج مبكر (د)', 'مغادرات شخصية (د)', 'مغادرات رسمية (د)', 'إضافي (د)', 'الحالة', 'التفصيل']
     ws.append(headers)
 
     for r in rows:
@@ -36224,7 +36325,7 @@ def hr_attendance_daily_export_xlsx():
         lo = r['last_out'].isoformat(sep=' ', timespec='minutes') if r.get('last_out') else ''
         hours = round((r.get('work_minutes') or 0) / 60.0, 2)
         ws.append([
-            r.get('daily_employee_number') or '', r['day'], r.get('name') or '', r.get('email') or '',
+            r.get('daily_employee_number') or '', r['day'], r.get('name') or '', r.get('work_location') or '', r.get('email') or '',
             r.get('source') or '', r.get('schedule') or '', fi, lo, hours,
             r.get('break_minutes') or 0, r.get('late_minutes') or 0,
             r.get('early_leave_minutes') or 0,
