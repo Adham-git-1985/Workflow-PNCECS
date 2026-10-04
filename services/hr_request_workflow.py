@@ -232,8 +232,16 @@ def _configured_escalation_count(step: HRRequestApprovalStep) -> int:
     return count
 
 
+def _has_terminal_no_target_escalation(step: HRRequestApprovalStep) -> bool:
+    """Whether a failed escalation has already been closed for this step."""
+    return (
+        (getattr(step, "escalation_reason", None) or "").strip().upper()
+        == ESCALATION_REASON_NO_TARGET
+    )
+
+
 def _next_escalation_level(step: HRRequestApprovalStep) -> int | None:
-    if (getattr(step, "escalation_reason", None) or "").strip().upper() == ESCALATION_REASON_NO_TARGET:
+    if _has_terminal_no_target_escalation(step):
         return None
     level = _configured_escalation_count(step) + 1
     return level if level in ESCALATION_LEVELS else None
@@ -1949,6 +1957,14 @@ def process_pending_approvals(*, now: datetime | None = None, send_notifications
         row = request_rows.get(step.request_kind, {}).get(int(step.request_id))
         if not row or (row.status or "").upper() != "SUBMITTED":
             step.status = "CANCELLED"
+            continue
+
+        # A missing escalation target is a terminal routing outcome.  The
+        # request remains with its current approver, but it must not re-enter
+        # the general reminder cycle on later worker runs.  Otherwise a
+        # Secretary-General who has no higher escalation target receives the
+        # same notification indefinitely.
+        if _has_terminal_no_target_escalation(step):
             continue
 
         reminder_at = _stage_reminder_at(step)

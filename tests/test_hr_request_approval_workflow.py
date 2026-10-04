@@ -39,6 +39,7 @@ from portal import portal_bp
 from portal.perm_defs import PERMS as PORTAL_PERMS
 from portal.routes import _leave_used_days
 from services.hr_request_workflow import (
+    ESCALATION_TARGET_AUTO_NEXT,
     ESCALATION_TARGET_HR,
     ESCALATION_TARGET_NONE,
     ESCALATION_TARGET_SECRETARY_GENERAL,
@@ -990,12 +991,79 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         )
 
         self.assertEqual(second_result["unresolved"], 0)
+        self.assertEqual(second_result["reminded"], 0)
         self.assertEqual(
             Notification.query.filter_by(
                 user_id=self.secretary.id,
                 type="HR_REQUEST_ROUTING_ERROR",
             ).count(),
             first_error_count,
+        )
+
+    def test_permission_no_target_escalation_stops_future_reminders(self):
+        employee_file = EmployeeFile.query.filter_by(user_id=self.employee.id).one()
+        employee_file.direct_manager_user_id = self.secretary.id
+        OrgUnitManager.query.delete(synchronize_session=False)
+        db.session.add_all([
+            SystemSetting(
+                key=escalation_setting_key(KIND_PERMISSION, 1, "VALUE"),
+                value="1",
+            ),
+            SystemSetting(
+                key=escalation_setting_key(KIND_PERMISSION, 1, "UNIT"),
+                value=ESCALATION_UNIT_MINUTES,
+            ),
+            SystemSetting(
+                key=escalation_setting_key(KIND_PERMISSION, 1, "TARGET"),
+                value=ESCALATION_TARGET_AUTO_NEXT,
+            ),
+        ])
+        db.session.flush()
+
+        row = self._permission()
+        assigned_at = datetime(2026, 9, 8, 8, 0)
+        start_request_flow(KIND_PERMISSION, row, now=assigned_at)
+        step = current_step(KIND_PERMISSION, row.id)
+        self.assertEqual(step.approver_user_id, self.secretary.id)
+        self.assertEqual(step.due_at, assigned_at + timedelta(minutes=1))
+
+        first_result = process_pending_approvals(
+            now=step.due_at,
+            send_notifications=True,
+        )
+
+        self.assertEqual(first_result["unresolved"], 1)
+        self.assertIsNone(step.due_at)
+        self.assertEqual(step.escalation_reason, "NO_ESCALATION_TARGET")
+        self.assertEqual(
+            Notification.query.filter_by(
+                user_id=self.secretary.id,
+                type="HR_REQUEST_ROUTING_ERROR",
+            ).count(),
+            1,
+        )
+
+        refresh_pending_escalation_deadlines(now=assigned_at + timedelta(days=1))
+        later_result = process_pending_approvals(
+            now=assigned_at + timedelta(days=2),
+            send_notifications=True,
+        )
+
+        self.assertEqual(later_result["unresolved"], 0)
+        self.assertEqual(later_result["reminded"], 0)
+        self.assertEqual(
+            Notification.query.filter_by(
+                user_id=self.secretary.id,
+                type="HR_APPROVAL_REMINDER",
+            ).count(),
+            0,
+        )
+        self.assertEqual(
+            Notification.query.filter_by(
+                user_id=self.secretary.id,
+                type="HR_REQUEST_ROUTING_ERROR",
+            ).count(),
+            1,
         )
 
     def test_overdue_permission_step_is_not_escalated(self):
