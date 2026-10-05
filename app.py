@@ -66,7 +66,7 @@ from assistant import assistant_bp
 from filters.request_filters import apply_request_filters
 from utils.permissions import get_effective_user, prepare_identity_choice, reset_identity_choice
 from utils.acting_authorization import load_execution_context
-from utils.request_audit import register_request_audit
+from utils.request_audit import HIGH_FREQUENCY_REQUEST_ENDPOINTS, register_request_audit
 from utils.ui_labels import ui_label, ui_text, workflow_status_label
 from utils.delegation_privacy import (
     audit_display_actor,
@@ -2356,6 +2356,13 @@ def shutdown_session(exception=None):
 
 @app.before_request
 def log_session():
+    # Notification polling and presence heartbeats run in every open browser
+    # tab.  They only use the authenticated account itself, so loading every
+    # possible delegation/acting context here would add several database reads
+    # to each background request.
+    if request.endpoint in HIGH_FREQUENCY_REQUEST_ENDPOINTS:
+        return
+
     logger.debug(f"Session content: {dict(session)}")
     try:
         if getattr(current_user, 'is_authenticated', False):

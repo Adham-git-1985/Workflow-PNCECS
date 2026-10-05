@@ -19,12 +19,22 @@ from utils.audit_helpers import get_audit_source_summary
 from utils.acting_authorization import execution_audit_fields
 
 
+HIGH_FREQUENCY_REQUEST_ENDPOINTS = frozenset({
+    # These authenticated endpoints are called repeatedly by every open
+    # browser tab.  They neither render a page nor rely on an acting/delegated
+    # identity, so application-level request preparation must keep them
+    # lightweight as well as excluding them from the audit safety net.
+    "workflow.poll_notifications",
+    "workflow.unread_notifications_count",
+    "users.presence_heartbeat",
+})
+
+
 AUTOMATED_ENDPOINTS = {
     "static",
     "assistant.chat",
     "workflow.event_stream",
-    "workflow.unread_notifications_count",
-    "users.presence_heartbeat",
+    *HIGH_FREQUENCY_REQUEST_ENDPOINTS,
     # Inventory item pickers search while the user types and when each new
     # voucher line receives focus.  These read-only, high-frequency lookups
     # must not contend for SQLite's single writer by creating audit rows.
