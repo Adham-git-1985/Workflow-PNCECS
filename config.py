@@ -21,6 +21,13 @@ class BaseConfig:
     NOTIFICATION_POLL_INTERVAL_MS = int(
         os.getenv("NOTIFICATION_POLL_INTERVAL_MS", "10000")
     )
+    # Private-chat presence is checked separately from the shared notification
+    # poll.  Keep it responsive without turning every open tab into several
+    # SQLite reads (and, historically, audit writes) per minute.
+    CHAT_POLL_INTERVAL_MS = max(
+        5000,
+        int(os.getenv("CHAT_POLL_INTERVAL_MS", "10000")),
+    )
 
     WORKFLOW_DASHBOARD_SCAN_LIMIT = int(
         os.getenv("WORKFLOW_DASHBOARD_SCAN_LIMIT", "1500")

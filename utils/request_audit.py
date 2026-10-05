@@ -27,6 +27,11 @@ HIGH_FREQUENCY_REQUEST_ENDPOINTS = frozenset({
     "workflow.poll_notifications",
     "workflow.unread_notifications_count",
     "users.presence_heartbeat",
+    # The private-chat shell polls these two read-only endpoints while a
+    # browser tab is open.  Auditing them would create two SQLite writes per
+    # polling cycle and contend with normal interactive work.
+    "chats.unread_count",
+    "chats.chat_alerts",
 })
 
 

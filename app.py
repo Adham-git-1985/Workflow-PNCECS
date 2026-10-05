@@ -274,20 +274,35 @@ app.jinja_env.globals["get_unread_messages_count"] = get_unread_messages_count
 
 
 def get_unread_chats_count(user_id):
+    """Count unread chat conversations with one grouped query.
+
+    This value is rendered in the global shell.  The former implementation
+    issued one query per conversation on every page render, which grew with a
+    user's chat history and made unrelated screens slower.
+    """
     try:
         from models import ChatMessage, ChatParticipant
-        total = 0
-        for row in ChatParticipant.query.filter_by(user_id=user_id).all():
-            query = ChatMessage.query.filter(
-                ChatMessage.conversation_id == row.conversation_id,
-                ChatMessage.sender_id != user_id,
-                ChatMessage.is_deleted.is_(False),
+        normalized_user_id = int(user_id)
+        total = (
+            db.session.query(func.count(func.distinct(ChatMessage.conversation_id)))
+            .join(
+                ChatParticipant,
+                and_(
+                    ChatParticipant.conversation_id == ChatMessage.conversation_id,
+                    ChatParticipant.user_id == normalized_user_id,
+                ),
             )
-            if row.last_read_at:
-                query = query.filter(ChatMessage.created_at > row.last_read_at)
-            if query.first():
-                total += 1
-        return total
+            .filter(
+                ChatMessage.sender_id != normalized_user_id,
+                ChatMessage.is_deleted.is_(False),
+                or_(
+                    ChatParticipant.last_read_at.is_(None),
+                    ChatMessage.created_at > ChatParticipant.last_read_at,
+                ),
+            )
+            .scalar()
+        )
+        return int(total or 0)
     except Exception:
         return 0
 

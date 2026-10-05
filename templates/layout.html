@@ -296,13 +296,15 @@
 (function(){
   var unreadUrl='{{ url_for("chats.unread_count") }}';
   var alertsUrl='{{ url_for("chats.chat_alerts") }}';
+  var pollIntervalMs=Math.max(5000,Number({{ config.get('CHAT_POLL_INTERVAL_MS', 10000)|tojson }})||10000);
   var chatCursor=null;
-  function refreshChatUnreadBadge(){fetch(unreadUrl,{credentials:'same-origin',cache:'no-store',headers:{'X-Requested-With':'XMLHttpRequest'}}).then(function(r){return r.json()}).then(function(d){var b=document.getElementById('chat-unread-badge');var link=document.getElementById('chat-nav-link');if(!b)return;var count=Number(d.count||0);b.textContent=count||'';b.style.display=count?'inline-block':'none';if(link){var label=count?('لديك '+count+' محادثات غير مقروءة'):'المحادثات';link.classList.toggle('has-unread-chats',count>0);link.title=label;link.setAttribute('aria-label',label)}}).catch(function(){})}
-  function pollChatAlerts(){var url=new URL(alertsUrl,window.location.origin);if(chatCursor!==null)url.searchParams.set('after_id',String(chatCursor));fetch(url.toString(),{credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'}}).then(function(r){if(!r.ok)throw new Error('chat alerts unavailable');return r.json()}).then(function(data){if(chatCursor===null){chatCursor=Number(data.cursor||0);return}(Array.isArray(data.events)?data.events:[]).forEach(function(item){window.dispatchEvent(new CustomEvent('masar:chat-message',{detail:{messageId:Number(item.message_id||0),conversationId:Number(item.conversation_id||0)}}))});chatCursor=Number(data.cursor||chatCursor||0)}).catch(function(){})}
+  function refreshChatUnreadBadge(){if(document.hidden)return;fetch(unreadUrl,{credentials:'same-origin',cache:'no-store',headers:{'X-Requested-With':'XMLHttpRequest'}}).then(function(r){return r.json()}).then(function(d){var b=document.getElementById('chat-unread-badge');var link=document.getElementById('chat-nav-link');if(!b)return;var count=Number(d.count||0);b.textContent=count||'';b.style.display=count?'inline-block':'none';if(link){var label=count?('لديك '+count+' محادثات غير مقروءة'):'المحادثات';link.classList.toggle('has-unread-chats',count>0);link.title=label;link.setAttribute('aria-label',label)}}).catch(function(){})}
+  function pollChatAlerts(){if(document.hidden)return;var url=new URL(alertsUrl,window.location.origin);if(chatCursor!==null)url.searchParams.set('after_id',String(chatCursor));fetch(url.toString(),{credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'}}).then(function(r){if(!r.ok)throw new Error('chat alerts unavailable');return r.json()}).then(function(data){if(chatCursor===null){chatCursor=Number(data.cursor||0);return}(Array.isArray(data.events)?data.events:[]).forEach(function(item){window.dispatchEvent(new CustomEvent('masar:chat-message',{detail:{messageId:Number(item.message_id||0),conversationId:Number(item.conversation_id||0)}}))});chatCursor=Number(data.cursor||chatCursor||0)}).catch(function(){})}
   refreshChatUnreadBadge();
   pollChatAlerts();
-  setInterval(refreshChatUnreadBadge,2500);
-  setInterval(pollChatAlerts,2500);
+  setInterval(refreshChatUnreadBadge,pollIntervalMs);
+  setInterval(pollChatAlerts,pollIntervalMs);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden){refreshChatUnreadBadge();pollChatAlerts()}});
   window.addEventListener('masar:notification',function(event){var detail=event.detail||{};if(detail.targetType==='ChatConversation')refreshChatUnreadBadge()});
 })();
 </script>{% endif %}
