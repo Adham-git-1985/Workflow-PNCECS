@@ -1,8 +1,8 @@
 """Application-wide request auditing.
 
 Domain modules keep their detailed audit records. This module adds a safety
-net so every interactive user request is represented in the central timeline,
-including page views and routes that do not yet have a domain-specific audit.
+net for state-changing interactive requests that do not yet have a
+domain-specific audit record.
 """
 
 from __future__ import annotations
@@ -52,6 +52,17 @@ AUTOMATED_PATH_PREFIXES = (
     "/static/",
     "/favicon.ico",
 )
+
+# SQLite permits only one writer at a time.  Recording every HTML page view
+# made ordinary navigation compete with actual approvals, notifications, and
+# background jobs for that writer.  The central audit log is therefore kept
+# for state-changing actions; detailed domain audit rows still cover their
+# own business events.
+AUDITED_READ_ENDPOINTS = frozenset({
+    # This legacy route changes the authenticated session even though it is a
+    # GET endpoint, so retain its security-relevant audit entry.
+    "logout",
+})
 
 SENSITIVE_FIELD_PARTS = (
     "password",
@@ -199,6 +210,8 @@ def _should_audit_request() -> bool:
         return False
     if request.endpoint in AUTOMATED_ENDPOINTS:
         return False
+    if request.method == "GET" and request.endpoint not in AUDITED_READ_ENDPOINTS:
+        return False
     return not any(request.path.startswith(prefix) for prefix in AUTOMATED_PATH_PREFIXES)
 
 
@@ -223,6 +236,10 @@ def register_request_audit(app) -> None:
 
     @app.before_request
     def _capture_request_audit_actor():
+        # Do not load an authenticated user solely for a read-only request
+        # that will never produce an audit row.
+        if not _should_audit_request():
+            return
         g._request_audit_started = time.perf_counter()
         try:
             if getattr(current_user, "is_authenticated", False):

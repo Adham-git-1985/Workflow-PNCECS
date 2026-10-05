@@ -21,6 +21,10 @@ class AutomatedRequestAuditTests(unittest.TestCase):
         def inbox():
             return jsonify({"should_audit": _should_audit_request()})
 
+        @workflow.post("/approve")
+        def approve():
+            return jsonify({"should_audit": _should_audit_request()})
+
         chats = Blueprint("chats", __name__)
 
         @chats.get("/unread-count")
@@ -29,6 +33,10 @@ class AutomatedRequestAuditTests(unittest.TestCase):
 
         @chats.get("/alerts")
         def chat_alerts():
+            return jsonify({"should_audit": _should_audit_request()})
+
+        @self.app.get("/logout")
+        def logout():
             return jsonify({"should_audit": _should_audit_request()})
 
         self.app.register_blueprint(workflow, url_prefix="/workflow")
@@ -57,12 +65,22 @@ class AutomatedRequestAuditTests(unittest.TestCase):
         self.assertIn("chats.unread_count", HIGH_FREQUENCY_REQUEST_ENDPOINTS)
         self.assertIn("chats.chat_alerts", HIGH_FREQUENCY_REQUEST_ENDPOINTS)
 
-    def test_regular_page_view_remains_audited(self):
+    def test_regular_page_view_is_not_audited(self):
         with self.app.test_client() as client:
             response = client.get("/workflow/inbox")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json(), {"should_audit": True})
+        self.assertEqual(response.get_json(), {"should_audit": False})
+
+    def test_state_change_and_logout_remain_audited(self):
+        with self.app.test_client() as client:
+            action_response = client.post("/workflow/approve")
+            logout_response = client.get("/logout")
+
+        self.assertEqual(action_response.status_code, 200)
+        self.assertEqual(action_response.get_json(), {"should_audit": True})
+        self.assertEqual(logout_response.status_code, 200)
+        self.assertEqual(logout_response.get_json(), {"should_audit": True})
 
 
 if __name__ == "__main__":

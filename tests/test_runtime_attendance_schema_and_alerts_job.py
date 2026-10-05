@@ -13,6 +13,46 @@ from portal import hr_alerts_job
 
 
 class AttendanceRuntimeSchemaTests(unittest.TestCase):
+    def test_legacy_supply_request_schema_receives_manager_snapshot_column(self):
+        with patch.dict(os.environ, {"SKIP_RUNTIME_SCHEMA": "1"}):
+            app_module = importlib.import_module("app")
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "legacy.sqlite"
+            test_app = Flask(__name__)
+            test_app.config.update(
+                TESTING=True,
+                SQLALCHEMY_DATABASE_URI=f"sqlite:///{database_path.as_posix()}",
+                SQLALCHEMY_TRACK_MODIFICATIONS=False,
+            )
+            db.init_app(test_app)
+
+            with test_app.app_context():
+                db.create_all()
+                db.session.execute(text(
+                    "ALTER TABLE inv_employee_request "
+                    "DROP COLUMN manager_user_ids"
+                ))
+                db.session.commit()
+
+                with patch.object(app_module, "app", test_app):
+                    app_module._ensure_runtime_schema()
+                    # A second startup must remain harmless.
+                    app_module._ensure_runtime_schema()
+
+                columns = {
+                    row[1]
+                    for row in db.session.execute(
+                        text("PRAGMA table_info(inv_employee_request)")
+                    ).all()
+                }
+                self.assertIn("manager_user_ids", columns)
+
+                db.session.remove()
+                db.drop_all()
+                db.session.remove()
+                db.engine.dispose()
+
     def test_legacy_leave_rollover_schema_receives_required_columns(self):
         with patch.dict(os.environ, {"SKIP_RUNTIME_SCHEMA": "1"}):
             app_module = importlib.import_module("app")

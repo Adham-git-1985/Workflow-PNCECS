@@ -1712,6 +1712,18 @@ def _ensure_runtime_schema():
             # Materials requests can follow a dedicated technology or
             # furniture/maintenance path.  Keep existing SQLite deployments
             # compatible without requiring a manual migration first.
+            #
+            # ``manager_user_ids`` is retained on the ORM model so historic
+            # requests remain readable.  SQLAlchemy selects mapped columns
+            # even when the current route no longer writes them, so legacy
+            # databases missing this former snapshot column otherwise fail
+            # every materials-request list query before the route can render.
+            if not _col_exists("inv_employee_request", "manager_user_ids"):
+                _add_column_retry(
+                    "inv_employee_request",
+                    "manager_user_ids",
+                    "TEXT",
+                )
             if not _col_exists("inv_item_category", "request_route"):
                 _add_column_retry(
                     "inv_item_category",
