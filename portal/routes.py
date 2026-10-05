@@ -924,7 +924,18 @@ def portal_excel_import_meta(endpoint: str | None = None) -> dict:
 
 
 def _portal_flags():
-    """Compute portal module access flags for the current user."""
+    """Compute portal module access flags once for the active request."""
+    request_marker = request._get_current_object() if has_request_context() else None
+    cache_markers = None
+    if request_marker is not None:
+        cache_markers = getattr(g, "_portal_context_request_markers", None)
+        if cache_markers is None:
+            cache_markers = {}
+            g._portal_context_request_markers = cache_markers
+        cached = getattr(g, "_portal_flags", None)
+        if cached is not None and cache_markers.get("flags") is request_marker:
+            return cached
+
     def has(key: str) -> bool:
         try:
             return bool(current_user.has_perm(key))
@@ -992,7 +1003,7 @@ def _portal_flags():
         or assigned_hr_request
     )
 
-    return {
+    flags = {
         'can_corr': can_corr,
         'can_att': can_att,
         'can_hr': can_hr,
@@ -1007,19 +1018,49 @@ def _portal_flags():
         'can_corr_create': has(CORR_CREATE),
         'can_hr_req_create': has(HR_REQUESTS_CREATE),
     }
+    if request_marker is not None:
+        g._portal_flags = flags
+        cache_markers["flags"] = request_marker
+    return flags
+
+
+def _hr_request_ids_for_user(
+    user,
+    kind: str,
+    *,
+    participated: bool = False,
+) -> list[int]:
+    """Load a user's HR approval ids once during a real HTTP request."""
+    normalized_kind = (kind or "").upper()
+    resolver = request_ids_user_participated_in if participated else request_ids_user_can_act_on
+    if not has_request_context():
+        return resolver(user, normalized_kind)
+
+    try:
+        user_id = int(user.id)
+    except (AttributeError, TypeError, ValueError):
+        return []
+
+    request_marker = request._get_current_object()
+    cache_markers = getattr(g, "_portal_context_request_markers", None)
+    if cache_markers is None:
+        cache_markers = {}
+        g._portal_context_request_markers = cache_markers
+    cache = getattr(g, "_portal_hr_request_ids", None)
+    if cache is None or cache_markers.get("hr_request_ids") is not request_marker:
+        cache = {}
+        g._portal_hr_request_ids = cache
+        cache_markers["hr_request_ids"] = request_marker
+
+    cache_key = ("participated" if participated else "approvable", user_id, normalized_kind)
+    if cache_key not in cache:
+        cache[cache_key] = resolver(user, normalized_kind)
+    return cache[cache_key]
 
 
 def _current_user_approvable_request_ids(kind: str) -> list[int]:
     """Return the current user's pending approval ids once per request."""
-    normalized_kind = (kind or "").upper()
-    cache = getattr(g, "_portal_approvable_request_ids", None)
-    if cache is None:
-        cache = {}
-        g._portal_approvable_request_ids = cache
-    cache_key = (int(current_user.id), normalized_kind)
-    if cache_key not in cache:
-        cache[cache_key] = request_ids_user_can_act_on(current_user, normalized_kind)
-    return cache[cache_key]
+    return _hr_request_ids_for_user(current_user, kind)
 
 
 
@@ -1246,9 +1287,44 @@ def _store_category_options() -> list[tuple[int, str]]:
 
 
 
+def _portal_can_view_absence_board() -> bool:
+    """Resolve the one Portal sidebar flag needed outside Portal routes."""
+    if not has_request_context():
+        return False
+    sentinel = object()
+    request_marker = request._get_current_object()
+    cache_markers = getattr(g, "_portal_context_request_markers", None)
+    if cache_markers is None:
+        cache_markers = {}
+        g._portal_context_request_markers = cache_markers
+    cached = getattr(g, "_portal_can_view_absence_board", sentinel)
+    if (
+        cached is not sentinel
+        and cache_markers.get("absence_board") is request_marker
+    ):
+        return bool(cached)
+    try:
+        visible = bool(can_view_absence_board(current_user))
+    except Exception:
+        visible = False
+    g._portal_can_view_absence_board = visible
+    cache_markers["absence_board"] = request_marker
+    return visible
+
+
 @portal_bp.app_context_processor
+def _inject_portal_sidebar_context():
+    """Keep the shared sidebar lightweight on non-Portal pages."""
+    if not getattr(current_user, 'is_authenticated', False):
+        return {}
+    return {
+        'portal_can_view_absence_board': _portal_can_view_absence_board(),
+    }
+
+
+@portal_bp.context_processor
 def _inject_portal_context():
-    """Make portal flags and lightweight badges available to all portal templates."""
+    """Make Portal flags and badges available to Portal templates only."""
     if not getattr(current_user, 'is_authenticated', False):
         return {}
 
@@ -1339,11 +1415,7 @@ def _inject_portal_context():
     # Meetings badges are limited to meetings organized by or explicitly inviting the user.
     meetings_week_count = 0
     meeting_tasks_open = 0
-    absence_board_visible = False
-    try:
-        absence_board_visible = can_view_absence_board(current_user)
-    except Exception:
-        absence_board_visible = False
+    absence_board_visible = _portal_can_view_absence_board()
     try:
         now = datetime.utcnow()
         week_to = now + timedelta(days=7)
@@ -22575,9 +22647,17 @@ def _hr_approvals_can_open(user=None) -> bool:
     except Exception:
         pass
     try:
+        if (
+            _hr_request_ids_for_user(selected_user, KIND_LEAVE)
+            or _hr_request_ids_for_user(selected_user, KIND_PERMISSION)
+        ):
+            return True
+        # A prior approver must retain access to the history tab after the
+        # request leaves the pending queue.  The route below already limits
+        # the rows to requests in which this user actually participated.
         return bool(
-            request_ids_user_can_act_on(selected_user, KIND_LEAVE)
-            or request_ids_user_can_act_on(selected_user, KIND_PERMISSION)
+            _hr_request_ids_for_user(selected_user, KIND_LEAVE, participated=True)
+            or _hr_request_ids_for_user(selected_user, KIND_PERMISSION, participated=True)
         )
     except Exception:
         return False
@@ -22781,8 +22861,12 @@ def hr_approvals():
     assigned_leave_ids = _current_user_approvable_request_ids(KIND_LEAVE)
     assigned_permission_ids = _current_user_approvable_request_ids(KIND_PERMISSION)
     pending_maternity_reqs = _visible_maternity_departures('PENDING')
-    participated_leave_ids = set(request_ids_user_participated_in(current_user, KIND_LEAVE))
-    participated_permission_ids = set(request_ids_user_participated_in(current_user, KIND_PERMISSION))
+    participated_leave_ids = set(
+        _hr_request_ids_for_user(current_user, KIND_LEAVE, participated=True)
+    )
+    participated_permission_ids = set(
+        _hr_request_ids_for_user(current_user, KIND_PERMISSION, participated=True)
+    )
     view_only_leave_ids = {
         int(observer.request_id)
         for observer in HRRequestObserver.query.filter_by(

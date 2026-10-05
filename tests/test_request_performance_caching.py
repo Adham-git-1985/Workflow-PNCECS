@@ -1,13 +1,18 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from flask import Flask
+from flask import Flask, g
 from sqlalchemy import event
 
 from extensions import db
-from models import Role, RolePermission, User
-from portal.routes import _current_user_approvable_request_ids
+from models import HRRequestApprovalStep, Role, RolePermission, User, UserPermission
+from portal.routes import _current_user_approvable_request_ids, _portal_flags
+from services.hr_request_workflow import (
+    KIND_PERMISSION,
+    request_ids_user_can_act_on,
+    request_ids_user_participated_in,
+)
 
 
 class RequestPerformanceCachingTests(unittest.TestCase):
@@ -61,6 +66,59 @@ class RequestPerformanceCachingTests(unittest.TestCase):
                 self.assertTrue(request_user.has_perm("PORTAL_CREATE"))
                 self.assertTrue(request_user.has_perm("PORTAL_UPDATE"))
                 self.assertTrue(request_user.has_perm("PORTAL_DELETE"))
+        finally:
+            event.remove(db.engine, "before_cursor_execute", count_role_permission_queries)
+
+        self.assertEqual(role_permission_queries, 1)
+
+    def test_final_permission_result_is_cached_per_request(self):
+        user = User(
+            email="cached-result@example.test",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
+        db.session.add(user)
+        db.session.commit()
+        db.session.add(UserPermission(
+            user_id=user.id,
+            key="PERFORMANCE_RESULT_READ",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context("/"):
+            request_user = db.session.get(User, user.id)
+            self.assertTrue(request_user.has_perm("PERFORMANCE_RESULT_READ"))
+            self.assertTrue(request_user.has_perm("PERFORMANCE_RESULT_READ"))
+            self.assertEqual(
+                g._permission_result_cache[(user.id, "PERFORMANCE_RESULT_READ")],
+                True,
+            )
+
+    def test_role_permission_result_is_cached_per_request(self):
+        user = User(
+            email="cached-role-result@example.test",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
+        db.session.add_all((
+            user,
+            RolePermission(role="EMPLOYEE", permission="PERFORMANCE_ROLE_CHECK"),
+        ))
+        db.session.commit()
+        role_permission_queries = 0
+
+        def count_role_permission_queries(conn, cursor, statement, parameters, context, executemany):
+            nonlocal role_permission_queries
+            if "role_permission" in statement.lower():
+                role_permission_queries += 1
+
+        event.listen(db.engine, "before_cursor_execute", count_role_permission_queries)
+        try:
+            with self.app.test_request_context("/"):
+                request_user = db.session.get(User, user.id)
+                self.assertTrue(request_user.has_role_perm("PERFORMANCE_ROLE_CHECK"))
+                self.assertTrue(request_user.has_role_perm("PERFORMANCE_ROLE_CHECK"))
         finally:
             event.remove(db.engine, "before_cursor_execute", count_role_permission_queries)
 
@@ -135,6 +193,89 @@ class RequestPerformanceCachingTests(unittest.TestCase):
                 self.assertEqual(_current_user_approvable_request_ids("LEAVE"), [3, 5])
 
         find_assignments.assert_called_once_with(user, "LEAVE")
+
+    def test_portal_flags_are_cached_per_request(self):
+        user = SimpleNamespace(id=42)
+        user.has_perm = Mock(return_value=False)
+        with self.app.test_request_context("/"):
+            with patch("portal.routes.current_user", user), patch(
+                "portal.routes._current_user_approvable_request_ids",
+                return_value=[],
+            ):
+                first = _portal_flags()
+                first_call_count = user.has_perm.call_count
+                second = _portal_flags()
+
+        self.assertIs(first, second)
+        self.assertGreater(first_call_count, 0)
+        self.assertEqual(user.has_perm.call_count, first_call_count)
+
+    def test_approval_id_lookup_avoids_joined_user_relationships(self):
+        user = User(
+            email="approval-scalar@example.test",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
+        db.session.add(user)
+        db.session.commit()
+        db.session.add(HRRequestApprovalStep(
+            request_kind=KIND_PERMISSION,
+            request_id=901,
+            step_order=1,
+            stage_code="HR",
+            approver_scope="USER",
+            approver_user_id=user.id,
+            status="PENDING",
+        ))
+        db.session.commit()
+        step_queries = []
+
+        def capture_step_query(conn, cursor, statement, parameters, context, executemany):
+            if "from hr_request_approval_step" in statement.lower():
+                step_queries.append(" ".join(statement.lower().split()))
+
+        event.listen(db.engine, "before_cursor_execute", capture_step_query)
+        try:
+            self.assertEqual(request_ids_user_can_act_on(user, KIND_PERMISSION), [901])
+        finally:
+            event.remove(db.engine, "before_cursor_execute", capture_step_query)
+
+        self.assertEqual(len(step_queries), 1)
+        self.assertNotIn("join users", step_queries[0])
+
+    def test_participated_id_lookup_avoids_joined_user_relationships(self):
+        user = User(
+            email="history-scalar@example.test",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
+        db.session.add(user)
+        db.session.commit()
+        db.session.add(HRRequestApprovalStep(
+            request_kind=KIND_PERMISSION,
+            request_id=902,
+            step_order=1,
+            stage_code="HR",
+            approver_scope="USER",
+            approver_user_id=user.id,
+            decided_by_id=user.id,
+            status="APPROVED",
+        ))
+        db.session.commit()
+        step_queries = []
+
+        def capture_step_query(conn, cursor, statement, parameters, context, executemany):
+            if "from hr_request_approval_step" in statement.lower():
+                step_queries.append(" ".join(statement.lower().split()))
+
+        event.listen(db.engine, "before_cursor_execute", capture_step_query)
+        try:
+            self.assertEqual(request_ids_user_participated_in(user, KIND_PERMISSION), [902])
+        finally:
+            event.remove(db.engine, "before_cursor_execute", capture_step_query)
+
+        self.assertEqual(len(step_queries), 1)
+        self.assertNotIn("join users", step_queries[0])
 
 
 if __name__ == "__main__":

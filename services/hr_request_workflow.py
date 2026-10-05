@@ -747,7 +747,21 @@ def request_ids_user_participated_in(user: User, kind: str) -> list[int]:
     if not user:
         return []
     request_ids: set[int] = set()
-    for step in HRRequestApprovalStep.query.filter_by(request_kind=(kind or "").upper()).all():
+    # This list is used by the approval-history inbox.  Loading full steps
+    # also joins their related User records, even though the visibility check
+    # only needs the routing ids below.
+    steps = (
+        db.session.query(
+            HRRequestApprovalStep.request_id,
+            HRRequestApprovalStep.approver_user_id,
+            HRRequestApprovalStep.approver_user_ids,
+            HRRequestApprovalStep.decided_by_id,
+            HRRequestApprovalStep.escalated_from_user_id,
+        )
+        .filter(HRRequestApprovalStep.request_kind == (kind or "").upper())
+        .all()
+    )
+    for step in steps:
         if (
             int(user.id) in _step_approver_ids(step)
             or step.decided_by_id == user.id
@@ -2078,8 +2092,29 @@ def request_ids_user_can_act_on(user: User, kind: str) -> list[int]:
                 .all()
             )
         ]
+
+    # ``HRRequestApprovalStep`` has joined User relationships.  The badge and
+    # inbox only need these scalar routing fields, so selecting the full ORM
+    # model used to hydrate unrelated users (and their select-in relations) for
+    # every pending step.  This lightweight row still provides every attribute
+    # consumed by ``can_user_act``.
+    pending_steps = (
+        db.session.query(
+            HRRequestApprovalStep.request_kind,
+            HRRequestApprovalStep.request_id,
+            HRRequestApprovalStep.status,
+            HRRequestApprovalStep.approver_scope,
+            HRRequestApprovalStep.approver_user_id,
+            HRRequestApprovalStep.approver_user_ids,
+        )
+        .filter(
+            HRRequestApprovalStep.request_kind == kind,
+            HRRequestApprovalStep.status == "PENDING",
+        )
+        .all()
+    )
     ids: list[int] = []
-    for step in HRRequestApprovalStep.query.filter_by(request_kind=kind, status="PENDING").all():
+    for step in pending_steps:
         if can_user_act(user, step):
             ids.append(int(step.request_id))
     return sorted(set(ids))

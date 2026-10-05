@@ -143,19 +143,9 @@ def _resolved_role_for_comparison(raw_role: str | None) -> str:
     if not raw:
         return ""
 
-    cache = None
-    try:
-        from flask import g, has_request_context
-
-        if has_request_context():
-            cache = getattr(g, "_resolved_role_comparison_cache", None)
-            if cache is None:
-                cache = {}
-                g._resolved_role_comparison_cache = cache
-            if raw in cache:
-                return cache[raw]
-    except Exception:
-        cache = None
+    cache = _request_authorization_cache("_resolved_role_comparison_cache")
+    if cache is not None and raw in cache:
+        return cache[raw]
 
     resolved = _normalize_role_for_comparison(raw)
     try:
@@ -197,6 +187,42 @@ def _resolved_role_for_comparison(raw_role: str | None) -> str:
     if cache is not None:
         cache[raw] = resolved
     return resolved
+
+
+def _request_authorization_cache(name: str) -> dict | None:
+    """Return one request-local authorization cache when Flask is active.
+
+    Permission checks are used throughout the navigation shell, which is
+    rendered twice on desktop layouts (sidebar + off-canvas).  Keeping the
+    final answers only for the current request avoids repeated role/alias
+    work without hiding a permission change from the next page load.
+    """
+    try:
+        from flask import g, has_request_context, request
+
+        if not has_request_context():
+            return None
+        request_marker = request._get_current_object()
+        markers = getattr(g, "_authorization_cache_request_markers", None)
+        if markers is None:
+            markers = {}
+            g._authorization_cache_request_markers = markers
+        cache = getattr(g, name, None)
+        if cache is None or markers.get(name) is not request_marker:
+            cache = {}
+            setattr(g, name, cache)
+            markers[name] = request_marker
+        return cache
+    except Exception:
+        return None
+
+
+def _request_authorization_cache_key(user, value: str) -> tuple[int, str] | None:
+    try:
+        user_id = int(getattr(user, "id", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    return (user_id, value) if user_id else None
 
 
 class User(db.Model, UserMixin):
@@ -266,23 +292,34 @@ class User(db.Model, UserMixin):
         if principal is not None:
             return bool(principal.has_perm(key))
 
+        result_cache = _request_authorization_cache("_permission_result_cache")
+        cache_key = _request_authorization_cache_key(self, key)
+        if result_cache is not None and cache_key is not None and cache_key in result_cache:
+            return bool(result_cache[cache_key])
+
+        def _cache_result(value: bool) -> bool:
+            result = bool(value)
+            if result_cache is not None and cache_key is not None:
+                result_cache[cache_key] = result
+            return result
+
         # SUPER/ADMIN can do everything (robust against naming variations), even if delegation is active.
         try:
             role_raw = (getattr(self, "role", "") or "").strip().upper().replace("-", "_").replace(" ", "_")
             role_raw = unicodedata.normalize("NFKC", role_raw)
             role_raw = "".join(ch for ch in role_raw if (ch.isalnum() or ch == "_"))
             if role_raw.startswith("SUPER"):
-                return True
+                return _cache_result(True)
             if role_raw in ("ADMIN",):
-                return True
+                return _cache_result(True)
         except Exception:
             pass
 
         if not key:
-            return False
+            return _cache_result(False)
 
         if key == "HR_PAYSLIP_VIEW":
-            return True
+            return _cache_result(True)
 
         perms = [
             (p.key or "").strip().upper()
@@ -298,16 +335,7 @@ class User(db.Model, UserMixin):
             if role:
                 role_variants = role_storage_variants(role_raw) or {role}
                 role_cache_key = canonical_role_key(role_raw) or role
-                role_permission_cache = None
-                try:
-                    from flask import g, has_request_context
-                    if has_request_context():
-                        role_permission_cache = getattr(g, "_role_permission_keys", None)
-                        if role_permission_cache is None:
-                            role_permission_cache = {}
-                            g._role_permission_keys = role_permission_cache
-                except Exception:
-                    role_permission_cache = None
+                role_permission_cache = _request_authorization_cache("_role_permission_keys")
 
                 role_perms = (
                     role_permission_cache.get(role_cache_key)
@@ -398,7 +426,7 @@ class User(db.Model, UserMixin):
                 return all(f"{base}_{act}" in perms_list for act in actions)
             return False
 
-        return _eval(perms)
+        return _cache_result(_eval(perms))
 
     def has_role(self, role_name):
         """Return True if the user has the given role.
@@ -453,27 +481,38 @@ class User(db.Model, UserMixin):
             return bool(principal.has_role_perm(permission))
 
         perm = (permission or "").strip().upper()
+        result_cache = _request_authorization_cache("_role_permission_result_cache")
+        cache_key = _request_authorization_cache_key(self, perm)
+        if result_cache is not None and cache_key is not None and cache_key in result_cache:
+            return bool(result_cache[cache_key])
+
+        def _cache_result(value: bool) -> bool:
+            result = bool(value)
+            if result_cache is not None and cache_key is not None:
+                result_cache[cache_key] = result
+            return result
+
         # SUPERADMIN can do everything
         if self.has_role("SUPERADMIN") or self.has_role("SUPER_ADMIN"):
-            return True
+            return _cache_result(True)
 
         # ADMIN: system-wide (highest) access.
         if self.has_role("ADMIN"):
-            return True
+            return _cache_result(True)
 
         if not perm:
-            return False
+            return _cache_result(False)
 
         raw_role = (self.role or "").strip()
         if not raw_role:
-            return False
+            return _cache_result(False)
 
         role_norm = _resolved_role_for_comparison(raw_role)
         role_variants = role_storage_variants(role_norm or raw_role)
         if not role_variants:
-            return False
+            return _cache_result(False)
 
-        return (
+        return _cache_result(
             RolePermission.query
             .filter(func.lower(RolePermission.role).in_(sorted(role_variants)))
             .filter(func.upper(RolePermission.permission) == perm)
