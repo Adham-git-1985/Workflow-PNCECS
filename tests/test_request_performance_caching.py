@@ -3,11 +3,24 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from flask import Flask, g
-from sqlalchemy import event
+from sqlalchemy import event, inspect
 
 from extensions import db
-from models import HRRequestApprovalStep, Role, RolePermission, User, UserPermission
-from portal.routes import _current_user_approvable_request_ids, _portal_flags
+from models import (
+    HRAttendanceSchedulePlan,
+    HRAttendanceSpecialCase,
+    HRRequestApprovalStep,
+    Role,
+    RolePermission,
+    User,
+    UserPermission,
+)
+from portal.routes import (
+    _attendance_approval_pending_count,
+    _attendance_edit_hr_approver_user_ids,
+    _current_user_approvable_request_ids,
+    _portal_flags,
+)
 from services.hr_request_workflow import (
     KIND_PERMISSION,
     request_ids_user_can_act_on,
@@ -209,6 +222,77 @@ class RequestPerformanceCachingTests(unittest.TestCase):
         self.assertIs(first, second)
         self.assertGreater(first_call_count, 0)
         self.assertEqual(user.has_perm.call_count, first_call_count)
+
+    def test_hr_attendance_badge_counts_without_loading_the_inbox(self):
+        user = User(
+            email="attendance-badge@example.test",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
+        db.session.add(user)
+        db.session.flush()
+        db.session.add_all((
+            UserPermission(
+                user_id=user.id,
+                key="HR_REQUESTS_VIEW_ALL",
+                is_allowed=True,
+            ),
+            HRAttendanceSchedulePlan(
+                user_id=user.id,
+                period_start="2032-01-04",
+                period_end="2032-01-10",
+                version_no=1,
+                status="SUBMITTED",
+                request_type="CHANGE_REQUEST",
+            ),
+            HRAttendanceSpecialCase(
+                user_id=user.id,
+                day="2032-01-04",
+                kind="MANUAL_ATTENDANCE",
+                approval_status="PENDING",
+                applied=False,
+            ),
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context("/"):
+            request_user = db.session.get(User, user.id)
+            with patch(
+                "portal.routes._attendance_approval_inbox_rows",
+                side_effect=AssertionError("the badge must not hydrate the inbox"),
+            ):
+                self.assertEqual(_attendance_approval_pending_count(request_user), 2)
+
+    def test_manual_attendance_reviewer_ids_are_cached_per_request(self):
+        with self.app.test_request_context("/"):
+            with patch(
+                "portal.routes.attendance_delay_hr_affairs_manager_user_ids",
+                return_value=[41],
+            ) as resolve_hr_manager:
+                self.assertEqual(_attendance_edit_hr_approver_user_ids(), [41])
+                self.assertEqual(_attendance_edit_hr_approver_user_ids(), [41])
+
+        resolve_hr_manager.assert_called_once_with()
+
+    def test_attendance_approval_inbox_indexes_exist_on_fresh_schema(self):
+        inspector = inspect(db.engine)
+        schedule_indexes = {
+            index["name"]
+            for index in inspector.get_indexes("hr_attendance_schedule_plan")
+        }
+        special_case_indexes = {
+            index["name"]
+            for index in inspector.get_indexes("hr_att_special_case")
+        }
+
+        self.assertIn(
+            "ix_hr_att_schedule_request_status_updated",
+            schedule_indexes,
+        )
+        self.assertIn(
+            "ix_hr_att_special_kind_approval_created",
+            special_case_indexes,
+        )
 
     def test_approval_id_lookup_avoids_joined_user_relationships(self):
         user = User(

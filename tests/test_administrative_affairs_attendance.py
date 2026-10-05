@@ -39,8 +39,10 @@ from portal.routes import (
     ATTENDANCE_RECONCILIATION_LEAVE_SOURCE,
     _administrative_affairs_daily_rows,
     _attach_manual_attendance_flags,
+    _attendance_edit_hr_approver_user_ids,
     _casual_leave_policy_error,
     _can_review_manual_attendance,
+    _hr_can_approve_attendance_edit,
     _convert_auto_annual_leave_after_sick_approval,
     _leave_balance_display_values,
     _leave_used_days,
@@ -1543,7 +1545,7 @@ class AdministrativeAffairsAttendanceTests(unittest.TestCase):
 
         self.assertIsNone(policy_error)
 
-    def test_generic_attendance_approver_cannot_take_administrative_affairs_stage(self):
+    def test_generic_attendance_approver_cannot_take_human_resources_stage(self):
         employee = self._user("manual-scope-employee@example.test", "Manual scope employee")
         generic_approver = self._user(
             "manual-generic-approver@example.test",
@@ -1598,6 +1600,58 @@ class AdministrativeAffairsAttendanceTests(unittest.TestCase):
         self.assertEqual(correction.approval_status, "PENDING")
         self.assertFalse(correction.applied)
         self.assertIsNone(correction.approved_at)
+
+    def test_assigned_hr_department_manager_can_take_manual_attendance_stage(self):
+        employee = self._user("manual-hr-dept-employee@example.test", "Manual employee")
+        manager = self._user(
+            "manual-hr-dept-manager@example.test",
+            "Human Resources Department manager",
+            "dept_head",
+            employee_file=False,
+        )
+        self._user(
+            "manual-hr-dept-secretary@example.test",
+            "Secretary General",
+            "GENERAL_SECRETARY",
+            employee_file=False,
+        )
+        node_type = OrgNodeType(code="DEPARTMENT", name_ar="دائرة")
+        db.session.add(node_type)
+        db.session.flush()
+        node = OrgNode(type_id=node_type.id, name_ar="دائرة الموارد البشرية")
+        db.session.add(node)
+        db.session.flush()
+        db.session.add(OrgNodeManager(node_id=node.id, manager_user_id=manager.id))
+        correction = HRAttendanceSpecialCase(
+            user_id=employee.id,
+            day="2026-09-14",
+            day_to="2026-09-14",
+            kind="MANUAL_ATTENDANCE",
+            start_time="08:05",
+            approval_status="PENDING",
+            applied=False,
+            created_by_id=employee.id,
+        )
+        db.session.add(correction)
+        db.session.commit()
+
+        self.assertIn(manager.id, _attendance_edit_hr_approver_user_ids())
+        self.assertTrue(_can_review_manual_attendance(correction, manager))
+
+        with self.app.test_request_context(
+            f"/portal/hr/attendance/manual/{correction.id}/review",
+            method="POST",
+            data={"action": "approve", "approval_note": "HR approval"},
+        ):
+            login_user(manager)
+            self.assertTrue(_hr_can_approve_attendance_edit())
+            response = hr_attendance_manual_review(correction.id)
+            self.assertEqual(response.status_code, 302)
+            logout_user()
+
+        db.session.refresh(correction)
+        self.assertEqual(correction.approved_by_id, manager.id)
+        self.assertEqual(correction.approval_status, "PENDING")
 
     def test_manual_attendance_does_not_skip_secretary_stage_when_unconfigured(self):
         employee = self._user("manual-no-secretary-employee@example.test", "Manual employee")

@@ -1322,6 +1322,44 @@ def _inject_portal_sidebar_context():
     }
 
 
+def _attendance_approval_pending_count(user=None) -> int:
+    """Count pending attendance approvals without hydrating the full inbox.
+
+    HR users who can view every request used to load and inspect up to 500
+    schedule changes plus 500 manual corrections on every Portal page merely
+    to draw the approvals badge. Their visibility is global, so two indexed
+    counts preserve the result without the per-row workflow work.
+    """
+    selected_user = user or current_user
+    try:
+        if selected_user.has_perm(HR_REQUESTS_VIEW_ALL):
+            return (
+                _safe_count(
+                    HRAttendanceSchedulePlan.query
+                    .filter(HRAttendanceSchedulePlan.request_type == 'CHANGE_REQUEST')
+                    .filter(HRAttendanceSchedulePlan.status.in_(
+                        _ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES
+                    ))
+                )
+                + _safe_count(
+                    HRAttendanceSpecialCase.query
+                    .filter(HRAttendanceSpecialCase.kind == 'MANUAL_ATTENDANCE')
+                    .filter(HRAttendanceSpecialCase.approval_status == 'PENDING')
+                )
+            )
+    except Exception:
+        pass
+
+    try:
+        schedule_rows, manual_rows = _attendance_approval_inbox_rows(
+            'SUBMITTED',
+            user=selected_user,
+        )
+        return len(schedule_rows) + len(manual_rows)
+    except Exception:
+        return 0
+
+
 @portal_bp.context_processor
 def _inject_portal_context():
     """Make Portal flags and badges available to Portal templates only."""
@@ -1330,6 +1368,7 @@ def _inject_portal_context():
 
     flags = _portal_flags()
 
+    can_review_manual_attendance = _hr_can_approve_attendance_edit()
     approvals_pending = 0
     if flags.get('can_approve'):
         try:
@@ -1343,10 +1382,10 @@ def _inject_portal_context():
                     len(_current_user_approvable_request_ids(KIND_LEAVE))
                     + len(_current_user_approvable_request_ids(KIND_PERMISSION))
                 )
-            schedule_rows, manual_rows = _attendance_approval_inbox_rows("SUBMITTED")
-            approvals_pending += len(schedule_rows) + len(manual_rows)
         except Exception:
             approvals_pending = 0
+    if flags.get('can_approve') or can_review_manual_attendance:
+        approvals_pending += _attendance_approval_pending_count()
 
     # Include HR Self-Service approvals pending
     try:
@@ -1449,6 +1488,7 @@ def _inject_portal_context():
         'portal_meetings_week_count': meetings_week_count,
         'portal_meeting_tasks_open': meeting_tasks_open,
         'portal_can_view_absence_board': absence_board_visible,
+        'portal_can_approve_manual_attendance': can_review_manual_attendance,
     }
 
 
@@ -4367,7 +4407,6 @@ def index():
     next_meeting = None
     meeting_open_tasks = []
     try:
-        _send_due_meeting_reminders()
         now_utc = datetime.utcnow()
         week_start, week_end = _meeting_week_bounds()
         today_start = datetime.combine(date.today(), datetime.min.time())
@@ -15029,7 +15068,7 @@ def _hr_can_approve_attendance_edit() -> bool:
         if _user_is_super_admin_account(current_user):
             return True
         return bool(
-            int(current_user.id) in set(administrative_affairs_manager_user_ids())
+            int(current_user.id) in set(_attendance_edit_hr_approver_user_ids())
             or int(current_user.id) in set(secretary_general_user_ids())
         )
     except Exception:
@@ -15201,12 +15240,46 @@ def _attendance_edit_final_approver_user_ids() -> list[int]:
 
 
 def _attendance_edit_hr_approver_user_ids() -> list[int]:
-    """Only Administrative Affairs managers may make the first decision."""
-    return sorted({
+    """Return the first-stage reviewers for a manual attendance correction.
+
+    The approved organisation chart assigns this decision to Human Resources
+    Affairs. Older deployments may not yet have that manager represented in
+    the chart, so Administrative Affairs remains a fallback only in that
+    case. Cache the resolved ids for the request because inbox rendering can
+    inspect many pending corrections.
+    """
+    cache_name = "_attendance_edit_hr_approver_user_ids"
+    if has_request_context():
+        request_marker = request._get_current_object()
+        cache_markers = getattr(g, "_portal_context_request_markers", None)
+        if cache_markers is None:
+            cache_markers = {}
+            g._portal_context_request_markers = cache_markers
+        sentinel = object()
+        cached = getattr(g, cache_name, sentinel)
+        if (
+            cached is not sentinel
+            and cache_markers.get("attendance_edit_hr_approvers") is request_marker
+        ):
+            return list(cached)
+
+    ids = {
         int(user_id)
-        for user_id in administrative_affairs_manager_user_ids()
+        for user_id in attendance_delay_hr_affairs_manager_user_ids()
         if user_id
-    })
+    }
+    if not ids:
+        ids.update(
+            int(user_id)
+            for user_id in administrative_affairs_manager_user_ids()
+            if user_id
+        )
+
+    resolved = sorted(ids)
+    if has_request_context():
+        setattr(g, cache_name, tuple(resolved))
+        cache_markers["attendance_edit_hr_approvers"] = request_marker
+    return resolved
 
 
 def _manual_attendance_review_stage(row: HRAttendanceSpecialCase | None) -> str | None:
@@ -15215,7 +15288,7 @@ def _manual_attendance_review_stage(row: HRAttendanceSpecialCase | None) -> str 
     # Some requests created while the first-stage audit timestamp was optional
     # retain the approving user but not ``approved_at``. The reviewer is the
     # authoritative marker in that case, so do not show them as still waiting
-    # for Administrative Affairs after that stage has already been completed.
+    # for Human Resources Affairs after that stage has already been completed.
     return "SECRETARY_GENERAL" if (
         getattr(row, "approved_at", None) or getattr(row, "approved_by_id", None)
     ) else "HR"
@@ -15478,10 +15551,10 @@ def hr_attendance_manual_edit():
             # stage while its broad status remains PENDING.  Do not let an
             # editor (or a stale browser form) submit that same row again:
             # doing so would clear the first decision and send the request
-            # back to Administrative Affairs indefinitely.
+            # back to Human Resources Affairs indefinitely.
             if _manual_attendance_review_stage(row) == 'SECRETARY_GENERAL':
                 flash(
-                    'اعتمدت الشؤون الإدارية هذا الطلب بالفعل، وهو بانتظار '
+                    'اعتمدت الشؤون البشرية هذا الطلب بالفعل، وهو بانتظار '
                     'الاعتماد النهائي من الأمين العام. لا يمكن إعادة تقديمه أو '
                     'تعديله في هذه المرحلة.',
                     'info',
@@ -15528,7 +15601,7 @@ def hr_attendance_manual_edit():
                 continue
             db.session.add(Notification(
                 user_id=approver_id,
-                message=f'طلب تعديل دوام جديد #{row.id} بانتظار اعتماد مدير الشؤون الإدارية.',
+                message=f'طلب تعديل دوام جديد #{row.id} بانتظار اعتماد مدير الشؤون البشرية.',
                 type='PORTAL',
                 source='portal',
                 is_read=False,
@@ -15679,7 +15752,7 @@ def hr_attendance_manual_review(row_id: int):
                     continue
                 db.session.add(Notification(
                     user_id=approver_id,
-                    message=f'طلب تعديل الدوام #{row.id} اعتمدته الشؤون الإدارية وبانتظار اعتمادك النهائي.',
+                    message=f'طلب تعديل الدوام #{row.id} اعتمدته الشؤون البشرية وبانتظار اعتمادك النهائي.',
                     type='PORTAL',
                     source='portal',
                     is_read=False,
@@ -15692,8 +15765,8 @@ def hr_attendance_manual_review(row_id: int):
                 target_type='ATT_DAILY',
                 target_id=row.id,
             )
-            result_message = 'تم اعتماد الشؤون الإدارية، والطلب الآن بانتظار اعتماد الأمين العام.'
-            notification_message = f'اعتمدت الشؤون الإدارية طلب تعديل الدوام #{row.id} وهو بانتظار الاعتماد النهائي.'
+            result_message = 'تم اعتماد الشؤون البشرية، والطلب الآن بانتظار اعتماد الأمين العام.'
+            notification_message = f'اعتمدت الشؤون البشرية طلب تعديل الدوام #{row.id} وهو بانتظار الاعتماد النهائي.'
             notification_type = 'INFO'
     else:
         row.approval_status = 'REJECTED'
@@ -22640,7 +22713,8 @@ def _hr_approvals_can_open(user=None) -> bool:
     try:
         selected_user_id = int(selected_user.id)
         if (
-            selected_user_id in set(administrative_affairs_manager_user_ids())
+            _user_is_super_admin_account(selected_user)
+            or selected_user_id in set(_attendance_edit_hr_approver_user_ids())
             or selected_user_id in set(secretary_general_user_ids())
         ):
             return True

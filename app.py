@@ -1874,6 +1874,10 @@ def _ensure_runtime_schema():
                 "ON hr_att_special_case (final_approved_by_id)",
                 "CREATE INDEX IF NOT EXISTS ix_hr_att_special_case_final_approved_at "
                 "ON hr_att_special_case (final_approved_at)",
+                "CREATE INDEX IF NOT EXISTS ix_hr_att_schedule_request_status_updated "
+                "ON hr_attendance_schedule_plan (request_type, status, updated_at, id)",
+                "CREATE INDEX IF NOT EXISTS ix_hr_att_special_kind_approval_created "
+                "ON hr_att_special_case (kind, approval_status, created_at, id)",
             ]:
                 try:
                     db.session.execute(text(_index_sql))

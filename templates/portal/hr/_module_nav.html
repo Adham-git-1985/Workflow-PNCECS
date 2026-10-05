@@ -68,8 +68,10 @@
             <li><a class="dropdown-item" href="{{ url_for('portal.hr_attendance_manual_edit') }}"><i class="bi bi-pencil-square"></i> تعديل الدوام</a></li>
             <li><a class="dropdown-item" href="{{ url_for('portal.hr_maternity_departure_log') }}">مغادرات الأمومة — ساعة يومية</a></li>
             {% endif %}
-            {% if current_user.has_perm('HR_ATTENDANCE_EDIT_APPROVE') %}
+            {% if current_user.has_perm('HR_ATTENDANCE_EDIT_APPROVE') or portal_can_approve_manual_attendance %}
             <li><a class="dropdown-item" href="{{ url_for('portal.hr_approvals') }}"><i class="bi bi-check2-square"></i> الموافقات الموحدة</a></li>
+            {% endif %}
+            {% if current_user.has_perm('HR_ATTENDANCE_EDIT_APPROVE') %}
             <li><a class="dropdown-item" href="{{ url_for('portal.hr_maternity_departure_approval_queue') }}">اعتماد مغادرات الأمومة</a></li>
             {% endif %}
 

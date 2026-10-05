@@ -3637,6 +3637,13 @@ class HRAttendanceSchedulePlan(db.Model):
             "period_start",
             "request_type",
         ),
+        db.Index(
+            "ix_hr_att_schedule_request_status_updated",
+            "request_type",
+            "status",
+            "updated_at",
+            "id",
+        ),
     )
 
 
@@ -4594,6 +4601,13 @@ class HRAttendanceSpecialCase(db.Model):
     final_approved_by = db.relationship("User", foreign_keys=[final_approved_by_id], lazy="joined")
     __table_args__ = (
         db.Index("ix_hr_att_special_user_day", "user_id", "day"),
+        db.Index(
+            "ix_hr_att_special_kind_approval_created",
+            "kind",
+            "approval_status",
+            "created_at",
+            "id",
+        ),
     )
 
 
