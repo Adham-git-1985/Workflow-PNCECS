@@ -22,11 +22,13 @@ from models import (
     InvStocktakeVoucher,
     InvStocktakeVoucherLine,
     InvWarehouse,
+    SystemSetting,
     User,
     UserPermission,
 )
 from portal import portal_bp
 from portal.routes import _inv_build_balances
+from portal.supply_requests import _stage_responsible_labels
 
 
 class SupplyRequestWorkflowTests(unittest.TestCase):
@@ -652,6 +654,91 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
             self.admin_finance_director.full_name,
         )
 
+    def test_warehouse_roles_do_not_infer_admins_or_reuse_other_warehouse_queues(self):
+        global_admin = User(
+            email="global-admin@example.test",
+            name="Global administrator",
+            password_hash="x",
+            role="ADMIN",
+        )
+        db.session.add(global_admin)
+        db.session.flush()
+        db.session.add_all((
+            SystemSetting(
+                key="INVENTORY_WAREHOUSE_MANAGER_USER_ID",
+                value=str(self.warehouse_manager.id),
+            ),
+            SystemSetting(
+                key="INVENTORY_ADMIN_MAINTENANCE_USER_ID",
+                value=str(self.admin_maintenance_manager.id),
+            ),
+            # This is deliberately stale/overlapping legacy permission.  It
+            # must not make the ordinary warehouse manager a tech approver.
+            UserPermission(
+                user_id=self.warehouse_manager.id,
+                key="INVENTORY_TECH_WAREHOUSE_APPROVE",
+                is_allowed=True,
+            ),
+        ))
+        db.session.commit()
+
+        labels = _stage_responsible_labels(self.request)
+
+        self.assertEqual(
+            labels["TECH_WAREHOUSE"],
+            self.tech_warehouse_manager.full_name,
+        )
+        self.assertNotIn(global_admin.full_name, labels["TECH_WAREHOUSE"])
+
+    def test_settings_keep_warehouse_assignments_separate(self):
+        settings_admin = User(
+            email="settings-admin@example.test",
+            name="Settings administrator",
+            password_hash="x",
+            role="ADMIN",
+        )
+        db.session.add(settings_admin)
+        db.session.flush()
+        db.session.add_all((
+            SystemSetting(
+                key="INVENTORY_WAREHOUSE_MANAGER_USER_ID",
+                value=str(self.warehouse_manager.id),
+            ),
+            SystemSetting(
+                key="INVENTORY_ADMIN_MAINTENANCE_USER_ID",
+                value=str(self.admin_maintenance_manager.id),
+            ),
+        ))
+        db.session.commit()
+        self._login(settings_admin.id)
+
+        with patch("portal.supply_requests.render_template", return_value="settings") as render:
+            response = self.client.get("/portal/admin/inventory-request-settings")
+
+        self.assertEqual(response.status_code, 200)
+        tech_candidate_ids = {
+            user.id
+            for user in render.call_args.kwargs["tech_warehouse_manager_users"]
+        }
+        self.assertNotIn(self.warehouse_manager.id, tech_candidate_ids)
+        self.assertNotIn(self.admin_maintenance_manager.id, tech_candidate_ids)
+        self.assertIn(self.tech_warehouse_manager.id, tech_candidate_ids)
+
+        response = self.client.post(
+            "/portal/admin/inventory-request-settings",
+            data={
+                "warehouse_manager_user_id": str(self.warehouse_manager.id),
+                "tech_warehouse_manager_user_id": str(self.warehouse_manager.id),
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            SystemSetting.query.filter_by(
+                key="INVENTORY_WAREHOUSE_MANAGER_USER_ID"
+            ).one().value,
+            str(self.warehouse_manager.id),
+        )
+
     def test_action_log_displays_the_responsible_approver_name(self):
         action = InvEmployeeRequestAction.query.filter_by(request_id=self.request.id).one()
         self.request.approval_stage = "WAREHOUSE"
@@ -787,6 +874,72 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
         self.assertEqual(row.status, "APPROVED")
         self.assertEqual(row.approval_stage, "DONE")
         self.assertEqual(InvIssueVoucher.query.count(), 1)
+
+    def test_one_user_can_hold_both_technology_warehouse_and_director_roles(self):
+        """The technology warehouse manager may also be the tech director."""
+        item = self._special_route_item(
+            category_name="أجهزة حاسوب وتوابعها",
+            item_name="Configured laptop",
+            item_code="LAPTOP-CONFIGURED-001",
+        )
+        self._add_stock(item)
+        db.session.add_all((
+            SystemSetting(
+                key="INVENTORY_TECH_WAREHOUSE_MANAGER_USER_ID",
+                value=str(self.tech_warehouse_manager.id),
+            ),
+            SystemSetting(
+                key="INVENTORY_TECH_DIRECTOR_USER_ID",
+                value=str(self.tech_warehouse_manager.id),
+            ),
+            SystemSetting(
+                key="INVENTORY_ADMIN_FINANCE_DIRECTOR_USER_ID",
+                value=str(self.admin_finance_director.id),
+            ),
+        ))
+        db.session.commit()
+
+        self._login(self.employee.id)
+        response = self.client.post(
+            "/portal/inventory/employee-requests/new",
+            data={
+                "item_id": str(item.id),
+                "requested_qty": "1",
+                "purpose": "Technology request with one responsible user",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        row = InvEmployeeRequest.query.order_by(InvEmployeeRequest.id.desc()).first()
+        self.assertEqual(row.approval_stage, "TECH_WAREHOUSE")
+
+        self._login(self.tech_warehouse_manager.id)
+        self.assertEqual(
+            self.client.post(
+                f"/portal/inventory/employee-requests/{row.id}/approve",
+                data={
+                    "decision": "approve",
+                    "warehouse_id": str(self.warehouse.id),
+                    f"approved_qty_{row.lines[0].id}": "1",
+                },
+            ).status_code,
+            302,
+        )
+        db.session.expire_all()
+        row = db.session.get(InvEmployeeRequest, row.id)
+        self.assertEqual(row.approval_stage, "TECH_DIRECTOR")
+
+        self.assertEqual(
+            self.client.post(
+                f"/portal/inventory/employee-requests/{row.id}/approve",
+                data={"decision": "approve", "note": "Technology director approval"},
+            ).status_code,
+            302,
+        )
+        db.session.expire_all()
+        self.assertEqual(
+            db.session.get(InvEmployeeRequest, row.id).approval_stage,
+            "ADMIN_FINANCE",
+        )
 
     def test_furniture_or_maintenance_route_can_end_with_director_final_approval(self):
         item = self._special_route_item(

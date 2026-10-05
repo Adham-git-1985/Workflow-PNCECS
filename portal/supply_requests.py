@@ -101,6 +101,29 @@ STAGE_APPROVAL_PERMISSIONS = {
     STAGE_SECRETARY_GENERAL: "INVENTORY_SECRETARY_GENERAL_APPROVE",
 }
 
+# These three roles are mutually exclusive operational assignments.  A system
+# administrator may still intervene as an administrator, but must never be
+# inferred as a warehouse approver merely because ADMIN/SUPER_ADMIN has every
+# permission.  Keeping the maps together also lets the settings page prevent
+# accidentally assigning one account to multiple warehouse queues.
+WAREHOUSE_STAGE_ASSIGNMENT_SETTINGS = {
+    "WAREHOUSE": "INVENTORY_WAREHOUSE_MANAGER_USER_ID",
+    STAGE_TECH_WAREHOUSE: STAGE_ASSIGNMENT_SETTINGS[STAGE_TECH_WAREHOUSE],
+    STAGE_ADMIN_MAINTENANCE: STAGE_ASSIGNMENT_SETTINGS[STAGE_ADMIN_MAINTENANCE],
+}
+
+WAREHOUSE_STAGE_APPROVAL_PERMISSIONS = {
+    "WAREHOUSE": "INVENTORY_REQUEST_APPROVE",
+    STAGE_TECH_WAREHOUSE: STAGE_APPROVAL_PERMISSIONS[STAGE_TECH_WAREHOUSE],
+    STAGE_ADMIN_MAINTENANCE: STAGE_APPROVAL_PERMISSIONS[STAGE_ADMIN_MAINTENANCE],
+}
+
+WAREHOUSE_ASSIGNMENT_FORM_STAGES = {
+    "warehouse_manager_user_id": "WAREHOUSE",
+    "tech_warehouse_manager_user_id": STAGE_TECH_WAREHOUSE,
+    "admin_maintenance_user_id": STAGE_ADMIN_MAINTENANCE,
+}
+
 STATUS_LABELS = {
     "SUBMITTED": "قيد الاعتماد",
     "APPROVED": "معتمد ومصروف",
@@ -212,6 +235,84 @@ def _unique_user_ids(values, *, exclude_user_id=None):
         seen.add(user_id)
         result.append(user_id)
     return result
+
+
+def _direct_permission_user_ids(permission, *, exclude_user_id=None):
+    """Return users explicitly granted one permission.
+
+    Approval routing is an operational assignment, not a generic access
+    check.  In particular, ``User.has_perm`` deliberately gives ADMIN and
+    SUPER_ADMIN every permission, which must not turn each administrator into
+    a warehouse manager or notification recipient.
+    """
+    permission = (permission or "").strip().upper()
+    if not permission:
+        return []
+    user_ids = [
+        user_id
+        for (user_id,) in (
+            db.session.query(UserPermission.user_id)
+            .filter(func.upper(UserPermission.key) == permission)
+            .filter(UserPermission.is_allowed.is_(True))
+            .all()
+        )
+    ]
+    return _unique_user_ids(user_ids, exclude_user_id=exclude_user_id)
+
+
+def _warehouse_stage_conflict_ids(stage, *, include_legacy_permissions=False):
+    """Return users assigned to the other warehouse-review queues.
+
+    Explicit settings are the normal source of truth.  When an older setup
+    has not yet saved those settings, direct permissions are a safe migration
+    fallback, provided that a user is not already assigned to another
+    warehouse queue.
+    """
+    stage = (stage or "").strip().upper()
+    conflicts = set()
+    for other_stage, setting_key in WAREHOUSE_STAGE_ASSIGNMENT_SETTINGS.items():
+        if other_stage == stage:
+            continue
+        configured_user_id = _setting(setting_key)
+        if configured_user_id:
+            conflicts.add(configured_user_id)
+        if include_legacy_permissions:
+            permission = WAREHOUSE_STAGE_APPROVAL_PERMISSIONS[other_stage]
+            conflicts.update(_direct_permission_user_ids(permission))
+    return conflicts
+
+
+def _warehouse_stage_approver_ids(stage, exclude_user_id=None):
+    """Resolve exactly the operational audience of one warehouse queue."""
+    stage = (stage or "").strip().upper()
+    setting_key = WAREHOUSE_STAGE_ASSIGNMENT_SETTINGS.get(stage)
+    permission = WAREHOUSE_STAGE_APPROVAL_PERMISSIONS.get(stage)
+    if not setting_key or not permission:
+        return []
+
+    configured_user_id = _setting(setting_key)
+    if configured_user_id:
+        # A conflicting persisted setup should not silently send a request to
+        # the wrong queue.  The administrator can correct it in the settings
+        # screen, where duplicate warehouse assignments are rejected.
+        if configured_user_id in _warehouse_stage_conflict_ids(stage):
+            return []
+        return _unique_user_ids([configured_user_id], exclude_user_id=exclude_user_id)
+
+    # Compatibility for old installations that had only user permissions.
+    # Do not use User.has_perm here: it widens the queue to every global
+    # administrator.  Also do not reuse a person explicitly assigned to a
+    # different warehouse-review route.
+    conflict_ids = _warehouse_stage_conflict_ids(
+        stage,
+        include_legacy_permissions=True,
+    )
+    candidates = [
+        user_id
+        for user_id in _direct_permission_user_ids(permission)
+        if user_id not in conflict_ids
+    ]
+    return _unique_user_ids(candidates, exclude_user_id=exclude_user_id)
 
 
 def _user_has_permission_without_delegation(user, key):
@@ -412,44 +513,28 @@ def _hr_fallback_approver_ids(exclude_user_id=None):
 
 def _warehouse_approver_ids(exclude_user_id=None):
     """Return warehouse approvers, excluding the requester to prevent self-approval."""
-    configured = _setting("INVENTORY_WAREHOUSE_MANAGER_USER_ID")
-    if configured and configured != exclude_user_id:
-        resolved = _unique_user_ids([configured], exclude_user_id=exclude_user_id)
-        if resolved:
-            return resolved
-
-    candidates = [
-        user.id
-        for user in User.query.all()
-        if user.id != exclude_user_id
-        and _user_has_permission_without_delegation(user, "INVENTORY_REQUEST_APPROVE")
-    ]
-    return _unique_user_ids(candidates, exclude_user_id=exclude_user_id)
+    return _warehouse_stage_approver_ids("WAREHOUSE", exclude_user_id)
 
 
 def _special_stage_approver_ids(stage, exclude_user_id=None):
     """Resolve one dedicated special-route approval audience.
 
-    The selected account in settings is authoritative.  If no account is
-    selected, a user granted the corresponding permission can still process
-    the stage, just like the existing warehouse-manager permission works.
+    The selected account in settings is authoritative.  Legacy direct
+    permission assignments remain supported, but generic administrator access
+    is never used to infer a named business approver.
     """
     stage = (stage or "").strip().upper()
+    if stage in WAREHOUSE_STAGE_ASSIGNMENT_SETTINGS:
+        return _warehouse_stage_approver_ids(stage, exclude_user_id)
+
     configured = _setting(STAGE_ASSIGNMENT_SETTINGS.get(stage, ""))
-    if configured and configured != exclude_user_id:
+    if configured:
         resolved = _unique_user_ids([configured], exclude_user_id=exclude_user_id)
         if resolved:
             return resolved
 
     permission = STAGE_APPROVAL_PERMISSIONS.get(stage)
-    candidates = []
-    if permission:
-        candidates.extend(
-            user.id
-            for user in User.query.all()
-            if user.id != exclude_user_id
-            and _user_has_permission_without_delegation(user, permission)
-        )
+    candidates = _direct_permission_user_ids(permission, exclude_user_id=exclude_user_id)
     if stage == STAGE_SECRETARY_GENERAL:
         candidates.extend(secretary_general_user_ids())
     return _unique_user_ids(candidates, exclude_user_id=exclude_user_id)
@@ -978,19 +1063,35 @@ def inventory_request_settings():
             "الأمين العام",
         ),
     )
+    users = User.query.order_by(User.name.asc(), User.email.asc()).all()
+    valid_user_ids = {str(user.id) for user in users}
     if request.method == "POST":
         hr_fallback_user_id = request.form.get("hr_fallback_user_id") or ""
-        if hr_fallback_user_id and not hr_fallback_user_id.isdigit():
+        if hr_fallback_user_id and hr_fallback_user_id not in valid_user_ids:
             flash("اختر مستخدمًا صالحًا لمدير الشؤون البشرية البديل.", "warning")
             return redirect(url_for("portal.inventory_request_settings"))
         values = {}
         for field_name, setting_key, _permission, label in assignment_fields:
             value = request.form.get(field_name) or ""
-            if value and not value.isdigit():
+            if value and value not in valid_user_ids:
                 flash(f"اختر مستخدمًا صالحًا لـ {label}.", "warning")
                 return redirect(url_for("portal.inventory_request_settings"))
             values[field_name] = value
-            _set_setting(setting_key, value)
+
+        warehouse_assignment_ids = [
+            values[field_name]
+            for field_name in WAREHOUSE_ASSIGNMENT_FORM_STAGES
+            if values.get(field_name)
+        ]
+        if len(warehouse_assignment_ids) != len(set(warehouse_assignment_ids)):
+            flash(
+                "لا يجوز تعيين الحساب نفسه للمستودع العادي أو التكنولوجي أو الصيانة/الأثاث. اختر مسؤولاً مختلفاً لكل مسار.",
+                "warning",
+            )
+            return redirect(url_for("portal.inventory_request_settings"))
+
+        for field_name, setting_key, _permission, _label in assignment_fields:
+            _set_setting(setting_key, values[field_name])
         warehouse_manager_id = values["warehouse_manager_user_id"]
         _set_setting("INVENTORY_REQUEST_HR_FALLBACK_USER_ID", hr_fallback_user_id)
         for field_name, _setting_key, permission, _label in assignment_fields:
@@ -1000,9 +1101,26 @@ def inventory_request_settings():
         db.session.commit()
         flash("تم حفظ مسؤولي مسارات اعتماد طلبات المواد.", "success")
         return redirect(url_for("portal.inventory_request_settings"))
+
+    warehouse_assignment_ids = {
+        stage: _setting(setting_key)
+        for stage, setting_key in WAREHOUSE_STAGE_ASSIGNMENT_SETTINGS.items()
+    }
+
+    def _warehouse_assignment_candidates(stage):
+        assigned_elsewhere = {
+            user_id
+            for other_stage, user_id in warehouse_assignment_ids.items()
+            if other_stage != stage and user_id
+        }
+        return [user for user in users if user.id not in assigned_elsewhere]
+
+    assigned_warehouse_user_ids = [
+        user_id for user_id in warehouse_assignment_ids.values() if user_id
+    ]
     return render_template(
         "portal/inventory/request_settings.html",
-        users=User.query.order_by(User.name.asc()).all(),
+        users=users,
         warehouse_manager_id=_setting("INVENTORY_WAREHOUSE_MANAGER_USER_ID"),
         hr_fallback_user_id=_setting("INVENTORY_REQUEST_HR_FALLBACK_USER_ID"),
         tech_warehouse_manager_user_id=_setting("INVENTORY_TECH_WAREHOUSE_MANAGER_USER_ID"),
@@ -1010,6 +1128,12 @@ def inventory_request_settings():
         tech_director_user_id=_setting("INVENTORY_TECH_DIRECTOR_USER_ID"),
         admin_finance_director_user_id=_setting("INVENTORY_ADMIN_FINANCE_DIRECTOR_USER_ID"),
         secretary_general_user_id=_setting("INVENTORY_SECRETARY_GENERAL_USER_ID"),
+        warehouse_manager_users=_warehouse_assignment_candidates("WAREHOUSE"),
+        tech_warehouse_manager_users=_warehouse_assignment_candidates(STAGE_TECH_WAREHOUSE),
+        admin_maintenance_users=_warehouse_assignment_candidates(STAGE_ADMIN_MAINTENANCE),
+        warehouse_assignment_has_conflict=(
+            len(assigned_warehouse_user_ids) != len(set(assigned_warehouse_user_ids))
+        ),
     )
 
 

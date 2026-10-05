@@ -3,13 +3,16 @@
 <h4>مسارات اعتماد طلبات المواد</h4>
 <div class="alert alert-info">تبقى الطلبات العادية على مسار مدير المستودع والصرف النهائي. طلبات التكنولوجيا والإلكترونيات تمر بمدير المستودع التكنولوجي ثم مدير عام الإدارة العامة للتكنولوجيا والمطبوعات ثم مدير عام الشؤون الإدارية والمالية. أما الأثاث والصيانة فتمر بمسؤول المستودع الإداري ثم المدير العام نفسه.</div>
 <div class="alert alert-secondary">في المرحلة الأخيرة يستطيع مدير عام الشؤون الإدارية والمالية الاعتماد والصرف النهائي، أو إحالة الطلب إلى الأمين العام للاعتماد أو الرفض. يُمنح الحساب المختار صلاحية المرحلة تلقائيًا.</div>
+{% if warehouse_assignment_has_conflict %}
+<div class="alert alert-warning">يوجد تعيين متعارض لمسارات المستودعات. يجب اختيار حساب مختلف للمستودع العادي والتكنولوجي والصيانة/الأثاث قبل الحفظ.</div>
+{% endif %}
 <form method="post" class="card card-body">
   <div class="row g-3">
     <div class="col-lg-6">
       <label class="form-label">مدير المستودع للطلبات العادية</label>
       <select class="form-select" name="warehouse_manager_user_id">
         <option value="">—</option>
-        {% for user in users %}<option value="{{ user.id }}" {% if warehouse_manager_id == user.id %}selected{% endif %}>{{ user.name or user.email }}</option>{% endfor %}
+        {% for user in warehouse_manager_users %}<option value="{{ user.id }}" {% if warehouse_manager_id == user.id %}selected{% endif %}>{{ user.name or user.email }}</option>{% endfor %}
       </select>
     </div>
     <div class="col-lg-6">
@@ -23,14 +26,14 @@
       <label class="form-label">مدير المستودع التكنولوجي</label>
       <select class="form-select" name="tech_warehouse_manager_user_id">
         <option value="">—</option>
-        {% for user in users %}<option value="{{ user.id }}" {% if tech_warehouse_manager_user_id == user.id %}selected{% endif %}>{{ user.name or user.email }}{% if user.job_title %} — {{ user.job_title }}{% endif %}</option>{% endfor %}
+        {% for user in tech_warehouse_manager_users %}<option value="{{ user.id }}" {% if tech_warehouse_manager_user_id == user.id %}selected{% endif %}>{{ user.name or user.email }}{% if user.job_title %} — {{ user.job_title }}{% endif %}</option>{% endfor %}
       </select>
     </div>
     <div class="col-lg-6">
       <label class="form-label">مسؤول المستودع الإداري للصيانة والأثاث</label>
       <select class="form-select" name="admin_maintenance_user_id">
         <option value="">—</option>
-        {% for user in users %}<option value="{{ user.id }}" {% if admin_maintenance_user_id == user.id %}selected{% endif %}>{{ user.name or user.email }}{% if user.job_title %} — {{ user.job_title }}{% endif %}</option>{% endfor %}
+        {% for user in admin_maintenance_users %}<option value="{{ user.id }}" {% if admin_maintenance_user_id == user.id %}selected{% endif %}>{{ user.name or user.email }}{% if user.job_title %} — {{ user.job_title }}{% endif %}</option>{% endfor %}
       </select>
     </div>
     <div class="col-lg-6">
