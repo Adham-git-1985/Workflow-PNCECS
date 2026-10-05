@@ -308,6 +308,85 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertEqual(summary.first_in.hour, 8)
         self.assertEqual(summary.last_out.hour, 15)
 
+    def test_editor_cannot_resubmit_a_request_after_administrative_affairs_approval(self):
+        """A stale edit form must not erase the first approval decision."""
+        employee = User(email="locked-employee@example.test", name="Employee", password_hash="x", role="USER")
+        editor = User(email="locked-editor@example.test", name="Editor", password_hash="x", role="HR")
+        affairs_manager = User(
+            email="locked-affairs@example.test",
+            name="Administrative affairs manager",
+            password_hash="x",
+            role="HR_MANAGER",
+        )
+        secretary = User(
+            email="locked-secretary@example.test",
+            name="Secretary General",
+            password_hash="x",
+            role="GENERAL_SECRETARY",
+        )
+        db.session.add_all((employee, editor, affairs_manager, secretary))
+        db.session.flush()
+        db.session.add(UserPermission(
+            user_id=editor.id,
+            key="HR_ATTENDANCE_EDIT",
+            is_allowed=True,
+        ))
+        correction = HRAttendanceSpecialCase(
+            user_id=employee.id,
+            day="2026-09-02",
+            day_to="2026-09-02",
+            kind="MANUAL_ATTENDANCE",
+            start_time="08:00",
+            note="Original correction",
+            applied=False,
+            approval_status="PENDING",
+            created_by_id=editor.id,
+        )
+        db.session.add(correction)
+        db.session.commit()
+
+        with self.app.test_request_context(
+            f"/portal/hr/attendance/manual/{correction.id}/review",
+            method="POST",
+            data={"action": "approve", "approval_note": "First-stage approval"},
+        ):
+            login_user(affairs_manager)
+            response = hr_attendance_manual_review(correction.id)
+            self.assertEqual(response.status_code, 302)
+            logout_user()
+
+        db.session.refresh(correction)
+        self.assertEqual(correction.approved_by_id, affairs_manager.id)
+        self.assertIsNone(correction.final_approved_by_id)
+
+        # This is the payload an editor can still have open in another tab
+        # when the first reviewer completes their decision.
+        with self.app.test_request_context(
+            "/portal/hr/attendance/manual",
+            method="POST",
+            data={
+                "override_id": str(correction.id),
+                "user_id": str(employee.id),
+                "day": "2026-09-02",
+                "day_to": "2026-09-02",
+                "start_time": "09:15",
+                "end_time": "",
+                "note": "Stale resubmission",
+            },
+        ):
+            login_user(editor)
+            response = hr_attendance_manual_edit()
+            self.assertEqual(response.status_code, 302)
+            logout_user()
+
+        db.session.refresh(correction)
+        self.assertEqual(correction.approval_status, "PENDING")
+        self.assertFalse(correction.applied)
+        self.assertEqual(correction.approved_by_id, affairs_manager.id)
+        self.assertIsNone(correction.final_approved_by_id)
+        self.assertEqual(correction.start_time, "08:00")
+        self.assertEqual(correction.note, "Original correction")
+
     def test_pending_personal_departure_is_not_a_checkout(self):
         employee = User(email="pending-departure@example.test", name="Pending Departure", password_hash="x", role="USER")
         permission_type = HRPermissionType(

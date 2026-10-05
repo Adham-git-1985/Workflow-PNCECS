@@ -13,11 +13,12 @@
   </div>
 
   <hr class="my-4">
+  {% set awaiting_final_approval = approval_status == 'PENDING' and approval_stage == 'SECRETARY_GENERAL' %}
   <form method="post" class="row g-3">
     <input type="hidden" name="override_id" value="{{ override.id if editable_override else '' }}">
     <div class="col-md-7">
       <label class="form-label" for="manualAttendanceUser">الموظف</label>
-      <select class="form-select" id="manualAttendanceUser" name="user_id" required>
+      <select class="form-select" id="manualAttendanceUser" name="user_id" required {% if awaiting_final_approval %}disabled{% endif %}>
         <option value="">— اختر الموظف —</option>
         {% for employee in users %}
           <option value="{{ employee.id }}" {% if user_id == employee.id %}selected{% endif %}>{{ employee.name or employee.email }}{% if employee.email %} — {{ employee.email }}{% endif %}</option>
@@ -26,31 +27,38 @@
     </div>
     <div class="col-md-5">
       <label class="form-label" for="manualAttendanceDay">من تاريخ</label>
-      <input class="form-control" type="date" id="manualAttendanceDay" name="day" value="{{ day }}" required>
+      <input class="form-control" type="date" id="manualAttendanceDay" name="day" value="{{ day }}" required {% if awaiting_final_approval %}disabled{% endif %}>
     </div>
     <div class="col-md-5">
       <label class="form-label" for="manualAttendanceDayTo">إلى تاريخ</label>
-      <input class="form-control" type="date" id="manualAttendanceDayTo" name="day_to" value="{{ day_to }}" required>
+      <input class="form-control" type="date" id="manualAttendanceDayTo" name="day_to" value="{{ day_to }}" required {% if awaiting_final_approval %}disabled{% endif %}>
       <div class="form-text">يمكن إدخال يوم واحد أو فترة متصلة؛ يطبّق الوقت نفسه على كل يوم في الفترة.</div>
     </div>
     <div class="col-md-6">
       <label class="form-label" for="manualAttendanceStart">وقت الحضور</label>
-      <input class="form-control" type="time" id="manualAttendanceStart" name="start_time" value="{{ override.start_time if override and override.start_time else '' }}">
+      <input class="form-control" type="time" id="manualAttendanceStart" name="start_time" value="{{ override.start_time if override and override.start_time else '' }}" {% if awaiting_final_approval %}disabled{% endif %}>
       <div class="form-text">يمكن إدخال وقت الحضور فقط؛ بعد الاعتماد النهائي ينشأ سجل دخول ويُحتسب الموظف حاضراً بسجل غير مكتمل حتى تسجيل الخروج.</div>
     </div>
     <div class="col-md-6">
       <label class="form-label" for="manualAttendanceEnd">وقت الانصراف</label>
-      <input class="form-control" type="time" id="manualAttendanceEnd" name="end_time" value="{{ override.end_time if override and override.end_time else '' }}">
+      <input class="form-control" type="time" id="manualAttendanceEnd" name="end_time" value="{{ override.end_time if override and override.end_time else '' }}" {% if awaiting_final_approval %}disabled{% endif %}>
       <div class="form-text">أدخل وقتاً واحداً على الأقل. إن أدخلت الوقتين فيجب أن يكون الانصراف بعد الحضور.</div>
     </div>
     <div class="col-12">
       <label class="form-label" for="manualAttendanceNote">سبب التعديل</label>
-      <textarea class="form-control" id="manualAttendanceNote" name="note" rows="3" required>{{ override.note if override and override.note else '' }}</textarea>
+      <textarea class="form-control" id="manualAttendanceNote" name="note" rows="3" required {% if awaiting_final_approval %}disabled{% endif %}>{{ override.note if override and override.note else '' }}</textarea>
     </div>
     <div class="col-12 d-flex gap-2">
+      {% if awaiting_final_approval %}
+      <div class="alert alert-info py-2 mb-0 flex-grow-1">
+        <i class="bi bi-hourglass-split"></i>
+        اعتمدته الشؤون الإدارية{% if override and override.approved_by %} بواسطة {{ override.approved_by.full_name or override.approved_by.name or override.approved_by.email }}{% endif %}{% if override and override.approved_at %} في {{ override.approved_at|local_datetime }}{% endif %}، وهو الآن بانتظار الاعتماد النهائي من الأمين العام. لا يمكن إعادة تقديمه في هذه المرحلة.
+      </div>
+      <a class="btn btn-outline-primary align-self-center" href="{{ url_for('portal.hr_approvals') }}">فتح الموافقات</a>
+      {% else %}
       <button class="btn btn-success" type="submit"><i class="bi bi-send-check"></i> تقديم للاعتماد</button>
-      {% if approval_status == 'PENDING' and approval_stage == 'SECRETARY_GENERAL' %}<span class="text-warning align-self-center small">اعتمدته الشؤون الإدارية، وهو بانتظار الاعتماد النهائي من الأمين العام ولم يطبّق بعد.</span>
-      {% elif approval_status == 'PENDING' %}<span class="text-warning align-self-center small">الطلب بانتظار اعتماد مدير الشؤون الإدارية ثم الأمين العام، ولم يطبّق بعد.</span>{% endif %}
+      {% endif %}
+      {% if approval_status == 'PENDING' and approval_stage != 'SECRETARY_GENERAL' %}<span class="text-warning align-self-center small">الطلب بانتظار اعتماد مدير الشؤون الإدارية ثم الأمين العام، ولم يطبّق بعد.</span>{% endif %}
       {% if approval_status == 'APPROVED' %}<span class="text-muted align-self-center small">ستنشئ عملية الحفظ طلب تعديل جديداً للاعتماد.</span>{% endif %}
       {% if approval_status == 'REJECTED' %}<span class="text-danger align-self-center small">تم رفض الطلب السابق؛ يمكنك تعديله وتقديمه مجدداً.</span>{% endif %}
       {% if override and override.approval_note %}<span class="text-muted align-self-center small">ملاحظة المراجع: {{ override.approval_note }}</span>{% endif %}

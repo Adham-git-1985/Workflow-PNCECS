@@ -15402,6 +15402,24 @@ def hr_attendance_manual_edit():
             if _manual_attendance_approval_status(row) != 'PENDING':
                 flash('لا يمكن تعديل طلب تم البت فيه. أنشئ طلب تعديل جديداً.', 'warning')
                 return redirect(url_for('portal.hr_attendance_manual_edit', user_id=user_id, day=day))
+            # The first decision moves a correction to the Secretary-General
+            # stage while its broad status remains PENDING.  Do not let an
+            # editor (or a stale browser form) submit that same row again:
+            # doing so would clear the first decision and send the request
+            # back to Administrative Affairs indefinitely.
+            if _manual_attendance_review_stage(row) == 'SECRETARY_GENERAL':
+                flash(
+                    'اعتمدت الشؤون الإدارية هذا الطلب بالفعل، وهو بانتظار '
+                    'الاعتماد النهائي من الأمين العام. لا يمكن إعادة تقديمه أو '
+                    'تعديله في هذه المرحلة.',
+                    'info',
+                )
+                return redirect(url_for(
+                    'portal.hr_attendance_manual_edit',
+                    user_id=row.user_id,
+                    day=row.day,
+                    override_id=row.id,
+                ))
             if int(row.user_id) != int(user_id):
                 abort(400)
         if not row:
@@ -15478,6 +15496,8 @@ def hr_attendance_manual_edit():
         selected_day_to = override.day_to or override.day
     else:
         selected_day_to = selected_day
+    approval_status = _manual_attendance_approval_status(override) if override else None
+    approval_stage = _manual_attendance_review_stage(override) if override else None
     return render_template(
         'portal/hr/attendance_manual_edit.html',
         users=_list_hr_users(exclude_attendance_exempt=True),
@@ -15485,9 +15505,13 @@ def hr_attendance_manual_edit():
         day=selected_day,
         day_to=selected_day_to,
         override=override,
-        editable_override=bool(override and _manual_attendance_approval_status(override) == 'PENDING'),
-        approval_status=_manual_attendance_approval_status(override) if override else None,
-        approval_stage=_manual_attendance_review_stage(override) if override else None,
+        editable_override=bool(
+            override
+            and approval_status == 'PENDING'
+            and approval_stage == 'HR'
+        ),
+        approval_status=approval_status,
+        approval_stage=approval_stage,
         can_view_attendance=bool(current_user.has_perm(HR_ATT_READ)),
     )
 
