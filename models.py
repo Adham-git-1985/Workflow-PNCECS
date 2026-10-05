@@ -119,6 +119,86 @@ def _selected_principal_for_current_account(user):
     return None
 
 
+def _normalize_role_for_comparison(value: str | None) -> str:
+    """Normalize a stored role value for safe code/label comparisons."""
+    text = (value or "").strip().upper().replace("-", "_").replace(" ", "_")
+    try:
+        text = unicodedata.normalize("NFKC", text)
+        text = "".join(character for character in text if (character.isalnum() or character == "_"))
+    except Exception:
+        pass
+    return text
+
+
+def _resolved_role_for_comparison(raw_role: str | None) -> str:
+    """Resolve one stored role label to its canonical code once per request.
+
+    The global navigation and approval screens perform many role checks for a
+    regular account.  Repeating the same ``Role`` lookup for every check
+    caused an avoidable N+1 query pattern, while administrator accounts often
+    bypassed those checks.  The cached value only lives for the active request
+    so permission or role changes are visible on the next request.
+    """
+    raw = (raw_role or "").strip()
+    if not raw:
+        return ""
+
+    cache = None
+    try:
+        from flask import g, has_request_context
+
+        if has_request_context():
+            cache = getattr(g, "_resolved_role_comparison_cache", None)
+            if cache is None:
+                cache = {}
+                g._resolved_role_comparison_cache = cache
+            if raw in cache:
+                return cache[raw]
+    except Exception:
+        cache = None
+
+    resolved = _normalize_role_for_comparison(raw)
+    try:
+        # Match a code first.  Older installations may instead store either
+        # display label, which is handled by the second lookup.
+        role_row = Role.query.filter(func.upper(Role.code) == resolved).first()
+        if not role_row:
+            role_row = Role.query.filter(
+                (Role.name_ar == raw) | (func.lower(Role.name_en) == raw.lower())
+            ).first()
+        if role_row and (role_row.code or "").strip():
+            resolved = _normalize_role_for_comparison(role_row.code)
+    except Exception:
+        pass
+
+    # Preserve the defensive aliases already supported by ``has_role``.
+    try:
+        raw_lower = raw.lower()
+        if (("سوبر" in raw) and ("أدمن" in raw or "ادمن" in raw)) or (
+            "super" in raw_lower and "admin" in raw_lower
+        ):
+            resolved = "SUPER_ADMIN"
+        if ("SUPER" in resolved and "ADMIN" in resolved) or (
+            "SYSTEM" in resolved and "ADMIN" in resolved
+        ):
+            resolved = "SUPER_ADMIN"
+        if raw_lower in {
+            "root", "superuser", "sysadmin", "systemadmin", "system_admin",
+            "administrator", "admin_root",
+        }:
+            resolved = "SUPER_ADMIN"
+        if ("مدير" in raw and "نظام" in raw) and any(
+            marker in raw for marker in ("أعلى", "اعلى", "عليا", "الاعلى", "الأعلى")
+        ):
+            resolved = "SUPER_ADMIN"
+    except Exception:
+        pass
+
+    if cache is not None:
+        cache[raw] = resolved
+    return resolved
+
+
 class User(db.Model, UserMixin):
     __tablename__ = "users"
 
@@ -337,22 +417,7 @@ class User(db.Model, UserMixin):
         if principal is not None:
             return bool(principal.has_role(role_name))
 
-        def _norm(x: str) -> str:
-            """Normalize role/code text very defensively.
-
-            We occasionally see invisible unicode formatting marks (RLM/LRM/ZWJ, etc.)
-            coming from copy/paste or RTL UIs. Those break simple string comparisons.
-            This function strips those marks and keeps only [A-Z0-9_].
-            """
-            s = (x or "").strip().upper().replace("-", "_").replace(" ", "_")
-            try:
-                s = unicodedata.normalize("NFKC", s)
-                s = "".join(ch for ch in s if (ch.isalnum() or ch == "_"))
-            except Exception:
-                pass
-            return s
-
-        want = _norm(role_name)
+        want = _normalize_role_for_comparison(role_name)
         if not want:
             return False
 
@@ -360,53 +425,7 @@ class User(db.Model, UserMixin):
         if not raw:
             return False
 
-        mine = _norm(raw)
-
-        # Try to resolve stored role label -> Role.code
-        try:
-            # 1) match by code (case-insensitive)
-            r = Role.query.filter(func.upper(Role.code) == mine).first()
-            if r:
-                mine = _norm(r.code)
-            else:
-                # 2) match by Arabic/English display name
-                raw_lower = raw.lower()
-                r = Role.query.filter(
-                    (Role.name_ar == raw) | (func.lower(Role.name_en) == raw_lower)
-                ).first()
-                if r:
-                    mine = _norm(r.code)
-        except Exception:
-            pass
-
-        # Heuristic fallback for Arabic/loose labels (avoids blocking SUPER_ADMIN by label variations)
-        try:
-            raw_clean = (raw or '').strip()
-            raw_lower = raw_clean.lower()
-            if (('سوبر' in raw_clean) and ('أدمن' in raw_clean or 'ادمن' in raw_clean)) or (('super' in raw_lower) and ('admin' in raw_lower)):
-                mine = 'SUPER_ADMIN'
-        except Exception:
-            pass
-
-        # Extended heuristic fallback for super/system admin labels
-        try:
-            raw_clean = (raw or '').strip()
-            raw_lower = raw_clean.lower()
-
-            # If the normalized role already contains SUPER+ADMIN (e.g., SUPER_ADMINISTRATOR), treat as SUPER_ADMIN
-            if ('SUPER' in mine and 'ADMIN' in mine) or ('SYSTEM' in mine and 'ADMIN' in mine):
-                mine = 'SUPER_ADMIN'
-
-            # Common English aliases
-            if raw_lower in ('root', 'superuser', 'sysadmin', 'systemadmin', 'system_admin', 'administrator', 'admin_root'):
-                mine = 'SUPER_ADMIN'
-
-            # Common Arabic aliases
-            if ('مدير' in raw_clean and 'نظام' in raw_clean) and (('أعلى' in raw_clean) or ('اعلى' in raw_clean) or ('عليا' in raw_clean) or ('الاعلى' in raw_clean) or ('الأعلى' in raw_clean)):
-                mine = 'SUPER_ADMIN'
-
-        except Exception:
-            pass
+        mine = _resolved_role_for_comparison(raw)
 
         # SUPERADMIN synonyms
         if mine in ("SUPERADMIN", "SUPER_ADMIN") and want in ("SUPERADMIN", "SUPER_ADMIN"):
@@ -449,23 +468,7 @@ class User(db.Model, UserMixin):
         if not raw_role:
             return False
 
-        # Resolve stored role label -> Role.code when possible
-        role_norm = None
-        try:
-            def _norm(x: str) -> str:
-                return (x or "").strip().upper().replace("-", "_").replace(" ", "_")
-
-            mine = _norm(raw_role)
-            r = Role.query.filter(func.upper(Role.code) == mine).first()
-            if r:
-                role_norm = (r.code or raw_role).strip().lower()
-            else:
-                r = Role.query.filter((Role.name_ar == raw_role) | (func.lower(Role.name_en) == raw_role.lower())).first()
-                if r:
-                    role_norm = (r.code or raw_role).strip().lower()
-        except Exception:
-            role_norm = None
-
+        role_norm = _resolved_role_for_comparison(raw_role)
         role_variants = role_storage_variants(role_norm or raw_role)
         if not role_variants:
             return False

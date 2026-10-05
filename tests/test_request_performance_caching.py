@@ -6,7 +6,7 @@ from flask import Flask
 from sqlalchemy import event
 
 from extensions import db
-from models import RolePermission, User
+from models import Role, RolePermission, User
 from portal.routes import _current_user_approvable_request_ids
 
 
@@ -65,6 +65,41 @@ class RequestPerformanceCachingTests(unittest.TestCase):
             event.remove(db.engine, "before_cursor_execute", count_role_permission_queries)
 
         self.assertEqual(role_permission_queries, 1)
+
+    def test_role_label_resolution_is_loaded_once_per_request(self):
+        user = User(
+            email="cached-role-label@example.test",
+            password_hash="not-used-in-test",
+            role="General Secretary",
+        )
+        db.session.add_all((
+            user,
+            Role(
+                code="GENERAL_SECRETARY",
+                name_en="General Secretary",
+                name_ar="الأمين العام",
+            ),
+        ))
+        db.session.commit()
+
+        role_queries = 0
+
+        def count_role_queries(conn, cursor, statement, parameters, context, executemany):
+            nonlocal role_queries
+            if "from roles" in statement.lower():
+                role_queries += 1
+
+        event.listen(db.engine, "before_cursor_execute", count_role_queries)
+        try:
+            with self.app.test_request_context("/"):
+                request_user = db.session.get(User, user.id)
+                self.assertTrue(request_user.has_role("GENERAL_SECRETARY"))
+                self.assertTrue(request_user.has_role("SECRETARY_GENERAL"))
+                self.assertTrue(request_user.has_role("الأمين العام"))
+        finally:
+            event.remove(db.engine, "before_cursor_execute", count_role_queries)
+
+        self.assertEqual(role_queries, 1)
 
     def test_general_secretary_role_aliases_share_permissions(self):
         user = User(
