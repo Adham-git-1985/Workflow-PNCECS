@@ -54,6 +54,29 @@ _RAPID_OCR_ENGINE = None
 _RAPID_OCR_LOCK = threading.Lock()
 
 
+def _daily_wage_identity_clip(page) -> fitz.Rect | None:
+    """Return the primary ID field for the Ministry's landscape wage voucher.
+
+    The daily-wage PDF uses a consistent landscape layout.  Reading its small,
+    high-contrast ID field first is both more accurate and substantially faster
+    than asking OCR to read the whole upper half of every page.  Other layouts
+    deliberately fall back to the existing generic OCR path below.
+    """
+    rect = page.rect
+    width = float(getattr(rect, "width", 0) or (rect.x1 - rect.x0))
+    height = float(getattr(rect, "height", 0) or (getattr(rect, "y1", 0) - rect.y0))
+    aspect_ratio = width / height if height else 0
+    if width <= 0 or height <= 0 or not 1.35 <= aspect_ratio <= 1.5:
+        return None
+
+    return fitz.Rect(
+        rect.x0 + (width * 0.39),
+        rect.y0 + (height * 0.12),
+        rect.x0 + (width * 0.62),
+        rect.y0 + (height * 0.25),
+    )
+
+
 def _normalize_digits(value: str | None) -> str:
     return (value or "").translate(_ARABIC_DIGITS_MAP)
 
@@ -118,25 +141,50 @@ def _payslip_page_text(page) -> tuple[str, bool, str | None]:
     if not enabled:
         return native_text, False, "لم يظهر رقم الهوية في نص القسيمة وقراءة OCR غير مفعّلة."
 
-    # Identity and employee information are in the upper section. Cropping
-    # reduces OCR time and keeps bank/summary numbers from winning the
-    # nine-digit fallback match.
+    dpi = int(current_app.config.get("PAYSLIP_OCR_DPI", 200))
+    rapid_enabled_value = current_app.config.get("PAYSLIP_RAPID_OCR_ENABLED", True)
+    rapid_enabled = str(rapid_enabled_value).strip().lower() in {"1", "true", "yes", "on"}
+    rapid_error = None
+
+    # For the common landscape daily-wage form, read its dedicated identity
+    # field before running general OCR.  This avoids unrelated payroll and IBAN
+    # numbers competing with the ID and makes scanned batches noticeably faster.
+    if rapid_enabled:
+        identity_clip = _daily_wage_identity_clip(page)
+        if identity_clip is not None:
+            try:
+                identity_png = page.get_pixmap(
+                    dpi=min(400, max(300, dpi)),
+                    clip=identity_clip,
+                    alpha=False,
+                ).tobytes("png")
+                identity_text = _run_rapid_ocr_png(identity_png)
+                combined_text = "\n".join(
+                    value for value in (native_text, identity_text) if value.strip()
+                )
+                if _extract_identity_number(combined_text):
+                    return combined_text, True, None
+            except (ImportError, ModuleNotFoundError) as exc:
+                rapid_error = exc
+            except Exception as exc:
+                rapid_error = exc
+                current_app.logger.warning("Payslip identity-field OCR failed: %s", exc)
+
+    # Identity and employee information are in the upper section.  This
+    # generic fallback keeps support for other payslip layouts and for forms
+    # whose primary identity field could not be read.
     clip = fitz.Rect(
         page.rect.x0,
         page.rect.y0,
         page.rect.x1,
         page.rect.y0 + (page.rect.height * 0.68),
     )
-    dpi = int(current_app.config.get("PAYSLIP_OCR_DPI", 200))
     try:
         png_bytes = page.get_pixmap(dpi=dpi, clip=clip, alpha=False).tobytes("png")
     except Exception as exc:
         current_app.logger.warning("Payslip page rendering failed: %s", exc)
         return native_text, False, "تعذر تجهيز صفحة القسيمة للقراءة الضوئية."
 
-    rapid_enabled_value = current_app.config.get("PAYSLIP_RAPID_OCR_ENABLED", True)
-    rapid_enabled = str(rapid_enabled_value).strip().lower() in {"1", "true", "yes", "on"}
-    rapid_error = None
     if rapid_enabled:
         try:
             rapid_text = _run_rapid_ocr_png(png_bytes)

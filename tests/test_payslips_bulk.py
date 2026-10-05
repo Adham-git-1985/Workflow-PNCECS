@@ -392,6 +392,54 @@ class PayslipsBulkTests(unittest.TestCase):
         self.assertIsNone(warning)
         self.assertEqual(_extract_identity_number(text), "401973847")
 
+    def test_landscape_daily_wage_identity_field_reads_the_unmatched_employee_ids(self):
+        class ScannedLandscapePage:
+            rect = SimpleNamespace(
+                x0=0,
+                y0=0,
+                x1=842,
+                y1=595,
+                width=842,
+                height=595,
+            )
+
+            def __init__(self):
+                self.render_calls = []
+
+            @staticmethod
+            def get_text(_mode):
+                return ""
+
+            def get_pixmap(self, **kwargs):
+                self.render_calls.append(kwargs)
+                return SimpleNamespace(tobytes=lambda _format: b"identity-png")
+
+        page = ScannedLandscapePage()
+        expected_ids = ("405006339", "911546497")
+        with self.app.test_request_context("/"):
+            with patch(
+                "portal.payslips_bulk._run_rapid_ocr_png",
+                side_effect=[f"Identity {identity}" for identity in expected_ids],
+            ) as rapid_ocr, patch(
+                "portal.payslips_bulk._resolve_tesseract_command",
+            ) as resolve_tesseract:
+                for expected_identity in expected_ids:
+                    text, used_ocr, warning = _payslip_page_text(page)
+                    self.assertTrue(used_ocr)
+                    self.assertIsNone(warning)
+                    self.assertEqual(_extract_identity_number(text), expected_identity)
+
+        self.assertEqual(rapid_ocr.call_count, 2)
+        resolve_tesseract.assert_not_called()
+        self.assertEqual(len(page.render_calls), 2)
+        for render_call in page.render_calls:
+            self.assertEqual(render_call["dpi"], 300)
+            clip = render_call["clip"]
+            self.assertAlmostEqual(clip.x0, 842 * 0.39)
+            self.assertAlmostEqual(clip.y0, 595 * 0.12)
+            self.assertAlmostEqual(clip.x1, 842 * 0.62)
+            self.assertAlmostEqual(clip.y1, 595 * 0.25)
+
     def test_nonempty_native_text_without_identity_still_uses_ocr(self):
         class PartiallyScannedPage:
             rect = SimpleNamespace(x0=0, y0=0, x1=595, height=842)
