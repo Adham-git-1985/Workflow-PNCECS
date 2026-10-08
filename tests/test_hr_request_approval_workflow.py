@@ -53,6 +53,7 @@ from services.hr_request_workflow import (
     STAGE_SECRETARY_GENERAL,
     board_visible_user_ids,
     can_user_act,
+    can_view_request,
     current_step,
     decide_request,
     escalation_setting_key,
@@ -60,6 +61,7 @@ from services.hr_request_workflow import (
     process_pending_approvals,
     refresh_pending_escalation_deadlines,
     request_ids_user_can_act_on,
+    request_ids_user_participated_in,
     hr_notification_user_ids,
     initial_approval_candidate_names_map,
     hr_approval_user_ids,
@@ -274,6 +276,37 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertIsNone(step.due_at)
         self.assertTrue(can_user_act(second_approver, step))
         self.assertFalse(can_user_act(first_approver, step))
+        # Escalation only removes the former manager's decision authority.
+        # Both the initially assigned manager and the first escalated target
+        # retain read-only access to the request history.
+        self.assertTrue(can_view_request(self.manager, request_kind, row.id))
+        self.assertTrue(can_view_request(first_approver, request_kind, row.id))
+        self.assertIn(
+            row.id,
+            request_ids_user_participated_in(self.manager, request_kind),
+        )
+
+        client = self.app.test_client()
+        self._login(client, self.manager.id)
+        detail_url = (
+            f"/portal/hr/approvals/leaves/{row.id}"
+            if request_kind == KIND_LEAVE
+            else f"/portal/hr/approvals/permissions/{row.id}"
+        )
+        with patch("portal.routes.render_template", return_value="ok") as render:
+            detail = client.get(detail_url)
+        self.assertEqual(detail.status_code, 200)
+        self.assertFalse(render.call_args.kwargs["can_act"])
+
+        with patch("portal.routes.render_template", return_value="ok") as render:
+            inbox = client.get("/portal/hr/approvals")
+        self.assertEqual(inbox.status_code, 200)
+        visible_rows = (
+            render.call_args.kwargs["leave_reqs"]
+            if request_kind == KIND_LEAVE
+            else render.call_args.kwargs["perm_reqs"]
+        )
+        self.assertIn(row.id, [visible_row.id for visible_row in visible_rows])
 
         final_result = process_pending_approvals(
             now=second_due_at + timedelta(days=3),
@@ -399,6 +432,10 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             initial_approval_candidate_names_map([step])[step.id],
             [self.manager.full_name, second_manager.full_name],
         )
+        self.assertTrue(can_view_request(self.manager, KIND_LEAVE, row.id))
+        self.assertTrue(can_view_request(second_manager, KIND_LEAVE, row.id))
+        self.assertFalse(can_user_act(self.manager, step))
+        self.assertFalse(can_user_act(second_manager, step))
 
     def test_explicit_hr_notification_exemption_keeps_direct_tasks_only(self):
         """An HR member can opt out of broad HR routing without losing a direct task."""

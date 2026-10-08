@@ -14,7 +14,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css">
 
     <!-- Global CSS (cache-bust) -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v=20261004-logo-balance1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v=20261007-user-menu1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/chat_assistant.css') }}?v=20260930-language-tools">
 
     {% block extra_css %}{% endblock %}
@@ -52,10 +52,25 @@
             <button type="button" class="btn btn-outline-light btn-sm d-lg-none no-print" data-bs-toggle="offcanvas" data-bs-target="#sidebarOffcanvas" aria-controls="sidebarOffcanvas" title="القائمة">
                 <i class="bi bi-list"></i>
             </button>
-            <div class="user-badge d-none d-md-flex align-items-center gap-2">
-                <img src="{% if display_user.avatar_filename %}{{ url_for('static', filename='uploads/avatars/' ~ display_user.avatar_filename) }}{% else %}{{ url_for('static', filename='images/avatar_default.svg') }}{% endif %}" alt="avatar" style="width:32px;height:32px;border-radius:50%;object-fit:cover;border:1px solid rgba(0,0,0,.12);">
-                <span>{{ display_user.full_name }}</span>
-                <span class="user-role">({{ display_user.role|ui_label }})</span>
+            <div class="dropdown d-none d-md-block">
+                <button type="button"
+                        class="user-badge user-badge-menu-toggle d-flex align-items-center gap-2"
+                        id="user-menu-toggle"
+                        data-bs-toggle="dropdown"
+                        aria-expanded="false"
+                        aria-label="قائمة المستخدم">
+                    <img src="{% if display_user.avatar_filename %}{{ url_for('static', filename='uploads/avatars/' ~ display_user.avatar_filename) }}{% else %}{{ url_for('static', filename='images/avatar_default.svg') }}{% endif %}" alt="avatar" style="width:32px;height:32px;border-radius:50%;object-fit:cover;border:1px solid rgba(0,0,0,.12);">
+                    <span>{{ display_user.full_name }}</span>
+                    <span class="user-role">({{ display_user.role|ui_label }})</span>
+                    <i class="bi bi-chevron-down small" aria-hidden="true"></i>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end shadow" aria-labelledby="user-menu-toggle">
+                    <li>
+                        <a class="dropdown-item text-danger" href="{{ url_for('logout') }}">
+                            <i class="bi bi-box-arrow-left"></i> الخروج من النظام
+                        </a>
+                    </li>
+                </ul>
             </div>
 
             <a href="{{ url_for('workflow.notifications') }}" class="nav-link position-relative text-white p-0">

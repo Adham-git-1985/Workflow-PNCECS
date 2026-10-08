@@ -685,6 +685,36 @@ def _initial_step_approver_ids(step: HRRequestApprovalStep | None) -> list[int]:
     return _step_approver_ids(step)
 
 
+def _user_participated_in_step(user_id: int | None, step: HRRequestApprovalStep | None) -> bool:
+    """Whether a user may retain read-only history access for a step.
+
+    Timed escalation deliberately replaces ``approver_user_ids`` so that only
+    the current target can make a decision.  The original direct managers
+    remain participants, however, and must be able to follow the request
+    after one or more escalations.  This helper is intentionally separate
+    from :func:`can_user_act`: it never grants an approval action.
+    """
+    if not step:
+        return False
+    try:
+        normalized_user_id = int(user_id)
+    except (TypeError, ValueError):
+        return False
+
+    if normalized_user_id in _step_approver_ids(step):
+        return True
+    if normalized_user_id in _initial_step_approver_ids(step):
+        return True
+    return normalized_user_id in {
+        int(value)
+        for value in (
+            getattr(step, "decided_by_id", None),
+            getattr(step, "escalated_from_user_id", None),
+        )
+        if value
+    }
+
+
 def approval_candidate_names_map(steps: Iterable[HRRequestApprovalStep]) -> dict[int, list[str]]:
     """Return ordered parallel-approver names keyed by approval-step id."""
     step_rows = [step for step in steps if step and step.id]
@@ -755,6 +785,7 @@ def request_ids_user_participated_in(user: User, kind: str) -> list[int]:
             HRRequestApprovalStep.request_id,
             HRRequestApprovalStep.approver_user_id,
             HRRequestApprovalStep.approver_user_ids,
+            HRRequestApprovalStep.initial_approver_user_ids,
             HRRequestApprovalStep.decided_by_id,
             HRRequestApprovalStep.escalated_from_user_id,
         )
@@ -762,11 +793,7 @@ def request_ids_user_participated_in(user: User, kind: str) -> list[int]:
         .all()
     )
     for step in steps:
-        if (
-            int(user.id) in _step_approver_ids(step)
-            or step.decided_by_id == user.id
-            or step.escalated_from_user_id == user.id
-        ):
+        if _user_participated_in_step(user.id, step):
             request_ids.add(int(step.request_id))
     return sorted(request_ids)
 
@@ -2127,11 +2154,7 @@ def can_view_request(user: User, kind: str, request_id: int) -> bool:
     if HRRequestObserver.query.filter_by(request_kind=kind, request_id=request_id, user_id=user.id).first():
         return True
     for step in approval_steps(kind, request_id):
-        if (
-            int(user.id) in _step_approver_ids(step)
-            or step.decided_by_id == user.id
-            or step.escalated_from_user_id == user.id
-        ):
+        if _user_participated_in_step(user.id, step):
             return True
     try:
         return bool(user.has_perm("HR_REQUESTS_VIEW_ALL") or user.has_role("SUPER_ADMIN"))

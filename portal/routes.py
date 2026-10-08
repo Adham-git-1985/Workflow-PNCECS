@@ -21949,7 +21949,7 @@ def hr_leave_attachment_download(req_id: int, att_id: int):
 
     Allowed for:
     - owner employee
-    - approver
+    - current or historical approver with read-only request access
     - HR/Admin with view-all permissions
     """
     try:
@@ -21961,7 +21961,10 @@ def hr_leave_attachment_download(req_id: int, att_id: int):
     r = HRLeaveRequest.query.get_or_404(req_id)
     att = HRLeaveAttachment.query.filter_by(id=att_id, request_id=req_id).first_or_404()
 
-    allowed = (r.user_id == current_user.id) or (r.approver_user_id == current_user.id)
+    allowed = bool(
+        r.user_id == current_user.id
+        or can_view_hr_request(current_user, KIND_LEAVE, r.id)
+    )
     try:
         if current_user.has_perm(HR_REQUESTS_VIEW_ALL) or current_user.has_perm(HR_REQUESTS_APPROVE) or current_user.has_perm(HR_EMP_MANAGE) or current_user.has_perm(HR_EMP_READ):
             allowed = True
@@ -22980,6 +22983,15 @@ def hr_approvals():
     def _visible_ids(kind: str) -> set[int]:
         if status == "SUBMITTED":
             ids = set(assigned_leave_ids if kind == KIND_LEAVE else assigned_permission_ids)
+            # A manager who was replaced by timed escalation is still
+            # authorised to follow the request, but must not regain the
+            # approval action.  ``participated_*`` is already resolved above
+            # for the history tab, so this adds no query to the inbox path.
+            ids.update(
+                participated_leave_ids
+                if kind == KIND_LEAVE
+                else participated_permission_ids
+            )
             ids.update(
                 int(row.request_id)
                 for row in HRRequestObserver.query.filter_by(

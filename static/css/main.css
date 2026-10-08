@@ -585,6 +585,27 @@ canvas {
     font-weight: 700;
 }
 
+.user-badge-menu-toggle {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+}
+
+.user-badge-menu-toggle:hover {
+    color: #fff;
+    opacity: 0.9;
+}
+
+.user-badge-menu-toggle:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.9);
+    outline-offset: 4px;
+    border-radius: 6px;
+}
+
 .user-role {
     color: rgba(255, 255, 255, 0.85);
     font-weight: 600;
