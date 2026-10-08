@@ -345,17 +345,37 @@ def _notify(
         link = _request_link(kind, request_id)
     recipient_ids = {int(value) for value in user_ids if value}
     recipient_ids.intersection_update(_request_notification_recipient_ids(kind, request_id))
+    # HR requests use their existing notification audience as the single source
+    # of truth for both channels.  This keeps waiting approval stages silent and
+    # queues email only when a user actually becomes the current approver.
+    from services.notification_email import (
+        HR_REQUEST_EMAIL_MODE,
+        enqueue_notification_email,
+    )
+
     now = datetime.utcnow()
+    created_notifications: list[Notification] = []
     for user_id in sorted(recipient_ids):
-        db.session.add(Notification(
+        notification = Notification(
             user_id=user_id,
             type=ntype,
             message=message,
             source="portal",
             link_url=link,
+            email_delivery_mode=HR_REQUEST_EMAIL_MODE,
             is_read=False,
             created_at=now,
-        ))
+        )
+        db.session.add(notification)
+        created_notifications.append(notification)
+
+    if created_notifications:
+        # One flush covers the whole recipient set.  The durable outbox worker
+        # performs SMTP delivery outside the web request, preserving response
+        # time and the current approval transaction.
+        db.session.flush()
+        for notification in created_notifications:
+            enqueue_notification_email(notification)
 
 
 def _notify_view_only(

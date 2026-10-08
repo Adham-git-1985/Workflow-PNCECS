@@ -8,6 +8,7 @@ from extensions import db
 from models import Notification, NotificationEmailDelivery, SystemSetting, User
 from services.notification_email import (
     ATTENDANCE_SCHEDULE_EMAIL_MODE,
+    HR_REQUEST_EMAIL_MODE,
     NOTIFICATION_EMAILS_DISABLED_REASON,
     enqueue_notification_email,
     send_pending_notification_emails,
@@ -119,6 +120,29 @@ class NotificationEmailTests(unittest.TestCase):
         delivery = NotificationEmailDelivery.query.one()
         self.assertEqual(delivery.status, "SENT")
         self.assertIsNotNone(delivery.sent_at)
+
+    def test_hr_request_notification_is_queued_and_sent(self):
+        notification = Notification(
+            user_id=self.user.id,
+            message="Leave request is waiting for your approval",
+            source="portal",
+            link_url="/portal/hr/approvals/leaves/123",
+            email_delivery_mode=HR_REQUEST_EMAIL_MODE,
+            is_read=False,
+        )
+        db.session.add(notification)
+        db.session.flush()
+
+        self.assertTrue(enqueue_notification_email(notification))
+        db.session.commit()
+
+        with patch("services.notification_email._send_email") as send_email:
+            self.assertEqual(send_pending_notification_emails(), 1)
+        send_email.assert_called_once()
+
+        delivery = NotificationEmailDelivery.query.one()
+        self.assertEqual(delivery.user_id, self.user.id)
+        self.assertEqual(delivery.status, "SENT")
 
     def test_notification_email_is_retried_once_and_then_stops(self):
         notification = Notification(

@@ -67,7 +67,10 @@ from services.hr_request_workflow import (
     hr_approval_user_ids,
     start_request_flow,
 )
-from services.notification_email import _can_receive_hr_request_notification_email
+from services.notification_email import (
+    HR_REQUEST_EMAIL_MODE,
+    _can_receive_hr_request_notification_email,
+)
 
 
 class HRRequestApprovalWorkflowTests(unittest.TestCase):
@@ -370,9 +373,38 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(steps[1].status, "WAITING")
         self.assertEqual(steps[1].approver_user_id, self.secretary.id)
 
+        link_url = f"/portal/hr/approvals/permissions/{row.id}"
+        initial_email_recipient_ids = {
+            delivery.user_id
+            for delivery in (
+                NotificationEmailDelivery.query
+                .join(Notification, Notification.id == NotificationEmailDelivery.notification_id)
+                .filter(Notification.link_url == link_url)
+                .all()
+            )
+        }
+        self.assertEqual(
+            initial_email_recipient_ids,
+            {self.employee.id, self.manager.id},
+        )
+        self.assertNotIn(self.secretary.id, initial_email_recipient_ids)
+
         self.assertEqual(decide_request(KIND_PERMISSION, row, self.manager, "APPROVE"), "NEXT")
         self.assertEqual(row.status, "SUBMITTED")
         self.assertEqual(steps[1].status, "PENDING")
+        current_email_recipient_ids = {
+            delivery.user_id
+            for delivery in (
+                NotificationEmailDelivery.query
+                .join(Notification, Notification.id == NotificationEmailDelivery.notification_id)
+                .filter(Notification.link_url == link_url)
+                .all()
+            )
+        }
+        self.assertEqual(
+            current_email_recipient_ids,
+            {self.employee.id, self.manager.id, self.secretary.id},
+        )
         self.assertEqual(decide_request(KIND_PERMISSION, row, self.secretary, "APPROVE"), "APPROVED")
         self.assertEqual(row.status, "APPROVED")
 
@@ -914,6 +946,20 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             self.assertEqual({notification.user_id for notification in notifications}, expected_ids)
             self.assertTrue(all(notification.source == "portal" for notification in notifications))
             self.assertTrue(all(not notification.is_read for notification in notifications))
+            self.assertTrue(all(
+                notification.email_delivery_mode == HR_REQUEST_EMAIL_MODE
+                for notification in notifications
+            ))
+            email_deliveries = (
+                NotificationEmailDelivery.query
+                .join(Notification, Notification.id == NotificationEmailDelivery.notification_id)
+                .filter(Notification.link_url == link_url)
+                .all()
+            )
+            self.assertEqual(
+                {delivery.user_id for delivery in email_deliveries},
+                expected_ids,
+            )
             self.assertEqual(
                 {notification.user_id for notification in notifications if notification.type == "HR_REQUEST_SUBMITTED"},
                 {self.employee.id},
@@ -944,7 +990,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             self.assertNotIn(limited_approver.id, {notification.user_id for notification in notifications})
             self.assertNotIn(self.secretary.id, {notification.user_id for notification in notifications})
             self.assertNotIn(self.hr.id, {notification.user_id for notification in notifications})
-        self.assertEqual(NotificationEmailDelivery.query.count(), 0)
+        self.assertEqual(NotificationEmailDelivery.query.count(), 4)
 
     def test_secretary_general_returns_to_the_leave_after_final_approval(self):
         db.session.add(UserPermission(

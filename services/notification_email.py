@@ -43,10 +43,12 @@ _TROUBLE_TICKET_REQUESTER_NOTIFICATION_TYPE = "TROUBLE_TICKET_REQUESTER_UPDATE"
 ATTENDANCE_SCHEDULE_EMAIL_MODE = "ATTENDANCE_SCHEDULE"
 DELEGATION_SENSITIVE_EMAIL_MODE = "DELEGATION_SENSITIVE"
 CALENDAR_REMINDER_EMAIL_MODE = "CALENDAR_REMINDER"
+HR_REQUEST_EMAIL_MODE = "HR_REQUEST"
 _EMAIL_DELIVERY_MODES = {
     ATTENDANCE_SCHEDULE_EMAIL_MODE,
     DELEGATION_SENSITIVE_EMAIL_MODE,
     CALENDAR_REMINDER_EMAIL_MODE,
+    HR_REQUEST_EMAIL_MODE,
 }
 NOTIFICATION_EMAILS_DISABLED_REASON = "Notification emails are disabled; the notification remains available in the system."
 EMAIL_UNAVAILABLE_CANCELLED_REASON = "Skipped: recipient has no configured delivery email address."
@@ -251,7 +253,7 @@ def _claim_notification_delivery(
 
 
 def send_pending_notification_emails(limit: int = 100, now: datetime | None = None) -> int:
-    """Send opted-in attendance mail with at most one retry per row."""
+    """Send explicitly opted-in notification mail with one retry per row."""
     now = now or datetime.utcnow()
     _recover_stale_notification_deliveries(now)
     pending_deliveries = NotificationEmailDelivery.query.filter_by(status=PENDING).all()
