@@ -114,6 +114,14 @@ class UnifiedApprovalsInboxTests(unittest.TestCase):
         self.assertEqual([row.id for row in schedule_rows], [plan.id])
         self.assertEqual(manual_rows, [])
 
+        with self.app.test_request_context("/portal/hr/approvals"):
+            employee_schedule_rows, employee_manual_rows = _attendance_approval_inbox_rows(
+                user=self.employee
+            )
+
+        self.assertEqual(employee_schedule_rows, [])
+        self.assertEqual(employee_manual_rows, [])
+
     def test_daily_edit_is_available_to_administrative_affairs_reviewer(self):
         correction = HRAttendanceSpecialCase(
             user_id=self.employee.id,
@@ -166,7 +174,7 @@ class UnifiedApprovalsInboxTests(unittest.TestCase):
         self.assertEqual(manual_rows[0].review_stage, "SECRETARY_GENERAL")
         self.assertTrue(manual_rows[0].can_review)
 
-    def test_pending_schedule_remains_visible_to_a_manager_who_already_reviewed_it(self):
+    def test_pending_schedule_is_hidden_after_manager_completed_their_stage(self):
         plan = HRAttendanceSchedulePlan(
             user_id=self.employee.id,
             manager_user_id=self.manager.id,
@@ -183,11 +191,10 @@ class UnifiedApprovalsInboxTests(unittest.TestCase):
         with self.app.test_request_context("/portal/hr/approvals?status=SUBMITTED"):
             schedule_rows, manual_rows = _attendance_approval_inbox_rows("SUBMITTED", user=self.manager)
 
-        self.assertEqual([row.id for row in schedule_rows], [plan.id])
-        self.assertIsNone(schedule_rows[0].review_stage)
+        self.assertEqual(schedule_rows, [])
         self.assertEqual(manual_rows, [])
 
-    def test_pending_daily_edit_remains_visible_to_its_creator(self):
+    def test_pending_daily_edit_is_hidden_from_creator_without_current_action(self):
         correction = HRAttendanceSpecialCase(
             user_id=self.employee.id,
             day="2032-01-04",
@@ -205,8 +212,10 @@ class UnifiedApprovalsInboxTests(unittest.TestCase):
             schedule_rows, manual_rows = _attendance_approval_inbox_rows("SUBMITTED", user=self.manager)
 
         self.assertEqual(schedule_rows, [])
-        self.assertEqual([row.id for row in manual_rows], [correction.id])
-        self.assertFalse(manual_rows[0].can_review)
+        self.assertEqual(manual_rows, [])
+
+    def test_every_employee_can_open_an_empty_personal_inbox(self):
+        self.assertTrue(_hr_approvals_can_open(self.employee))
 
     def test_page_permission_can_be_assigned_without_granting_an_action_stage(self):
         self.assertTrue(_hr_approvals_can_open(self.viewer))

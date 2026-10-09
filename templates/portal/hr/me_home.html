@@ -14,6 +14,20 @@
 
 <div class="row g-3">
   <div class="col-12 col-md-6 col-lg-3">
+    <div class="p-3 rounded-3 shadow-sm h-100 border border-warning" style="background:linear-gradient(145deg,#fffdf4,#fff7d6);">
+      <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+        <div class="d-flex align-items-center gap-2">
+          <i class="bi bi-check2-square fs-4 text-warning"></i>
+          <div class="fw-bold">الموافقات المطلوبة مني</div>
+        </div>
+        <span class="badge {{ 'text-bg-warning' if approvals_pending else 'text-bg-light' }}">{{ approvals_pending }}</span>
+      </div>
+      <div class="text-muted small mb-3">إجازات ومغادرات وتغييرات دوام تنتظر قرارك فقط.</div>
+      <a class="btn btn-warning w-100 fw-bold" href="{{ url_for('portal.hr_approvals') }}">فتح صندوق الموافقات</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-3">
     <div class="p-3 rounded-3 shadow-sm h-100 border border-primary text-white" style="background:linear-gradient(135deg,#5a3ed0,#168ddd);">
       <div class="d-flex align-items-center gap-2 mb-2">
         <i class="bi bi-calendar2-week-fill fs-4"></i>

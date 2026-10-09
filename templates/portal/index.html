@@ -15,7 +15,7 @@
           <div class="text-muted">اختر الخدمة التي تريدها — سترى فقط ما هو مفعّل حسب صلاحياتك.</div>
         </div>
         <div class="d-flex gap-2 flex-wrap">
-          {% if f.get('can_approve') and s.get('approvals_pending', 0)|int > 0 %}
+          {% if s.get('approvals_pending', 0)|int > 0 %}
             <a class="btn btn-outline-warning" href="{{ url_for('portal.hr_approvals') }}">
               <i class="bi bi-check2-square"></i> موافقات ({{ s.get('approvals_pending', 0) }})
             </a>
@@ -299,9 +299,9 @@
             <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_leave_request_new') }}">طلب إجازة</a>
             <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_permission_request_new') }}">طلب مغادرة</a>
           {% endif %}
-          {% if f.get('can_approve') %}
-            <a class="btn btn-outline-warning" href="{{ url_for('portal.hr_approvals') }}">الموافقات</a>
-          {% endif %}
+          <a class="btn btn-outline-warning" href="{{ url_for('portal.hr_approvals') }}">
+            الموافقات{% if s.get('approvals_pending', 0)|int > 0 %} ({{ s.get('approvals_pending', 0) }}){% endif %}
+          </a>
         </div>
         <div class="text-muted small mt-2">طلباتك قيد المراجعة: <b>{{ s.get('my_requests_open', 0) }}</b></div>
       {% else %}

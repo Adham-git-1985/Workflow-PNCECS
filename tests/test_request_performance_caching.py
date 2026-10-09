@@ -223,7 +223,7 @@ class RequestPerformanceCachingTests(unittest.TestCase):
         self.assertGreater(first_call_count, 0)
         self.assertEqual(user.has_perm.call_count, first_call_count)
 
-    def test_hr_attendance_badge_counts_without_loading_the_inbox(self):
+    def test_hr_attendance_badge_counts_assigned_rows_without_loading_the_inbox(self):
         user = User(
             email="attendance-badge@example.test",
             password_hash="not-used-in-test",
@@ -234,11 +234,12 @@ class RequestPerformanceCachingTests(unittest.TestCase):
         db.session.add_all((
             UserPermission(
                 user_id=user.id,
-                key="HR_REQUESTS_VIEW_ALL",
+                key="HR_ATTENDANCE_EDIT_APPROVE",
                 is_allowed=True,
             ),
             HRAttendanceSchedulePlan(
                 user_id=user.id,
+                manager_user_id=user.id,
                 period_start="2032-01-04",
                 period_end="2032-01-10",
                 version_no=1,
@@ -260,6 +261,9 @@ class RequestPerformanceCachingTests(unittest.TestCase):
             with patch(
                 "portal.routes._attendance_approval_inbox_rows",
                 side_effect=AssertionError("the badge must not hydrate the inbox"),
+            ), patch(
+                "portal.routes._attendance_edit_hr_approver_user_ids",
+                return_value=[user.id],
             ):
                 self.assertEqual(_attendance_approval_pending_count(request_user), 2)
 

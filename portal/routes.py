@@ -1002,6 +1002,9 @@ def _portal_flags():
         or has(HR_SS_WORKFLOWS_MANAGE)
         or assigned_hr_request
     )
+    # Every Portal employee may open the personal approvals inbox.  Action
+    # permissions are still resolved per request and per workflow stage.
+    can_open_approvals = has(PORTAL_READ)
 
     flags = {
         'can_corr': can_corr,
@@ -1015,6 +1018,7 @@ def _portal_flags():
         'can_portal_admin': can_portal_admin,
         'can_meetings_manage': can_meetings_manage,
         'can_approve': can_approve,
+        'can_open_approvals': can_open_approvals,
         'can_corr_create': has(CORR_CREATE),
         'can_hr_req_create': has(HR_REQUESTS_CREATE),
     }
@@ -1323,41 +1327,65 @@ def _inject_portal_sidebar_context():
 
 
 def _attendance_approval_pending_count(user=None) -> int:
-    """Count pending attendance approvals without hydrating the full inbox.
-
-    HR users who can view every request used to load and inspect up to 500
-    schedule changes plus 500 manual corrections on every Portal page merely
-    to draw the approvals badge. Their visibility is global, so two indexed
-    counts preserve the result without the per-row workflow work.
-    """
+    """Count attendance decisions currently assigned to the selected user."""
     selected_user = user or current_user
     try:
-        if selected_user.has_perm(HR_REQUESTS_VIEW_ALL):
-            return (
-                _safe_count(
-                    HRAttendanceSchedulePlan.query
-                    .filter(HRAttendanceSchedulePlan.request_type == 'CHANGE_REQUEST')
-                    .filter(HRAttendanceSchedulePlan.status.in_(
-                        _ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES
-                    ))
-                )
-                + _safe_count(
-                    HRAttendanceSpecialCase.query
-                    .filter(HRAttendanceSpecialCase.kind == 'MANUAL_ATTENDANCE')
-                    .filter(HRAttendanceSpecialCase.approval_status == 'PENDING')
-                )
-            )
+        schedule_count = _safe_count(
+            HRAttendanceSchedulePlan.query
+            .filter(HRAttendanceSchedulePlan.request_type == "CHANGE_REQUEST")
+            .filter(_attendance_schedule_pending_condition(selected_user))
+        )
+        manual_count = _safe_count(
+            HRAttendanceSpecialCase.query
+            .filter(HRAttendanceSpecialCase.kind == "MANUAL_ATTENDANCE")
+            .filter(HRAttendanceSpecialCase.approval_status == "PENDING")
+            .filter(_manual_attendance_pending_condition(selected_user))
+        )
+        return schedule_count + manual_count
+    except Exception:
+        return 0
+
+
+def _approval_inbox_pending_count(user=None) -> int:
+    """Return the number of requests currently awaiting this user's decision."""
+    selected_user = user or current_user
+    try:
+        user_id = int(selected_user.id)
+    except (AttributeError, TypeError, ValueError):
+        return 0
+
+    cache = None
+    cache_key = None
+    if has_request_context():
+        request_marker = request._get_current_object()
+        cache_markers = getattr(g, "_portal_context_request_markers", None)
+        if cache_markers is None:
+            cache_markers = {}
+            g._portal_context_request_markers = cache_markers
+        cache = getattr(g, "_approval_inbox_pending_counts", None)
+        if cache is None or cache_markers.get("approval_inbox_counts") is not request_marker:
+            cache = {}
+            g._approval_inbox_pending_counts = cache
+            cache_markers["approval_inbox_counts"] = request_marker
+        cache_key = user_id
+        if cache_key in cache:
+            return int(cache[cache_key])
+
+    total = 0
+    try:
+        total += len(_hr_request_ids_for_user(selected_user, KIND_LEAVE))
+        total += len(_hr_request_ids_for_user(selected_user, KIND_PERMISSION))
+    except Exception:
+        pass
+    total += _attendance_approval_pending_count(selected_user)
+    try:
+        total += len(_visible_maternity_departures("PENDING", user=selected_user))
     except Exception:
         pass
 
-    try:
-        schedule_rows, manual_rows = _attendance_approval_inbox_rows(
-            'SUBMITTED',
-            user=selected_user,
-        )
-        return len(schedule_rows) + len(manual_rows)
-    except Exception:
-        return 0
+    if cache is not None and cache_key is not None:
+        cache[cache_key] = total
+    return total
 
 
 @portal_bp.context_processor
@@ -1369,37 +1397,11 @@ def _inject_portal_context():
     flags = _portal_flags()
 
     can_review_manual_attendance = _hr_can_approve_attendance_edit()
-    approvals_pending = 0
-    if flags.get('can_approve'):
-        try:
-            if current_user.has_perm(HR_REQUESTS_VIEW_ALL):
-                approvals_pending = (
-                    _safe_count(HRLeaveRequest.query.filter(HRLeaveRequest.status == 'SUBMITTED'))
-                    + _safe_count(HRPermissionRequest.query.filter(HRPermissionRequest.status == 'SUBMITTED'))
-                )
-            else:
-                approvals_pending = (
-                    len(_current_user_approvable_request_ids(KIND_LEAVE))
-                    + len(_current_user_approvable_request_ids(KIND_PERMISSION))
-                )
-        except Exception:
-            approvals_pending = 0
-    if flags.get('can_approve') or can_review_manual_attendance:
-        approvals_pending += _attendance_approval_pending_count()
-
-    # Include HR Self-Service approvals pending
-    try:
-        if current_user.has_perm(HR_SS_APPROVE) or current_user.has_perm(HR_SS_WORKFLOWS_MANAGE) or current_user.has_perm(HR_REQUESTS_VIEW_ALL):
-            role = (getattr(current_user, 'role', None) or '').strip()
-            q_ss = HRSSRequestApproval.query.filter(HRSSRequestApproval.status == 'PENDING')
-            if not (current_user.has_perm(HR_SS_WORKFLOWS_MANAGE) or current_user.has_perm(HR_REQUESTS_VIEW_ALL)):
-                q_ss = q_ss.filter(or_(
-                    HRSSRequestApproval.approver_user_id == current_user.id,
-                    func.upper(HRSSRequestApproval.approver_role) == func.upper(role)
-                ))
-            approvals_pending += _safe_count(q_ss)
-    except Exception:
-        pass
+    approvals_pending = (
+        _approval_inbox_pending_count(current_user)
+        if flags.get('can_approve') or can_review_manual_attendance
+        else 0
+    )
 
     # Store: count files shared with me (user or role). This enables a "Shared files" shortcut
     # even when STORE_READ is not granted.
@@ -4364,21 +4366,8 @@ def index():
         except Exception:
             pass
 
-    if flags.get('can_approve'):
-        try:
-            # use injected badge logic (but also pass explicitly for index template)
-            if current_user.has_perm(HR_REQUESTS_VIEW_ALL):
-                stats['approvals_pending'] = (
-                    _safe_count(HRLeaveRequest.query.filter(HRLeaveRequest.status == 'SUBMITTED'))
-                    + _safe_count(HRPermissionRequest.query.filter(HRPermissionRequest.status == 'SUBMITTED'))
-                )
-            else:
-                stats['approvals_pending'] = (
-                    len(_current_user_approvable_request_ids(KIND_LEAVE))
-                    + len(_current_user_approvable_request_ids(KIND_PERMISSION))
-                )
-        except Exception:
-            pass
+    if flags.get('can_open_approvals'):
+        stats['approvals_pending'] = _approval_inbox_pending_count(current_user)
 
 
     # --- Transport quick stats (this month + pending permits) ---
@@ -15112,7 +15101,11 @@ def _can_review_maternity_departure(row: HRAttendanceSpecialCase | None, user=No
     )
 
 
-def _visible_maternity_departures(status: str = 'PENDING') -> list[HRAttendanceSpecialCase]:
+def _visible_maternity_departures(
+    status: str = 'PENDING',
+    user=None,
+) -> list[HRAttendanceSpecialCase]:
+    selected_user = user or current_user
     query = HRAttendanceSpecialCase.query.filter(
         HRAttendanceSpecialCase.kind == 'MATERNITY_DEPARTURE'
     )
@@ -15126,7 +15119,7 @@ def _visible_maternity_departures(status: str = 'PENDING') -> list[HRAttendanceS
         HRAttendanceSpecialCase.created_at.desc(),
         HRAttendanceSpecialCase.id.desc(),
     ).limit(500).all()
-    return [row for row in rows if _can_review_maternity_departure(row)]
+    return [row for row in rows if _can_review_maternity_departure(row, selected_user)]
 
 
 def _attendance_summary_keys_for_period(user_id: int, day: str, day_to: str | None) -> set[tuple[int, str]]:
@@ -19890,6 +19883,7 @@ def hr_me_home():
 
     # Quick stats (best-effort; never break the dashboard)
     uid = current_user.id
+    approvals_pending = _approval_inbox_pending_count(current_user)
 
     achievements_total = HREmployeeAchievement.query.filter_by(user_id=uid).count()
     achievements_pending = HREmployeeAchievement.query.filter_by(user_id=uid, status="PENDING").count()
@@ -20008,6 +20002,7 @@ def hr_me_home():
         can_sys_eval=can_sys_eval,
         can_own_hr_requests=can_own_hr_requests,
         can_transport_request=can_transport_request,
+        approvals_pending=approvals_pending,
         attendance_events_today=attendance_events_today,
         attendance_events_month=attendance_events_month,
         leaves_total=leaves_total,
@@ -22696,47 +22691,11 @@ def hr_permission_request_form(req_id: int, form_format: str):
 
 
 def _hr_approvals_can_open(user=None) -> bool:
-    """Return whether an account may open the unified HR approvals inbox."""
+    """Allow every Portal account to open its personal approvals inbox."""
     selected_user = user or current_user
     try:
-        if any(
-            selected_user.has_perm(key)
-            for key in (
-                HR_APPROVALS_VIEW,
-                HR_REQUESTS_APPROVE,
-                HR_REQUESTS_VIEW_ALL,
-                HR_ATT_EDIT_APPROVE,
-                HR_SS_APPROVE,
-                HR_SS_WORKFLOWS_MANAGE,
-            )
-        ):
-            return True
-    except Exception:
-        pass
-    try:
-        selected_user_id = int(selected_user.id)
-        if (
-            _user_is_super_admin_account(selected_user)
-            or selected_user_id in set(_attendance_edit_hr_approver_user_ids())
-            or selected_user_id in set(secretary_general_user_ids())
-        ):
-            return True
-    except Exception:
-        pass
-    try:
-        if (
-            _hr_request_ids_for_user(selected_user, KIND_LEAVE)
-            or _hr_request_ids_for_user(selected_user, KIND_PERMISSION)
-        ):
-            return True
-        # A prior approver must retain access to the history tab after the
-        # request leaves the pending queue.  The route below already limits
-        # the rows to requests in which this user actually participated.
-        return bool(
-            _hr_request_ids_for_user(selected_user, KIND_LEAVE, participated=True)
-            or _hr_request_ids_for_user(selected_user, KIND_PERMISSION, participated=True)
-        )
-    except Exception:
+        return bool(int(selected_user.id) > 0)
+    except (AttributeError, TypeError, ValueError):
         return False
 
 
@@ -22790,6 +22749,82 @@ def _attendance_schedule_review_stage(
     return None
 
 
+def _attendance_schedule_pending_condition(user):
+    """Build the indexed schedule-inbox scope for one reviewer."""
+    try:
+        user_id = int(user.id)
+    except (AttributeError, TypeError, ValueError):
+        return HRAttendanceSchedulePlan.id == -1
+
+    if _attendance_schedule_is_super_admin(user):
+        return HRAttendanceSchedulePlan.status.in_(
+            _ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES
+        )
+
+    conditions = []
+    direct_report_ids: list[int] = []
+    try:
+        if _attendance_schedule_has_reports(user_id):
+            direct_report_ids = [
+                int(report.id)
+                for report in _attendance_schedule_direct_reports(user_id)
+            ]
+    except Exception:
+        direct_report_ids = []
+
+    manager_scope = HRAttendanceSchedulePlan.manager_user_id == user_id
+    if direct_report_ids:
+        manager_scope = or_(
+            manager_scope,
+            HRAttendanceSchedulePlan.user_id.in_(direct_report_ids),
+        )
+    conditions.append(and_(
+        HRAttendanceSchedulePlan.status == "SUBMITTED",
+        manager_scope,
+    ))
+
+    if _attendance_schedule_is_general_director(user):
+        conditions.append(and_(
+            HRAttendanceSchedulePlan.status == "MANAGER_APPROVED",
+            HRAttendanceSchedulePlan.general_director_user_id == user_id,
+        ))
+
+    if _attendance_schedule_is_final_approver(user):
+        conditions.extend((
+            and_(
+                HRAttendanceSchedulePlan.status == "MANAGER_APPROVED",
+                HRAttendanceSchedulePlan.general_director_user_id.is_(None),
+            ),
+            HRAttendanceSchedulePlan.status == "GENERAL_DIRECTOR_APPROVED",
+        ))
+
+    return or_(*conditions)
+
+
+def _manual_attendance_pending_condition(user):
+    """Build the current manual-attendance decision scope for one reviewer."""
+    try:
+        user_id = int(user.id)
+    except (AttributeError, TypeError, ValueError):
+        return HRAttendanceSpecialCase.id == -1
+
+    if _user_is_super_admin_account(user):
+        return HRAttendanceSpecialCase.id.isnot(None)
+
+    conditions = []
+    if user_id in set(_attendance_edit_hr_approver_user_ids()):
+        conditions.append(and_(
+            HRAttendanceSpecialCase.approved_by_id.is_(None),
+            HRAttendanceSpecialCase.approved_at.is_(None),
+        ))
+    if user_id in set(_attendance_edit_final_approver_user_ids()):
+        conditions.append(or_(
+            HRAttendanceSpecialCase.approved_by_id.isnot(None),
+            HRAttendanceSpecialCase.approved_at.isnot(None),
+        ))
+    return or_(*conditions) if conditions else HRAttendanceSpecialCase.id == -1
+
+
 def _attendance_schedule_history_visible(plan: HRAttendanceSchedulePlan, user) -> bool:
     """Keep non-pending schedule history limited to reviewers and HR viewers."""
     try:
@@ -22807,8 +22842,6 @@ def _attendance_schedule_history_visible(plan: HRAttendanceSchedulePlan, user) -
                 getattr(plan, "general_director_user_id", None),
                 getattr(plan, "general_director_approved_by_id", None),
                 getattr(plan, "final_approved_by_id", None),
-                getattr(plan, "updated_by_id", None),
-                getattr(plan, "user_id", None),
             )
             if value
         }
@@ -22825,10 +22858,8 @@ def _manual_attendance_history_visible(row: HRAttendanceSpecialCase, user) -> bo
         return user_id in {
             int(value)
             for value in (
-                getattr(row, "created_by_id", None),
                 getattr(row, "approved_by_id", None),
                 getattr(row, "final_approved_by_id", None),
-                getattr(row, "user_id", None),
             )
             if value
         }
@@ -22858,7 +22889,11 @@ def _attendance_approval_inbox_rows(
     schedule_query = HRAttendanceSchedulePlan.query.filter(
         HRAttendanceSchedulePlan.request_type == "CHANGE_REQUEST"
     )
-    if normalized_status in schedule_statuses:
+    if normalized_status == "SUBMITTED":
+        schedule_query = schedule_query.filter(
+            _attendance_schedule_pending_condition(selected_user)
+        )
+    elif normalized_status in schedule_statuses:
         schedule_query = schedule_query.filter(
             HRAttendanceSchedulePlan.status.in_(schedule_statuses[normalized_status])
         )
@@ -22870,7 +22905,12 @@ def _attendance_approval_inbox_rows(
     manual_query = HRAttendanceSpecialCase.query.filter(
         HRAttendanceSpecialCase.kind == "MANUAL_ATTENDANCE"
     )
-    if normalized_status in manual_statuses:
+    if normalized_status == "SUBMITTED":
+        manual_query = manual_query.filter(
+            HRAttendanceSpecialCase.approval_status == "PENDING",
+            _manual_attendance_pending_condition(selected_user),
+        )
+    elif normalized_status in manual_statuses:
         manual_values = manual_statuses[normalized_status]
         manual_query = (
             manual_query.filter(HRAttendanceSpecialCase.approval_status.in_(manual_values))
@@ -22886,10 +22926,10 @@ def _attendance_approval_inbox_rows(
     for plan in schedule_rows:
         stage = _attendance_schedule_review_stage(plan, selected_user)
         if normalized_status == "SUBMITTED":
-            # A request remains pending until its final approval.  A manager
-            # who has already completed an earlier stage must still see that
-            # pending request, rather than seeing it only under "All".
-            if not (stage or _attendance_schedule_history_visible(plan, selected_user)):
+            # The active inbox contains only decisions currently assigned to
+            # this user. Earlier reviewers can find their completed work in
+            # the history filters instead of seeing it as still actionable.
+            if not stage:
                 continue
         elif not (stage or _attendance_schedule_history_visible(plan, selected_user)):
             continue
@@ -22901,9 +22941,7 @@ def _attendance_approval_inbox_rows(
         stage = _manual_attendance_review_stage(row)
         can_act = bool(stage and _can_review_manual_attendance(row, selected_user))
         if normalized_status == "SUBMITTED":
-            # The creator and prior reviewers need to track a daily edit
-            # while it is awaiting a later approver as well.
-            if not (can_act or _manual_attendance_history_visible(row, selected_user)):
+            if not can_act:
                 continue
         elif not (can_act or _manual_attendance_history_visible(row, selected_user)):
             continue
@@ -22923,21 +22961,13 @@ def hr_approvals():
         abort(403)
 
     can_view_all = False
-    can_approve = False
     try:
         can_view_all = current_user.has_perm(HR_REQUESTS_VIEW_ALL)
-        can_approve = (
-            current_user.has_perm(HR_APPROVALS_VIEW)
-            or current_user.has_perm(HR_REQUESTS_APPROVE)
-            or current_user.has_perm(HR_ATT_EDIT_APPROVE)
-            or can_view_all
-        )
     except Exception:
         pass
 
     assigned_leave_ids = _current_user_approvable_request_ids(KIND_LEAVE)
     assigned_permission_ids = _current_user_approvable_request_ids(KIND_PERMISSION)
-    pending_maternity_reqs = _visible_maternity_departures('PENDING')
     participated_leave_ids = set(
         _hr_request_ids_for_user(current_user, KIND_LEAVE, participated=True)
     )
@@ -22952,18 +22982,6 @@ def hr_approvals():
             observer_scope="SECRETARY_GENERAL_VIEW_ONLY",
         ).all()
     }
-    has_request_history = bool(
-        participated_leave_ids
-        or participated_permission_ids
-        or HRRequestObserver.query.filter_by(user_id=current_user.id).first()
-    )
-    can_approve = bool(
-        can_approve
-        or assigned_leave_ids
-        or assigned_permission_ids
-        or pending_maternity_reqs
-        or has_request_history
-    )
 
     status = (request.args.get("status") or "SUBMITTED").upper()
     allowed_status = {"SUBMITTED", "APPROVED", "REJECTED", "CANCELLED", "ALL"}
@@ -22971,36 +22989,22 @@ def hr_approvals():
         status = "SUBMITTED"
     maternity_reqs = _visible_maternity_departures(status)
     attendance_schedule_reqs, attendance_manual_reqs = _attendance_approval_inbox_rows(status)
-    can_approve = bool(
-        can_approve
-        or attendance_schedule_reqs
-        or attendance_manual_reqs
-        or maternity_reqs
-    )
-    if not can_approve:
-        abort(403)
 
     def _visible_ids(kind: str) -> set[int]:
         if status == "SUBMITTED":
-            ids = set(assigned_leave_ids if kind == KIND_LEAVE else assigned_permission_ids)
-            # A manager who was replaced by timed escalation is still
-            # authorised to follow the request, but must not regain the
-            # approval action.  ``participated_*`` is already resolved above
-            # for the history tab, so this adds no query to the inbox path.
-            ids.update(
-                participated_leave_ids
+            # The default inbox is actionable work only. Prior approvers and
+            # read-only observers remain available through the history tabs.
+            return set(
+                assigned_leave_ids
                 if kind == KIND_LEAVE
-                else participated_permission_ids
+                else assigned_permission_ids
             )
-            ids.update(
-                int(row.request_id)
-                for row in HRRequestObserver.query.filter_by(
-                    request_kind=kind,
-                    user_id=current_user.id,
-                ).all()
-            )
-            return ids
         ids = set(participated_leave_ids if kind == KIND_LEAVE else participated_permission_ids)
+        ids.update(
+            assigned_leave_ids
+            if kind == KIND_LEAVE
+            else assigned_permission_ids
+        )
         ids.update(
             int(row.request_id)
             for row in HRRequestObserver.query.filter_by(request_kind=kind, user_id=current_user.id).all()

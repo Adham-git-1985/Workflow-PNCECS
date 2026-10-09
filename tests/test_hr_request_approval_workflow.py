@@ -279,9 +279,8 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertIsNone(step.due_at)
         self.assertTrue(can_user_act(second_approver, step))
         self.assertFalse(can_user_act(first_approver, step))
-        # Escalation only removes the former manager's decision authority.
-        # Both the initially assigned manager and the first escalated target
-        # retain read-only access to the request history.
+        # Escalation removes the former manager from the active inbox. Both
+        # earlier reviewers retain read-only access through the history tabs.
         self.assertTrue(can_view_request(self.manager, request_kind, row.id))
         self.assertTrue(can_view_request(first_approver, request_kind, row.id))
         self.assertIn(
@@ -309,7 +308,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             if request_kind == KIND_LEAVE
             else render.call_args.kwargs["perm_reqs"]
         )
-        self.assertIn(row.id, [visible_row.id for visible_row in visible_rows])
+        self.assertNotIn(row.id, [visible_row.id for visible_row in visible_rows])
 
         final_result = process_pending_approvals(
             now=second_due_at + timedelta(days=3),
@@ -1714,7 +1713,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(permission_list.status_code, 200)
         self.assertIn(f"/portal/hr/approvals/permissions/{permission.id}", permission_list.get_data(as_text=True))
 
-    def test_unrelated_employee_cannot_view_or_receive_request_updates(self):
+    def test_unrelated_employee_opens_empty_inbox_but_cannot_view_request_or_updates(self):
         outsider = User(
             email="outsider@example.test",
             name="Outsider",
@@ -1734,7 +1733,26 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         client = self.app.test_client()
         self._login(client, outsider.id)
         self.assertEqual(client.get(f"/portal/hr/approvals/leaves/{row.id}").status_code, 403)
-        self.assertEqual(client.get("/portal/hr/approvals").status_code, 403)
+        rendered_inbox = client.get("/portal/hr/approvals")
+        self.assertEqual(rendered_inbox.status_code, 200)
+        self.assertIn("الموافقات", rendered_inbox.get_data(as_text=True))
+        self.assertNotIn(
+            f"/portal/hr/approvals/leaves/{row.id}",
+            rendered_inbox.get_data(as_text=True),
+        )
+        employee_services = client.get("/portal/hr/me")
+        self.assertEqual(employee_services.status_code, 200)
+        self.assertIn(
+            "الموافقات المطلوبة مني",
+            employee_services.get_data(as_text=True),
+        )
+        with patch("portal.routes.render_template", return_value="ok") as render:
+            inbox = client.get("/portal/hr/approvals")
+        self.assertEqual(inbox.status_code, 200)
+        self.assertEqual(render.call_args.kwargs["leave_reqs"], [])
+        self.assertEqual(render.call_args.kwargs["perm_reqs"], [])
+        self.assertEqual(render.call_args.kwargs["attendance_schedule_reqs"], [])
+        self.assertEqual(render.call_args.kwargs["attendance_manual_reqs"], [])
 
         _notify(
             [self.manager.id, outsider.id],
