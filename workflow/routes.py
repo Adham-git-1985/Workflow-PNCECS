@@ -76,6 +76,10 @@ from services.workflow_confidentiality import (
     filter_confidential_workflow_user_ids,
     is_confidential_workflow,
 )
+from services.workflow_request_views import (
+    mark_workflow_request_viewed,
+    unopened_workflow_request_ids,
+)
 from services.correspondence_workflow import (
     correspondence_target_user_ids,
     correspondence_context,
@@ -5337,6 +5341,27 @@ def inbox():
                 filtered.append((req, inst, step))
             rows = filtered
 
+    workflow_total = len(rows)
+    inbox_page = max(1, request.args.get("page", type=int, default=1))
+    try:
+        inbox_per_page = max(
+            10,
+            min(int(current_app.config.get("WORKFLOW_INBOX_PAGE_SIZE", 25)), 100),
+        )
+    except (TypeError, ValueError):
+        inbox_per_page = 25
+    inbox_pages = max(1, (workflow_total + inbox_per_page - 1) // inbox_per_page)
+    inbox_page = min(inbox_page, inbox_pages)
+    inbox_start = (inbox_page - 1) * inbox_per_page
+    rows = rows[inbox_start:inbox_start + inbox_per_page]
+    new_request_ids = unopened_workflow_request_ids(
+        current_user.id,
+        {
+            int(req.id): int(getattr(inst, "current_step_order", 0) or 0)
+            for req, inst, _step in rows
+        },
+    )
+
     corr_tasks = _correspondence_inbox_tasks(actor_users, search)
     request_summaries = _workflow_user_summaries(rows)
     for req, inst, step in rows:
@@ -5396,6 +5421,13 @@ def inbox():
         q=search,
         last_circulars=last_circulars,
         request_summaries=request_summaries,
+        new_request_ids=new_request_ids,
+        workflow_total=workflow_total,
+        inbox_page=inbox_page,
+        inbox_pages=inbox_pages,
+        inbox_per_page=inbox_per_page,
+        inbox_first_item=(inbox_start + 1) if workflow_total else 0,
+        inbox_last_item=min(inbox_start + len(rows), workflow_total),
         hierarchy_bypass_instance_ids=hierarchy_bypass_instance_ids,
         movement_tasks=movement_tasks,
         supply_tasks=supply_tasks,
@@ -5635,6 +5667,17 @@ def work_dashboard():
     page = min(page, pages)
     start = (page - 1) * per_page
     page_rows = filtered[start:start + per_page]
+    new_request_ids = unopened_workflow_request_ids(
+        current_user.id,
+        {
+            int(row["req"].id): int(
+                getattr(row.get("inst"), "current_step_order", 0) or 0
+            )
+            for row in page_rows
+        },
+    )
+    for row in page_rows:
+        row["is_new"] = int(row["req"].id) in new_request_ids
 
     try:
         assignee_preview_limit = max(
@@ -6523,6 +6566,8 @@ def view_request(request_id):
             flash("غير مصرح لك بمراجعة هذا الطلب", "danger")
             return redirect(url_for("workflow.inbox"))
 
+    inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
+
     # ✅ Mark related WORKFLOW notifications as read when the approver opens the request
     try:
         pending_notifs = (
@@ -6533,7 +6578,13 @@ def view_request(request_id):
                 Notification.is_read.is_(False),
                 Notification.is_visible.is_(True),
                 Notification.type == "WORKFLOW",
-                Notification.message.contains(f"#{req.id}")
+                or_(
+                    and_(
+                        Notification.target_type == "WorkflowRequest",
+                        Notification.target_id == req.id,
+                    ),
+                    Notification.message.contains(f"#{req.id}"),
+                ),
             )
             .all()
         )
@@ -6546,7 +6597,21 @@ def view_request(request_id):
     except Exception:
         db.session.rollback()
 
-    inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
+    try:
+        if mark_workflow_request_viewed(
+            current_user.id,
+            req.id,
+            inst.current_step_order if inst else 0,
+        ):
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "Unable to record workflow request view for request %s and user %s",
+            req.id,
+            current_user.id,
+        )
+
     template = WorkflowTemplate.query.get(inst.template_id) if (inst and inst.template_id) else None
     corr_source = correspondence_context(req)
     if corr_source:

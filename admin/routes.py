@@ -24,6 +24,10 @@ from sqlalchemy import func, or_
 from datetime import datetime, timedelta
 from filters.request_filters import apply_request_filters
 from filters.request_filters import get_sla_days, get_escalation_days
+from services.workflow_request_views import (
+    unopened_workflow_request_ids,
+    workflow_current_step_orders,
+)
 from utils.ui_labels import ui_label
 from sqlalchemy import case
 from io import BytesIO
@@ -468,9 +472,20 @@ def admin_requests():
         WorkflowRequest.created_at.desc()
     ).all()
 
+    request_ids = [int(workflow_request.id) for workflow_request in requests]
+    current_steps = workflow_current_step_orders(request_ids)
+    new_request_ids = unopened_workflow_request_ids(
+        current_user.id,
+        {
+            request_id: current_steps.get(request_id, 0)
+            for request_id in request_ids
+        },
+    )
+
     return render_template(
         "admin/requests.html",
         requests=requests,
+        new_request_ids=new_request_ids,
         is_admin=True
     )
 

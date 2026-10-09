@@ -166,7 +166,10 @@
 <div class="card shadow-sm">
   <div class="card-header bg-primary bg-opacity-10 d-flex flex-wrap justify-content-between align-items-center gap-2">
     <h5 class="mb-0"><i class="bi bi-signpost-split"></i> مهام المسارات</h5>
-    <span class="badge text-bg-primary">{{ rows|length }}</span>
+    <div class="d-flex align-items-center gap-2">
+      <small class="text-muted">{{ inbox_first_item }}–{{ inbox_last_item }} من {{ workflow_total }}</small>
+      <span class="badge text-bg-primary">{{ workflow_total }}</span>
+    </div>
   </div>
   <div class="table-responsive">
     <table class="table table-hover mb-0">
@@ -185,7 +188,12 @@
         {% for req, inst, step in rows %}
         <tr>
           <td>{{ req.id }}</td>
-          <td>{{ req.title }}</td>
+          <td>
+            {{ req.title }}
+            {% if req.id in new_request_ids %}
+              <span class="badge rounded-pill text-bg-danger ms-1">جديد</span>
+            {% endif %}
+          </td>
           <td><span class="badge {{ 'bg-secondary' if req.status == 'CLOSED' else ('bg-success' if req.status == 'APPROVED' else ('bg-danger' if req.status == 'REJECTED' else 'bg-primary')) }}">{{ req.status|workflow_status_label }}</span></td>
           <td>
             الخطوة {{ step.step_order }}
@@ -211,6 +219,44 @@
       </tbody>
     </table>
   </div>
+  {% if inbox_pages > 1 %}
+    <div class="card-footer bg-white d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <small class="text-muted">صفحة {{ inbox_page }} من {{ inbox_pages }}</small>
+      <nav aria-label="صفحات مهام المسارات">
+        <ul class="pagination pagination-sm mb-0">
+          <li class="page-item {{ 'disabled' if inbox_page <= 1 else '' }}">
+            <a class="page-link" href="{{ url_for('workflow.inbox', q=q, page=inbox_page - 1) if inbox_page > 1 else '#' }}">السابق</a>
+          </li>
+          {% set inbox_page_start = [1, inbox_page - 2]|max %}
+          {% set inbox_page_end = [inbox_pages, inbox_page + 2]|min %}
+          {% if inbox_page_start > 1 %}
+            <li class="page-item">
+              <a class="page-link" href="{{ url_for('workflow.inbox', q=q, page=1) }}">1</a>
+            </li>
+            {% if inbox_page_start > 2 %}
+              <li class="page-item disabled"><span class="page-link">…</span></li>
+            {% endif %}
+          {% endif %}
+          {% for page_number in range(inbox_page_start, inbox_page_end + 1) %}
+            <li class="page-item {{ 'active' if page_number == inbox_page else '' }}">
+              <a class="page-link" href="{{ url_for('workflow.inbox', q=q, page=page_number) }}">{{ page_number }}</a>
+            </li>
+          {% endfor %}
+          {% if inbox_page_end < inbox_pages %}
+            {% if inbox_page_end < inbox_pages - 1 %}
+              <li class="page-item disabled"><span class="page-link">…</span></li>
+            {% endif %}
+            <li class="page-item">
+              <a class="page-link" href="{{ url_for('workflow.inbox', q=q, page=inbox_pages) }}">{{ inbox_pages }}</a>
+            </li>
+          {% endif %}
+          <li class="page-item {{ 'disabled' if inbox_page >= inbox_pages else '' }}">
+            <a class="page-link" href="{{ url_for('workflow.inbox', q=q, page=inbox_page + 1) if inbox_page < inbox_pages else '#' }}">التالي</a>
+          </li>
+        </ul>
+      </nav>
+    </div>
+  {% endif %}
 </div>
 {% elif not corr_tasks and not movement_tasks and not supply_tasks %}
 <div class="alert alert-light text-center text-muted py-4">

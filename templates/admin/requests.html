@@ -43,6 +43,9 @@
                         <td>{{ req.id }}</td>
                         <td>
                             <strong>{{ req.title }}</strong>
+                            {% if req.id in new_request_ids %}
+                                <span class="badge rounded-pill text-bg-danger ms-1">جديد</span>
+                            {% endif %}
                         </td>
                         <td>
                             <span class="badge

@@ -249,6 +249,56 @@ class AdminBroadcastNotificationRouteTests(unittest.TestCase):
         )
         self.assertEqual(denied.status_code, 403)
 
+    def test_super_admin_can_bulk_delete_many_selected_notifications(self):
+        selected = [
+            Notification(
+                user_id=self.other_employee.id,
+                message=f"Bulk notification {index}",
+                type="INFO",
+                source="portal",
+                is_visible=True,
+                is_read=False,
+            )
+            for index in range(3)
+        ]
+        untouched = Notification(
+            user_id=self.other_employee.id,
+            message="Keep this notification",
+            type="INFO",
+            source="portal",
+            is_visible=True,
+            is_read=False,
+        )
+        db.session.add_all([*selected, untouched])
+        db.session.commit()
+        selected_ids = [notification.id for notification in selected]
+
+        with self.app.test_client() as client:
+            self._login(client, self.super_admin.id)
+            page = client.get(
+                f"/portal/admin/notifications?user_id={self.other_employee.id}"
+            )
+            response = client.post(
+                "/portal/admin/notifications",
+                data={
+                    "target_user_id": str(self.other_employee.id),
+                    "notification_ids": [str(value) for value in selected_ids],
+                },
+            )
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Shift +", page.get_data(as_text=True))
+        self.assertIn("Ctrl+A", page.get_data(as_text=True))
+        self.assertEqual(response.status_code, 302)
+        db.session.expire_all()
+        for notification_id in selected_ids:
+            notification = db.session.get(Notification, notification_id)
+            self.assertFalse(notification.is_visible)
+            self.assertTrue(notification.is_read)
+        kept = db.session.get(Notification, untouched.id)
+        self.assertTrue(kept.is_visible)
+        self.assertFalse(kept.is_read)
+
     def test_rich_broadcast_body_is_sanitized_and_keeps_safe_formatting(self):
         with self.app.test_client() as client:
             self._login(client, self.admin.id)

@@ -18,12 +18,13 @@ from models import (
     EmployeeFollowupItem,
     EmployeeFollowupReport,
     Notification,
+    NotificationEmailDelivery,
     User,
     UserPermission,
     WorkflowRequest,
 )
 from portal import portal_bp
-from portal.followups import _report_docx_filename
+from portal.followups import _report_docx_filename, send_followup_reminders
 
 
 class FollowupFlowTests(unittest.TestCase):
@@ -704,6 +705,76 @@ class FollowupFlowTests(unittest.TestCase):
             _report_docx_filename(report),
             "تقرير_انجاز_من_2026-09-01_الى_2026-09-06.docx",
         )
+
+    def test_manager_reminder_is_once_per_local_day_and_never_queues_email(self):
+        with self.app.app_context():
+            secretary = User(
+                email="followup-reminder-secretary@example.test",
+                name="Reminder Secretary",
+                password_hash="not-used-in-test",
+                role="General_secretary",
+            )
+            report = EmployeeFollowupReport(
+                employee_user_id=self.employee_id,
+                manager_user_id=self.manager_id,
+                period_start=date(2026, 10, 1),
+                period_end=date(2026, 10, 5),
+                status="SUBMITTED",
+                submitted_at=datetime(2026, 10, 1, 8, 0),
+            )
+            db.session.add_all([secretary, report])
+            db.session.flush()
+            db.session.add(UserPermission(
+                user_id=secretary.id,
+                key="NOTIFICATIONS_GLOBAL_OBSERVER",
+                is_allowed=True,
+            ))
+            db.session.commit()
+            report_id = report.id
+            secretary_id = secretary.id
+
+            # 23:11 UTC is 02:11 on 7 October in Asia/Jerusalem. The old
+            # UTC-date comparison emitted another row on every minute here.
+            self.assertEqual(
+                send_followup_reminders(now=datetime(2026, 10, 6, 23, 11)),
+                1,
+            )
+            self.assertEqual(
+                send_followup_reminders(now=datetime(2026, 10, 6, 23, 12)),
+                0,
+            )
+            self.assertEqual(
+                send_followup_reminders(now=datetime(2026, 10, 7, 0, 0)),
+                0,
+            )
+
+            event_prefix = f"followup-reminder:manager:{report_id}:2026-10-07"
+            self.assertEqual(
+                Notification.query.filter_by(
+                    user_id=self.manager_id,
+                    event_key=event_prefix,
+                ).count(),
+                1,
+            )
+            self.assertEqual(
+                Notification.query.filter_by(
+                    user_id=secretary_id,
+                    event_key=event_prefix,
+                ).count(),
+                1,
+            )
+            self.assertEqual(NotificationEmailDelivery.query.count(), 0)
+
+            # A genuinely new local day may produce one new reminder.
+            self.assertEqual(
+                send_followup_reminders(now=datetime(2026, 10, 7, 21, 1)),
+                1,
+            )
+            self.assertEqual(
+                Notification.query.filter_by(user_id=self.manager_id).count(),
+                2,
+            )
+            self.assertEqual(NotificationEmailDelivery.query.count(), 0)
 
 
 if __name__ == "__main__":

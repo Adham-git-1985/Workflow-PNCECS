@@ -1917,6 +1917,40 @@ class WorkflowInstance(db.Model):
     )
 
 
+class WorkflowRequestView(db.Model):
+    """Last workflow step opened by a user for a request."""
+
+    __tablename__ = "workflow_request_views"
+    __table_args__ = (
+        db.UniqueConstraint(
+            "user_id",
+            "request_id",
+            name="uq_workflow_request_view_user_request",
+        ),
+        db.Index(
+            "ix_workflow_request_views_user_step",
+            "user_id",
+            "step_order",
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    request_id = db.Column(
+        db.Integer,
+        db.ForeignKey("workflow_request.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    step_order = db.Column(db.Integer, nullable=False, default=0)
+    viewed_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
 class WorkflowInstanceStep(db.Model):
     __tablename__ = "workflow_instance_steps"
     __table_args__ = (
@@ -2326,6 +2360,21 @@ def _copy_notifications_to_global_observers(session, flush_context, instances):
             for notification in notifications
             if getattr(notification, "user_id", None)
         }
+        event_key = (getattr(prototype, "event_key", None) or "").strip()
+        if event_key:
+            with session.no_autoflush:
+                delivered_ids.update(
+                    int(user_id)
+                    for (user_id,) in (
+                        session.query(Notification.user_id)
+                        .filter(
+                            Notification.event_key == event_key,
+                            Notification.user_id.in_(observer_ids),
+                            Notification.is_mirror.is_(False),
+                        )
+                        .all()
+                    )
+                )
         for observer_id in sorted(observer_ids.difference(delivered_ids)):
             copied = Notification(
                 user_id=int(observer_id),
@@ -2341,6 +2390,8 @@ def _copy_notifications_to_global_observers(session, flush_context, instances):
                 source=source,
                 email_delivery_mode=prototype.email_delivery_mode,
                 is_visible=prototype.is_visible,
+                target_type=prototype.target_type,
+                target_id=prototype.target_id,
             )
             copied._global_notification_observer_copy = True
             session.add(copied)

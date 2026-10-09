@@ -79,11 +79,23 @@
           {% endif %}
         </div>
       </form>
-      <form method="post" id="notification-delete-form" onsubmit="return confirm('سيتم حذف الإشعارات المحددة فقط من حساب هذا الموظف. هل تريد المتابعة؟');">
+      <form method="post" id="notification-delete-form">
         <input type="hidden" name="target_user_id" value="{{ selected_user.id }}" />
         <input type="hidden" name="q" value="{{ q }}" />
         <input type="hidden" name="notification_q" value="{{ notification_q }}" />
         {% if notifications %}
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+            <button class="btn btn-sm btn-outline-primary" type="button" id="select-all-notification-button">
+              تحديد الكل
+            </button>
+            <button class="btn btn-sm btn-outline-secondary" type="button" id="clear-notification-selection">
+              إلغاء التحديد
+            </button>
+            <span class="badge text-bg-primary" id="selected-notification-count">0 محدد</span>
+            <span class="text-muted small">
+              لتحديد مجموعة متتالية: اختر الأول ثم Shift + انقر الأخير. ويمكن استخدام Ctrl+A لتحديد جميع النتائج.
+            </span>
+          </div>
           <div class="table-responsive">
             <table class="table table-hover align-middle">
               <thead>
@@ -96,7 +108,7 @@
               </thead>
               <tbody>
                 {% for notification in notifications %}
-                  <tr>
+                  <tr class="notification-row" style="cursor: pointer;">
                     <td><input class="form-check-input notification-selector" type="checkbox" name="notification_ids" value="{{ notification.id }}" aria-label="تحديد الإشعار {{ notification.id }}" /></td>
                     <td>{{ notification.message }}</td>
                     <td>{{ notification.type or '-' }}</td>
@@ -106,7 +118,7 @@
               </tbody>
             </table>
           </div>
-          <button class="btn btn-danger" type="submit"><i class="bi bi-trash"></i> حذف الإشعارات المحددة</button>
+          <button class="btn btn-danger" type="submit" id="delete-selected-notifications" disabled><i class="bi bi-trash"></i> حذف الإشعارات المحددة</button>
         {% else %}
           <div class="alert alert-light border mb-0">
             {% if notification_q %}
@@ -123,12 +135,85 @@
 
 <script>
   const selectAll = document.getElementById('select-all-notifications');
+  const notificationSelectors = Array.from(document.querySelectorAll('.notification-selector'));
+  const selectAllButton = document.getElementById('select-all-notification-button');
+  const clearSelectionButton = document.getElementById('clear-notification-selection');
+  const selectedCount = document.getElementById('selected-notification-count');
+  const deleteButton = document.getElementById('delete-selected-notifications');
+  const deleteForm = document.getElementById('notification-delete-form');
+  let selectionAnchor = null;
+
+  function refreshNotificationSelection() {
+    const count = notificationSelectors.filter((checkbox) => checkbox.checked).length;
+    if (selectedCount) selectedCount.textContent = `${count} محدد`;
+    if (deleteButton) deleteButton.disabled = count === 0;
+    if (selectAll) {
+      selectAll.checked = count > 0 && count === notificationSelectors.length;
+      selectAll.indeterminate = count > 0 && count < notificationSelectors.length;
+    }
+  }
+
+  function setAllNotifications(checked) {
+    notificationSelectors.forEach((checkbox) => { checkbox.checked = checked; });
+    refreshNotificationSelection();
+  }
+
   if (selectAll) {
-    selectAll.addEventListener('change', () => {
-      document.querySelectorAll('.notification-selector').forEach((checkbox) => {
-        checkbox.checked = selectAll.checked;
+    selectAll.addEventListener('change', () => setAllNotifications(selectAll.checked));
+  }
+  if (selectAllButton) selectAllButton.addEventListener('click', () => setAllNotifications(true));
+  if (clearSelectionButton) clearSelectionButton.addEventListener('click', () => setAllNotifications(false));
+
+  notificationSelectors.forEach((checkbox, index) => {
+    checkbox.addEventListener('click', (event) => {
+      if (event.shiftKey && selectionAnchor !== null) {
+        const start = Math.min(selectionAnchor, index);
+        const end = Math.max(selectionAnchor, index);
+        for (let position = start; position <= end; position += 1) {
+          notificationSelectors[position].checked = checkbox.checked;
+        }
+      }
+      selectionAnchor = index;
+      refreshNotificationSelection();
+    });
+
+    const row = checkbox.closest('.notification-row');
+    if (row) {
+      row.addEventListener('click', (event) => {
+        if (event.target.closest('input, button, a, label')) return;
+        checkbox.checked = !checkbox.checked;
+        if (event.shiftKey && selectionAnchor !== null) {
+          const start = Math.min(selectionAnchor, index);
+          const end = Math.max(selectionAnchor, index);
+          for (let position = start; position <= end; position += 1) {
+            notificationSelectors[position].checked = checkbox.checked;
+          }
+        }
+        selectionAnchor = index;
+        refreshNotificationSelection();
       });
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    const activeTag = document.activeElement?.tagName?.toLowerCase();
+    const isTyping = ['input', 'textarea', 'select'].includes(activeTag)
+      || document.activeElement?.isContentEditable;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a' && !isTyping && notificationSelectors.length) {
+      event.preventDefault();
+      setAllNotifications(true);
+    }
+  });
+
+  if (deleteForm) {
+    deleteForm.addEventListener('submit', (event) => {
+      const count = notificationSelectors.filter((checkbox) => checkbox.checked).length;
+      if (!count || !window.confirm(`سيتم حذف ${count} إشعار محدد من حساب هذا الموظف. هل تريد المتابعة؟`)) {
+        event.preventDefault();
+      }
     });
   }
+
+  refreshNotificationSelection();
 </script>
 {% endblock %}

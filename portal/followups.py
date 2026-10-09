@@ -23,6 +23,7 @@ from flask import (
 )
 from flask_login import current_user, login_required
 from sqlalchemy import and_, case, func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 
 from extensions import db
@@ -63,6 +64,7 @@ from utils.file_uploads import clean_original_filename, random_storage_name
 from utils.delegation_privacy import COMPETENT_AUTHORITY_LABEL
 from utils.notification_links import notification_target_path
 from utils.role_codes import canonical_role_key
+from utils.timezone import to_local_time
 
 from . import portal_bp
 
@@ -567,9 +569,17 @@ def _save_attachment(report: EmployeeFollowupReport, upload, kind: str) -> Emplo
         raise
 
 
-def _notify(user_ids, message: str, level: str, report: EmployeeFollowupReport) -> None:
+def _notify(
+    user_ids,
+    message: str,
+    level: str,
+    report: EmployeeFollowupReport,
+    *,
+    event_key: str | None = None,
+    created_at: datetime | None = None,
+) -> int:
     link_url = notification_target_path("EMPLOYEE_FOLLOWUP_REPORT", report.id)
-    now = datetime.utcnow()
+    now = created_at or datetime.utcnow()
     try:
         actor_id = int(getattr(current_user, "id", 0) or 0)
     except Exception:
@@ -582,17 +592,37 @@ def _notify(user_ids, message: str, level: str, report: EmployeeFollowupReport) 
             continue
         if user_id > 0 and user_id != actor_id:
             recipient_ids.add(user_id)
-    for user_id in recipient_ids:
+
+    if event_key and recipient_ids:
+        existing_recipient_ids = {
+            int(user_id)
+            for (user_id,) in (
+                db.session.query(Notification.user_id)
+                .filter(
+                    Notification.event_key == event_key,
+                    Notification.user_id.in_(recipient_ids),
+                    Notification.is_mirror.is_(False),
+                )
+                .all()
+            )
+        }
+        recipient_ids.difference_update(existing_recipient_ids)
+
+    for user_id in sorted(recipient_ids):
         db.session.add(Notification(
             user_id=user_id,
             message=message[:255],
             type=level,
             source="portal",
             link_url=link_url,
+            event_key=event_key,
             is_read=False,
             is_mirror=False,
+            target_type="EMPLOYEE_FOLLOWUP_REPORT",
+            target_id=report.id,
             created_at=now,
         ))
+    return len(recipient_ids)
 
 
 def _notify_approved_report_observers(
@@ -926,22 +956,36 @@ def _consolidated_followups_filename(extension: str) -> str:
     return f"تقرير_انجاز_موحد_للموظفين.{extension}"
 
 
-def send_followup_reminders(today: date | None = None) -> int:
+def send_followup_reminders(
+    today: date | None = None,
+    *,
+    now: datetime | None = None,
+) -> int:
     """Send one pre-deadline employee reminder and one manager review reminder."""
-    current_day = today or date.today()
-    now = datetime.utcnow()
+    now = now or datetime.utcnow()
+    current_day = today or to_local_time(now).date()
     sent = 0
+    changed = False
     draft_reports = EmployeeFollowupReport.query.filter(
         EmployeeFollowupReport.status.in_(("DRAFT", "NEEDS_REVISION")),
         EmployeeFollowupReport.period_end >= current_day,
         EmployeeFollowupReport.period_end <= current_day + timedelta(days=3),
     ).all()
     for report in draft_reports:
-        if report.last_employee_reminder_at and report.last_employee_reminder_at.date() == current_day:
+        last_reminder = to_local_time(report.last_employee_reminder_at)
+        if last_reminder and last_reminder.date() == current_day:
             continue
-        _notify([report.employee_user_id], "تذكير: تقرير الإنجاز يقترب موعده، يرجى مراجعته وإرساله للمدير.", "REMINDER", report)
+        created = _notify(
+            [report.employee_user_id],
+            "تذكير: تقرير الإنجاز يقترب موعده، يرجى مراجعته وإرساله للمدير.",
+            "REMINDER",
+            report,
+            event_key=f"followup-reminder:employee:{report.id}:{current_day.isoformat()}",
+            created_at=now,
+        )
         report.last_employee_reminder_at = now
-        sent += 1
+        changed = True
+        sent += int(bool(created))
 
     pending_reports = EmployeeFollowupReport.query.filter(
         EmployeeFollowupReport.status == "SUBMITTED",
@@ -952,14 +996,40 @@ def send_followup_reminders(today: date | None = None) -> int:
         manager_ids = _followup_manager_ids(report)
         if not manager_ids:
             continue
-        if report.last_manager_reminder_at and report.last_manager_reminder_at.date() == current_day:
+        last_reminder = to_local_time(report.last_manager_reminder_at)
+        if last_reminder and last_reminder.date() == current_day:
             continue
-        _notify(manager_ids, "تذكير: يوجد تقرير إنجاز بانتظار مراجعتك.", "REMINDER", report)
+        created = _notify(
+            manager_ids,
+            "تذكير: يوجد تقرير إنجاز بانتظار مراجعتك.",
+            "REMINDER",
+            report,
+            event_key=f"followup-reminder:manager:{report.id}:{current_day.isoformat()}",
+            created_at=now,
+        )
         report.last_manager_reminder_at = now
-        sent += 1
+        changed = True
+        sent += int(bool(created))
 
-    if sent:
-        db.session.commit()
+    if changed:
+        try:
+            db.session.commit()
+        except IntegrityError as exc:
+            # A second worker may have emitted the same deterministic daily
+            # event at the same instant. The database uniqueness guard keeps
+            # that race from producing duplicate notifications.
+            db.session.rollback()
+            error_text = str(getattr(exc, "orig", exc)).lower()
+            if not (
+                "uq_notification_followup_reminder_event" in error_text
+                or (
+                    "notification.user_id" in error_text
+                    and "notification.event_key" in error_text
+                    and "notification.is_mirror" in error_text
+                )
+            ):
+                raise
+            return 0
     return sent
 
 

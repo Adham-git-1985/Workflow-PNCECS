@@ -759,6 +759,8 @@ def _notify_users(
                 is_mirror=False,
                 source="workflow",
                 link_url=link_url,
+                target_type="WorkflowRequest" if req is not None else None,
+                target_id=req.id if req is not None else None,
                 email_delivery_mode="TASK_ASSIGNMENT" if task_assignment else "GENERAL",
             )
         )
@@ -789,6 +791,8 @@ def _notify_users(
                 is_mirror=True,
                 source="workflow",
                 link_url=link_url,
+                target_type="WorkflowRequest" if req is not None else None,
+                target_id=req.id if req is not None else None,
             )
         )
 

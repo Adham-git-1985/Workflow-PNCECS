@@ -19,6 +19,7 @@ from models import (
     WorkflowInstance,
     WorkflowInstanceStep,
     WorkflowRequest,
+    WorkflowRequestView,
     WorkflowStepTask,
 )
 from workflow import workflow_bp
@@ -87,6 +88,7 @@ class WorkflowDashboardPermissionTests(unittest.TestCase):
         )
         db.session.add(admin)
         db.session.flush()
+        self.admin = admin
         db.session.add(self.employee)
         db.session.commit()
 
@@ -350,6 +352,103 @@ class WorkflowDashboardPermissionTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(request_row.title.encode("utf-8"), response.data)
+
+    def test_super_admin_inbox_workflow_tasks_are_paginated(self):
+        for index in range(23):
+            request_row = WorkflowRequest(
+                requester_id=self.employee.id,
+                title=f"Paginated workflow task {index:02d}",
+                description="",
+                status="IN_PROGRESS",
+            )
+            db.session.add(request_row)
+            db.session.flush()
+            instance = WorkflowInstance(
+                request_id=request_row.id,
+                current_step_order=1,
+                is_completed=False,
+            )
+            db.session.add(instance)
+            db.session.flush()
+            db.session.add(WorkflowInstanceStep(
+                instance_id=instance.id,
+                step_order=1,
+                approver_kind="USER",
+                approver_user_id=self.employee.id,
+                status="PENDING",
+            ))
+        db.session.commit()
+
+        previous_size = self.app.config.get("WORKFLOW_INBOX_PAGE_SIZE")
+        self.app.config["WORKFLOW_INBOX_PAGE_SIZE"] = 10
+        try:
+            with self.app.test_client() as client:
+                self._login(client, self.admin)
+                with patch("workflow.routes.render_template", return_value="ok") as render:
+                    response = client.get("/workflow/inbox?page=2")
+                    context = render.call_args.kwargs
+        finally:
+            if previous_size is None:
+                self.app.config.pop("WORKFLOW_INBOX_PAGE_SIZE", None)
+            else:
+                self.app.config["WORKFLOW_INBOX_PAGE_SIZE"] = previous_size
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(context["workflow_total"], 23)
+        self.assertEqual(context["inbox_page"], 2)
+        self.assertEqual(context["inbox_pages"], 3)
+        self.assertEqual(len(context["rows"]), 10)
+        self.assertEqual(len(context["new_request_ids"]), 10)
+
+        self.app.config["WORKFLOW_INBOX_PAGE_SIZE"] = 10
+        try:
+            with self.app.test_client() as client:
+                self._login(client, self.admin)
+                rendered_response = client.get("/workflow/inbox?page=2")
+        finally:
+            if previous_size is None:
+                self.app.config.pop("WORKFLOW_INBOX_PAGE_SIZE", None)
+            else:
+                self.app.config["WORKFLOW_INBOX_PAGE_SIZE"] = previous_size
+        self.assertEqual(rendered_response.status_code, 200)
+        self.assertIn("صفحة 2 من 3", rendered_response.get_data(as_text=True))
+
+    def test_opening_request_records_current_step_as_viewed(self):
+        request_row = WorkflowRequest(
+            requester_id=self.employee.id,
+            title="New task marker clears on open",
+            description="",
+            status="IN_PROGRESS",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+        instance = WorkflowInstance(
+            request_id=request_row.id,
+            current_step_order=1,
+            is_completed=False,
+        )
+        db.session.add(instance)
+        db.session.flush()
+        db.session.add(WorkflowInstanceStep(
+            instance_id=instance.id,
+            step_order=1,
+            approver_kind="USER",
+            approver_user_id=self.employee.id,
+            status="PENDING",
+        ))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client)
+            with patch("workflow.routes.render_template", return_value="ok"):
+                response = client.get(f"/workflow/request/{request_row.id}")
+
+        self.assertEqual(response.status_code, 200)
+        view = WorkflowRequestView.query.filter_by(
+            user_id=self.employee.id,
+            request_id=request_row.id,
+        ).one()
+        self.assertEqual(view.step_order, 1)
 
     def test_prior_approver_sees_returning_route_in_following_not_inbox(self):
         secretary = User(

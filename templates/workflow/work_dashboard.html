@@ -73,7 +73,10 @@
           <tr>
             <td>{{ row.req.id }}</td>
             <td style="min-width:260px">
-              <div class="fw-semibold">{{ row.req.title }}</div>
+              <div class="fw-semibold">
+                {{ row.req.title }}
+                {% if row.is_new %}<span class="badge rounded-pill text-bg-danger ms-1">جديد</span>{% endif %}
+              </div>
               <small class="text-muted">{{ row.requester.full_name if row.requester else '-' }}</small>
             </td>
             <td>
