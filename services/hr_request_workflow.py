@@ -7,11 +7,13 @@ Approval and read-only CC recipients are deliberately separate concepts.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timedelta
 from typing import Iterable
 
 from sqlalchemy import exists, func, or_
+from sqlalchemy.exc import IntegrityError
 
 from extensions import db
 from models import (
@@ -84,6 +86,8 @@ ESCALATION_TARGET_HR = "HR"
 ESCALATION_TARGET_SECRETARY_GENERAL = "SECRETARY_GENERAL"
 ESCALATION_TARGET_USER_PREFIX = "USER:"
 ESCALATION_REASON_NO_TARGET = "NO_ESCALATION_TARGET"
+HR_REQUEST_EVENT_KEY_PREFIX = "hr-request:"
+HR_REQUEST_NOTIFICATION_EVENT_INDEX = "uq_notification_hr_request_event"
 ESCALATION_FIXED_TARGETS = frozenset({
     ESCALATION_TARGET_NONE,
     ESCALATION_TARGET_AUTO_NEXT,
@@ -305,6 +309,100 @@ def _request_link(kind: str, request_id: int) -> str:
     return f"/portal/hr/approvals/{endpoint}/{int(request_id)}"
 
 
+def _hr_request_event_key(kind: str, request_id: int, *parts: object) -> str:
+    """Return a stable, index-scoped key for one logical HR request event."""
+    kind_token = "l" if (kind or "").upper() == KIND_LEAVE else "p"
+    normalized_parts = [
+        "".join(
+            character
+            for character in str(part).strip().lower()
+            if character.isalnum() or character in {"-", "_"}
+        )
+        for part in parts
+        if part is not None and str(part).strip()
+    ]
+    suffix = ":".join(normalized_parts) or "event"
+    candidate = f"{HR_REQUEST_EVENT_KEY_PREFIX}{kind_token}:{int(request_id)}:{suffix}"
+    if len(candidate) <= 64:
+        return candidate
+
+    digest = hashlib.sha256(candidate.encode("utf-8")).hexdigest()[:24]
+    return f"{HR_REQUEST_EVENT_KEY_PREFIX}{kind_token}:{int(request_id)}:{digest}"[:64]
+
+
+def _is_duplicate_hr_request_event(error: IntegrityError) -> bool:
+    message = str(getattr(error, "orig", error) or "").lower()
+    return (
+        HR_REQUEST_NOTIFICATION_EVENT_INDEX.lower() in message
+        or (
+            "unique" in message
+            and "notification.user_id" in message
+            and "notification.event_key" in message
+            and "notification.is_mirror" in message
+        )
+    )
+
+
+def _add_notification_once(
+    *,
+    user_id: int,
+    message: str,
+    ntype: str,
+    link_url: str,
+    event_key: str | None,
+    created_at: datetime,
+    email_delivery_mode: str | None = None,
+    actor_id: int | None = None,
+) -> Notification | None:
+    """Insert one recipient copy and tolerate a concurrent duplicate event."""
+    if event_key:
+        with db.session.no_autoflush:
+            existing = (
+                db.session.query(Notification.id)
+                .filter(
+                    Notification.user_id == int(user_id),
+                    Notification.event_key == event_key,
+                    Notification.is_mirror.is_(False),
+                )
+                .first()
+            )
+        if existing:
+            return None
+
+    notification_kwargs = {
+        "user_id": int(user_id),
+        "type": ntype,
+        "message": message,
+        "source": "portal",
+        "link_url": link_url,
+        "event_key": event_key,
+        "actor_id": actor_id,
+        "is_mirror": False,
+        "is_read": False,
+        "created_at": created_at,
+    }
+    if email_delivery_mode is not None:
+        notification_kwargs["email_delivery_mode"] = email_delivery_mode
+    notification = Notification(**notification_kwargs)
+
+    if not event_key:
+        db.session.add(notification)
+        db.session.flush([notification])
+        return notification
+
+    try:
+        # The savepoint keeps the surrounding approval transaction usable if
+        # another worker wins the same unique event insert concurrently.
+        with db.session.begin_nested():
+            db.session.add(notification)
+            db.session.flush([notification])
+    except IntegrityError as error:
+        if _is_duplicate_hr_request_event(error):
+            return None
+        raise
+    return notification
+
+
 def _request_notification_recipient_ids(kind: str, request_id: int) -> set[int]:
     """Return the requester and users assigned to the current approval step."""
     kind = (kind or "").upper()
@@ -335,6 +433,8 @@ def _notify(
     kind: str,
     request_id: int,
     ntype: str = "HR_APPROVAL",
+    event_key: str | None = None,
+    decision_actor_id: int | None = None,
 ) -> None:
     try:
         link = notification_target_path(
@@ -344,7 +444,13 @@ def _notify(
     except Exception:
         link = _request_link(kind, request_id)
     recipient_ids = {int(value) for value in user_ids if value}
-    recipient_ids.intersection_update(_request_notification_recipient_ids(kind, request_id))
+    authorized_recipient_ids = _request_notification_recipient_ids(kind, request_id)
+    if decision_actor_id:
+        # ``decide_request`` validates the actor against the active step before
+        # changing its status.  Keep that validated actor eligible for the
+        # decision receipt after the step is closed or the next one is opened.
+        authorized_recipient_ids.add(int(decision_actor_id))
+    recipient_ids.intersection_update(authorized_recipient_ids)
     # HR requests use their existing notification audience as the single source
     # of truth for both channels.  This keeps waiting approval stages silent and
     # queues email only when a user actually becomes the current approver.
@@ -354,65 +460,19 @@ def _notify(
     )
 
     now = datetime.utcnow()
-    created_notifications: list[Notification] = []
     for user_id in sorted(recipient_ids):
-        notification = Notification(
+        notification = _add_notification_once(
             user_id=user_id,
-            type=ntype,
             message=message,
-            source="portal",
-            link_url=link,
-            email_delivery_mode=HR_REQUEST_EMAIL_MODE,
-            is_read=False,
-            created_at=now,
-        )
-        db.session.add(notification)
-        created_notifications.append(notification)
-
-    if created_notifications:
-        # One flush covers the whole recipient set.  The durable outbox worker
-        # performs SMTP delivery outside the web request, preserving response
-        # time and the current approval transaction.
-        db.session.flush()
-        for notification in created_notifications:
-            enqueue_notification_email(notification)
-
-
-def _notify_view_only(
-    user_ids: Iterable[int],
-    message: str,
-    *,
-    kind: str,
-    request_id: int,
-    event_key: str | None = None,
-) -> None:
-    """Send a read-only request notice without making the recipient an approver.
-
-    ``_notify`` deliberately limits delivery to the requester and the active
-    approval stage.  Compensatory leave has an explicit Secretary-General
-    copy from the moment it is submitted, so it uses this narrowly scoped
-    helper instead.
-    """
-    try:
-        link = notification_target_path(
-            "HR_LEAVE_REQUEST" if kind == KIND_LEAVE else "HR_PERMISSION_REQUEST",
-            request_id,
-        ) or _request_link(kind, request_id)
-    except Exception:
-        link = _request_link(kind, request_id)
-
-    now = datetime.utcnow()
-    for user_id in sorted({int(value) for value in user_ids if value}):
-        db.session.add(Notification(
-            user_id=user_id,
-            type="HR_REQUEST_VIEW_ONLY",
-            message=message,
-            source="portal",
+            ntype=ntype,
             link_url=link,
             event_key=event_key,
-            is_read=False,
+            actor_id=decision_actor_id,
+            email_delivery_mode=HR_REQUEST_EMAIL_MODE,
             created_at=now,
-        ))
+        )
+        if notification is not None:
+            enqueue_notification_email(notification)
 
 
 def _request(kind: str, request_id: int):
@@ -1421,7 +1481,7 @@ def start_request_flow(
         db.session.add(step)
         steps.append(step)
 
-    view_only_recipient_ids = _record_compensatory_secretary_observers(
+    _record_compensatory_secretary_observers(
         kind,
         row,
         steps,
@@ -1434,6 +1494,7 @@ def start_request_flow(
 
     approval_recipient_ids = set(effective_approver_ids)
     approval_recipient_ids.discard(int(row.user_id))
+    initial_step = next((step for step in steps if step.status == "PENDING"), None)
 
     _notify(
         [row.user_id],
@@ -1441,6 +1502,13 @@ def start_request_flow(
         kind=kind,
         request_id=row.id,
         ntype="HR_REQUEST_SUBMITTED",
+        event_key=_hr_request_event_key(
+            kind,
+            row.id,
+            "flow",
+            flow_revision,
+            "submitted",
+        ),
     )
 
     if effective_approver_ids:
@@ -1449,6 +1517,15 @@ def start_request_flow(
             f"طلب {_request_label(kind)} رقم #{row.id} للموظف {_request_employee_name(row)} بانتظار اعتمادك.",
             kind=kind,
             request_id=row.id,
+            event_key=_hr_request_event_key(
+                kind,
+                row.id,
+                "flow",
+                flow_revision,
+                "step",
+                initial_step.step_order if initial_step else first_step_order,
+                "assigned",
+            ),
         )
     else:
         _notify(
@@ -1457,17 +1534,13 @@ def start_request_flow(
             kind=kind,
             request_id=row.id,
             ntype="HR_REQUEST_ROUTING_ERROR",
-        )
-    if view_only_recipient_ids:
-        _notify_view_only(
-            view_only_recipient_ids,
-            (
-                f"قدم الموظف {_request_employee_name(row)} طلب إجازة تعويضية "
-                f"رقم #{row.id}. هذه نسخة للاطلاع فقط ولا تتطلب إجراءً منك."
+            event_key=_hr_request_event_key(
+                kind,
+                row.id,
+                "flow",
+                flow_revision,
+                "initial-routing-error",
             ),
-            kind=kind,
-            request_id=row.id,
-            event_key=f"hr-compensatory-view-{row.id}-{flow_revision}",
         )
     return steps
 
@@ -1497,6 +1570,10 @@ def reopen_permission_request(
     row.updated_at = now
 
     steps = start_request_flow(KIND_PERMISSION, row, now=now, restart=True)
+    flow_revision = max(
+        (int(step.flow_revision or 1) for step in steps),
+        default=1,
+    )
     recipient_ids = _request_notification_recipient_ids(KIND_PERMISSION, row.id)
     old_range = f"{previous_from_time or '-'} - {previous_to_time or '-'}"
     new_range = f"{getattr(row, 'from_time', None) or '-'} - {getattr(row, 'to_time', None) or '-'}"
@@ -1513,6 +1590,13 @@ def reopen_permission_request(
         kind=KIND_PERMISSION,
         request_id=row.id,
         ntype="HR_PERMISSION_REOPENED",
+        event_key=_hr_request_event_key(
+            KIND_PERMISSION,
+            row.id,
+            "flow",
+            flow_revision,
+            "reopened",
+        ),
     )
     db.session.add(AuditLog(
         user_id=changed_by.id,
@@ -1683,6 +1767,15 @@ def _activate_next_step(kind: str, row, step: HRRequestApprovalStep, now: dateti
             f"طلب {_request_label(kind)} رقم #{row.id} للموظف {_request_employee_name(row)} وصل إلى مرحلة {stage_label(next_step.stage_code)}.",
             kind=kind,
             request_id=row.id,
+            event_key=_hr_request_event_key(
+                kind,
+                row.id,
+                "flow",
+                next_step.flow_revision,
+                "step",
+                next_step.step_order,
+                "assigned",
+            ),
         )
     else:
         _notify(
@@ -1691,6 +1784,15 @@ def _activate_next_step(kind: str, row, step: HRRequestApprovalStep, now: dateti
             kind=kind,
             request_id=row.id,
             ntype="HR_REQUEST_ROUTING_ERROR",
+            event_key=_hr_request_event_key(
+                kind,
+                row.id,
+                "flow",
+                next_step.flow_revision,
+                "step",
+                next_step.step_order,
+                "routing-error",
+            ),
         )
     return next_step
 
@@ -1736,11 +1838,12 @@ def _record_compensatory_secretary_observers(
     steps: Iterable[HRRequestApprovalStep],
     now: datetime,
 ) -> list[int]:
-    """Persist the Secretary-General's submission-time view-only copy.
+    """Persist Secretary-General read access without sending an early alert.
 
     The explicit observer row preserves read access even if the organizational
     assignment changes later.  The matching ``VIEW_ONLY`` workflow step keeps
-    the copy visible in the request's approval trail.
+    the copy visible in the request's approval trail.  ``notified_at`` remains
+    empty because view access is not an email, notification, or escalation.
     """
     if kind != KIND_LEAVE or not is_compensatory_leave(row):
         return []
@@ -1773,13 +1876,13 @@ def _record_compensatory_secretary_observers(
                 request_id=row.id,
                 user_id=user_id,
                 observer_scope="SECRETARY_GENERAL_VIEW_ONLY",
-                notified_at=now,
+                notified_at=None,
                 created_at=now,
             )
             db.session.add(observer)
         else:
             observer.observer_scope = "SECRETARY_GENERAL_VIEW_ONLY"
-            observer.notified_at = now
+            observer.notified_at = None
     return recipient_ids
 
 
@@ -1827,6 +1930,16 @@ def decide_request(kind: str, row, actor: User, action: str, note: str | None = 
     step.decided_by_id = actor.id
     step.decision_note = (note or "").strip() or None
     step.updated_at = now
+    decision_event_key = _hr_request_event_key(
+        kind,
+        row.id,
+        "flow",
+        step.flow_revision,
+        "step",
+        step.step_order,
+        "decision",
+        action,
+    )
 
     if action == "REJECT":
         for waiting in approval_steps(kind, row.id):
@@ -1839,16 +1952,31 @@ def decide_request(kind: str, row, actor: User, action: str, note: str | None = 
         row.approver_user_id = None
         row.updated_at = now
         _notify(
-            [row.user_id],
+            [row.user_id, actor.id],
             f"تم رفض طلب {_request_label(kind)} رقم #{row.id} في مرحلة {stage_label(step.stage_code)}.",
             kind=kind,
             request_id=row.id,
+            ntype="HR_REQUEST_REJECTED",
+            event_key=decision_event_key,
+            decision_actor_id=actor.id,
         )
         result = "REJECTED"
     else:
         next_step = _activate_next_step(kind, row, step, now)
         if next_step:
             row.updated_at = now
+            _notify(
+                [row.user_id, actor.id],
+                (
+                    f"تمت الموافقة على طلب {_request_label(kind)} رقم #{row.id} "
+                    f"في مرحلة {stage_label(step.stage_code)} وانتقل إلى المرحلة التالية."
+                ),
+                kind=kind,
+                request_id=row.id,
+                ntype="HR_REQUEST_APPROVED",
+                event_key=decision_event_key,
+                decision_actor_id=actor.id,
+            )
             result = "NEXT"
         else:
             row.status = "APPROVED"
@@ -1859,10 +1987,13 @@ def decide_request(kind: str, row, actor: User, action: str, note: str | None = 
             row.updated_at = now
             _record_final_observers(kind, row, now)
             _notify(
-                [row.user_id],
+                [row.user_id, actor.id],
                 f"تم اعتماد طلب {_request_label(kind)} رقم #{row.id} اعتمادًا نهائيًا.",
                 kind=kind,
                 request_id=row.id,
+                ntype="HR_REQUEST_APPROVED",
+                event_key=decision_event_key,
+                decision_actor_id=actor.id,
             )
             result = "APPROVED"
 
@@ -2031,6 +2162,7 @@ def process_pending_approvals(*, now: datetime | None = None, send_notifications
         reminder_at = _stage_reminder_at(step)
         cooldown_ok = not step.reminder_sent_at or (now - step.reminder_sent_at) >= timedelta(hours=24)
         if now >= reminder_at and cooldown_ok:
+            reminder_number = int(step.reminder_count or 0) + 1
             if send_notifications:
                 _notify(
                     _scope_approver_ids(step),
@@ -2038,9 +2170,19 @@ def process_pending_approvals(*, now: datetime | None = None, send_notifications
                     kind=step.request_kind,
                     request_id=row.id,
                     ntype="HR_APPROVAL_REMINDER",
+                    event_key=_hr_request_event_key(
+                        step.request_kind,
+                        row.id,
+                        "flow",
+                        step.flow_revision,
+                        "step",
+                        step.step_order,
+                        "reminder",
+                        reminder_number,
+                    ),
                 )
             step.reminder_sent_at = now
-            step.reminder_count = int(step.reminder_count or 0) + 1
+            step.reminder_count = reminder_number
             if step.request_kind == KIND_LEAVE:
                 row.reminder_sent_at = now
                 row.reminder_count = int(row.reminder_count or 0) + 1
@@ -2097,6 +2239,16 @@ def process_pending_approvals(*, now: datetime | None = None, send_notifications
                     kind=step.request_kind,
                     request_id=row.id,
                     ntype="HR_APPROVAL_ESCALATED",
+                    event_key=_hr_request_event_key(
+                        step.request_kind,
+                        row.id,
+                        "flow",
+                        step.flow_revision,
+                        "step",
+                        step.step_order,
+                        "escalation",
+                        level,
+                    ),
                 )
             escalated += 1
         else:
@@ -2115,6 +2267,17 @@ def process_pending_approvals(*, now: datetime | None = None, send_notifications
                     kind=step.request_kind,
                     request_id=row.id,
                     ntype="HR_REQUEST_ROUTING_ERROR",
+                    event_key=_hr_request_event_key(
+                        step.request_kind,
+                        row.id,
+                        "flow",
+                        step.flow_revision,
+                        "step",
+                        step.step_order,
+                        "escalation",
+                        level,
+                        "routing-error",
+                    ),
                 )
             unresolved += 1
 

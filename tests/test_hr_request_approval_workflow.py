@@ -8,6 +8,7 @@ from unittest.mock import patch
 from flask import Flask, g
 from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
+from sqlalchemy.exc import IntegrityError
 
 from extensions import db
 from models import (
@@ -551,9 +552,13 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             observer_scope="SECRETARY_GENERAL_VIEW_ONLY",
         ).one()
         self.assertIsNotNone(observer)
-        self.assertTrue(Notification.query.filter_by(
+        self.assertIsNone(observer.notified_at)
+        self.assertFalse(Notification.query.filter_by(
             user_id=self.secretary.id,
             type="HR_REQUEST_VIEW_ONLY",
+        ).first())
+        self.assertFalse(NotificationEmailDelivery.query.filter_by(
+            user_id=self.secretary.id,
         ).first())
 
         self.assertEqual(decide_request(KIND_LEAVE, row, self.manager, "APPROVE"), "NEXT")
@@ -990,6 +995,349 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             self.assertNotIn(self.secretary.id, {notification.user_id for notification in notifications})
             self.assertNotIn(self.hr.id, {notification.user_id for notification in notifications})
         self.assertEqual(NotificationEmailDelivery.query.count(), 4)
+
+    def test_manager_decision_notifies_and_emails_requester_and_deciding_manager_once(self):
+        for action, expected_type in (
+            ("APPROVE", "HR_REQUEST_APPROVED"),
+            ("REJECT", "HR_REQUEST_REJECTED"),
+        ):
+            with self.subTest(action=action):
+                row = self._leave(self.normal_type)
+                start_request_flow(KIND_LEAVE, row)
+                db.session.commit()
+                link_url = f"/portal/hr/approvals/leaves/{row.id}"
+
+                decide_request(KIND_LEAVE, row, self.manager, action)
+                db.session.commit()
+
+                decision_notifications = Notification.query.filter_by(
+                    link_url=link_url,
+                    type=expected_type,
+                ).all()
+                self.assertEqual(
+                    {notification.user_id for notification in decision_notifications},
+                    {self.employee.id, self.manager.id},
+                )
+                self.assertEqual(
+                    len({notification.event_key for notification in decision_notifications}),
+                    1,
+                )
+                self.assertTrue(all(
+                    notification.actor_id == self.manager.id
+                    for notification in decision_notifications
+                ))
+                manager_notification = next(
+                    notification
+                    for notification in decision_notifications
+                    if notification.user_id == self.manager.id
+                )
+                self.assertTrue(
+                    _can_receive_hr_request_notification_email(
+                        self.manager,
+                        manager_notification,
+                    )
+                )
+                self.assertFalse(
+                    _can_receive_hr_request_notification_email(
+                        self.secretary,
+                        manager_notification,
+                    )
+                )
+                decision_event_key = decision_notifications[0].event_key
+                self.assertTrue(decision_event_key.startswith("hr-request:"))
+                self.assertLessEqual(len(decision_event_key), 64)
+
+                deliveries = (
+                    NotificationEmailDelivery.query
+                    .join(
+                        Notification,
+                        Notification.id == NotificationEmailDelivery.notification_id,
+                    )
+                    .filter(Notification.event_key == decision_event_key)
+                    .all()
+                )
+                self.assertEqual(
+                    {delivery.user_id for delivery in deliveries},
+                    {self.employee.id, self.manager.id},
+                )
+
+                # Retrying the same logical event must not create another
+                # notification or another email outbox row.
+                _notify(
+                    [self.employee.id, self.manager.id],
+                    "Repeated decision event",
+                    kind=KIND_LEAVE,
+                    request_id=row.id,
+                    ntype=expected_type,
+                    event_key=decision_event_key,
+                    decision_actor_id=self.manager.id,
+                )
+                db.session.commit()
+                self.assertEqual(
+                    Notification.query.filter_by(event_key=decision_event_key).count(),
+                    2,
+                )
+                self.assertEqual(
+                    NotificationEmailDelivery.query
+                    .join(
+                        Notification,
+                        Notification.id == NotificationEmailDelivery.notification_id,
+                    )
+                    .filter(Notification.event_key == decision_event_key)
+                    .count(),
+                    2,
+                )
+
+    def test_intermediate_approval_emails_decision_parties_and_assigns_only_next_stage(self):
+        official_type = HRPermissionType(
+            code="OFFICIAL_DEPARTURE",
+            name_ar="مغادرة رسمية",
+            requires_approval=True,
+            counts_as_work=True,
+            is_active=True,
+        )
+        db.session.add(official_type)
+        db.session.flush()
+        row = self._permission()
+        row.permission_type_id = official_type.id
+        row.permission_type = official_type
+        start_request_flow(KIND_PERMISSION, row)
+        db.session.commit()
+        link_url = f"/portal/hr/approvals/permissions/{row.id}"
+
+        self.assertFalse(Notification.query.filter_by(
+            link_url=link_url,
+            user_id=self.secretary.id,
+        ).first())
+        previous_notification_id = Notification.query.order_by(
+            Notification.id.desc(),
+        ).first().id
+
+        self.assertEqual(
+            decide_request(KIND_PERMISSION, row, self.manager, "APPROVE"),
+            "NEXT",
+        )
+        db.session.commit()
+
+        new_notifications = Notification.query.filter(
+            Notification.link_url == link_url,
+            Notification.id > previous_notification_id,
+        ).all()
+        decision_recipients = {
+            notification.user_id
+            for notification in new_notifications
+            if notification.type == "HR_REQUEST_APPROVED"
+        }
+        assignment_recipients = {
+            notification.user_id
+            for notification in new_notifications
+            if notification.type == "HR_APPROVAL"
+        }
+        self.assertEqual(
+            decision_recipients,
+            {self.employee.id, self.manager.id},
+        )
+        self.assertEqual(assignment_recipients, {self.secretary.id})
+        self.assertNotIn(self.hr.id, {
+            notification.user_id for notification in new_notifications
+        })
+        self.assertEqual(
+            {
+                delivery.user_id
+                for delivery in (
+                    NotificationEmailDelivery.query
+                    .join(
+                        Notification,
+                        Notification.id == NotificationEmailDelivery.notification_id,
+                    )
+                    .filter(Notification.id > previous_notification_id)
+                    .all()
+                )
+            },
+            {self.employee.id, self.manager.id, self.secretary.id},
+        )
+
+    def test_escalation_target_is_silent_until_escalation_and_gets_decision_receipt(self):
+        escalation_target = User(
+            email="notification-escalation-target@example.test",
+            name="Notification Escalation Target",
+            password_hash="x",
+            role="employee",
+        )
+        db.session.add(escalation_target)
+        db.session.flush()
+        db.session.add_all((
+            SystemSetting(
+                key=escalation_setting_key(KIND_LEAVE, 1, "VALUE"),
+                value="1",
+            ),
+            SystemSetting(
+                key=escalation_setting_key(KIND_LEAVE, 1, "UNIT"),
+                value=ESCALATION_UNIT_MINUTES,
+            ),
+            SystemSetting(
+                key=escalation_setting_key(KIND_LEAVE, 1, "TARGET"),
+                value=f"USER:{escalation_target.id}",
+            ),
+        ))
+
+        assigned_at = datetime(2026, 9, 8, 8, 0)
+        row = self._leave(self.normal_type)
+        start_request_flow(KIND_LEAVE, row, now=assigned_at)
+        db.session.commit()
+        link_url = f"/portal/hr/approvals/leaves/{row.id}"
+
+        self.assertFalse(Notification.query.filter_by(
+            link_url=link_url,
+            user_id=escalation_target.id,
+        ).first())
+        self.assertFalse(
+            NotificationEmailDelivery.query.filter_by(
+                user_id=escalation_target.id,
+            ).first()
+        )
+
+        step = current_step(KIND_LEAVE, row.id)
+        first_result = process_pending_approvals(
+            now=step.due_at,
+            send_notifications=True,
+        )
+        db.session.commit()
+        self.assertEqual(first_result["escalated"], 1)
+        escalation_notifications = Notification.query.filter_by(
+            link_url=link_url,
+            type="HR_APPROVAL_ESCALATED",
+        ).all()
+        self.assertEqual(
+            {notification.user_id for notification in escalation_notifications},
+            {escalation_target.id},
+        )
+
+        second_result = process_pending_approvals(
+            now=step.escalated_at,
+            send_notifications=True,
+        )
+        db.session.commit()
+        self.assertEqual(second_result["escalated"], 0)
+        self.assertEqual(
+            Notification.query.filter_by(
+                link_url=link_url,
+                type="HR_APPROVAL_ESCALATED",
+            ).count(),
+            1,
+        )
+
+        decide_request(KIND_LEAVE, row, escalation_target, "APPROVE")
+        db.session.commit()
+        decision_notifications = Notification.query.filter_by(
+            link_url=link_url,
+            type="HR_REQUEST_APPROVED",
+        ).all()
+        self.assertEqual(
+            {notification.user_id for notification in decision_notifications},
+            {self.employee.id, escalation_target.id},
+        )
+        self.assertNotIn(self.manager.id, {
+            notification.user_id for notification in decision_notifications
+        })
+
+        rejected_row = self._leave(self.normal_type)
+        start_request_flow(
+            KIND_LEAVE,
+            rejected_row,
+            now=assigned_at + timedelta(days=1),
+        )
+        db.session.commit()
+        rejected_link_url = f"/portal/hr/approvals/leaves/{rejected_row.id}"
+        self.assertFalse(Notification.query.filter_by(
+            link_url=rejected_link_url,
+            user_id=escalation_target.id,
+        ).first())
+        rejected_step = current_step(KIND_LEAVE, rejected_row.id)
+        process_pending_approvals(
+            now=rejected_step.due_at,
+            send_notifications=True,
+        )
+        db.session.commit()
+
+        decide_request(KIND_LEAVE, rejected_row, escalation_target, "REJECT")
+        db.session.commit()
+        rejected_decision_notifications = Notification.query.filter_by(
+            link_url=rejected_link_url,
+            type="HR_REQUEST_REJECTED",
+        ).all()
+        self.assertEqual(
+            {
+                notification.user_id
+                for notification in rejected_decision_notifications
+            },
+            {self.employee.id, escalation_target.id},
+        )
+        self.assertNotIn(self.manager.id, {
+            notification.user_id
+            for notification in rejected_decision_notifications
+        })
+
+    def test_database_rejects_duplicate_hr_request_event_for_same_recipient(self):
+        row = self._leave(self.normal_type)
+        start_request_flow(KIND_LEAVE, row)
+        db.session.commit()
+        original = Notification.query.filter_by(
+            user_id=self.employee.id,
+            type="HR_REQUEST_SUBMITTED",
+        ).one()
+        db.session.add(Notification(
+            user_id=original.user_id,
+            type=original.type,
+            message=original.message,
+            source=original.source,
+            link_url=original.link_url,
+            email_delivery_mode=original.email_delivery_mode,
+            event_key=original.event_key,
+            is_mirror=False,
+        ))
+        with self.assertRaises(IntegrityError):
+            db.session.commit()
+        db.session.rollback()
+
+    def test_hr_request_notification_dedupe_migration_is_repeatable(self):
+        import importlib
+
+        import sqlalchemy as sa
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+
+        migration = importlib.import_module(
+            "migrations.versions.zh7c8d9e0f1_add_hr_request_notification_dedupe"
+        )
+        db.session.remove()
+        with db.engine.begin() as connection:
+            connection.exec_driver_sql(
+                "DROP INDEX IF EXISTS uq_notification_hr_request_event"
+            )
+            original_op = migration.op
+            migration.op = Operations(MigrationContext.configure(connection))
+            try:
+                migration.upgrade()
+                migration.upgrade()
+                self.assertIn(
+                    migration.INDEX_NAME,
+                    {
+                        index["name"]
+                        for index in sa.inspect(connection).get_indexes("notification")
+                    },
+                )
+                migration.downgrade()
+                self.assertNotIn(
+                    migration.INDEX_NAME,
+                    {
+                        index["name"]
+                        for index in sa.inspect(connection).get_indexes("notification")
+                    },
+                )
+                migration.upgrade()
+            finally:
+                migration.op = original_op
 
     def test_secretary_general_returns_to_the_leave_after_final_approval(self):
         db.session.add(UserPermission(

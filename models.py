@@ -1460,6 +1460,15 @@ class Notification(db.Model):
         db.Index("ix_notification_user_read", "user_id", "is_read"),
         db.Index("ix_notification_created", "created_at"),
         db.Index("ix_notification_event_key", "event_key"),
+        db.Index(
+            "uq_notification_hr_request_event",
+            "user_id",
+            "event_key",
+            "is_mirror",
+            unique=True,
+            sqlite_where=db.text("event_key LIKE 'hr-request:%'"),
+            postgresql_where=db.text("event_key LIKE 'hr-request:%'"),
+        ).ddl_if(dialect=("sqlite", "postgresql")),
         db.Index("ix_notification_user_mirror_read", "user_id", "is_mirror", "is_read"),
         db.Index("ix_notification_user_source_read", "user_id", "source", "is_read"),
         db.Index(

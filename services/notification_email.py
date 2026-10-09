@@ -121,7 +121,7 @@ def _can_receive_ticket_notification_email(user: User, notification: Notificatio
 
 
 def _can_receive_hr_request_notification_email(user: User, notification: Notification) -> bool:
-    """Limit HR-request email to the requester and current assigned approvers."""
+    """Limit HR mail to the requester, current approvers, or decision actor."""
     link_match = _HR_REQUEST_LINK_RE.match((getattr(notification, "link_url", None) or "").strip())
     if not link_match:
         return True
@@ -131,6 +131,16 @@ def _can_receive_hr_request_notification_email(user: User, notification: Notific
     row = db.session.get(HRLeaveRequest if kind == KIND_LEAVE else HRPermissionRequest, request_id)
     if not row:
         return False
+    notification_type = (getattr(notification, "type", None) or "").strip().upper()
+    if (
+        notification_type in {"HR_REQUEST_APPROVED", "HR_REQUEST_REJECTED"}
+        and getattr(notification, "actor_id", None) is not None
+        and int(notification.actor_id) == int(user.id)
+    ):
+        # The actor was validated while the approval step was active.  Once a
+        # decision closes that step, the ordinary current-approver resolver no
+        # longer contains them, but their decision receipt remains legitimate.
+        return True
     return can_receive_request_notification(user, kind, request_id)
 
 

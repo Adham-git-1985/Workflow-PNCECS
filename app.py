@@ -1136,6 +1136,14 @@ def _ensure_runtime_schema():
                     "WHERE event_key LIKE 'followup-reminder:%'",
                 ),
                 (
+                    "notification",
+                    ("user_id", "event_key", "is_mirror"),
+                    "CREATE UNIQUE INDEX IF NOT EXISTS "
+                    "uq_notification_hr_request_event "
+                    "ON notification (user_id, event_key, is_mirror) "
+                    "WHERE event_key LIKE 'hr-request:%'",
+                ),
+                (
                     "employee_followup_reports",
                     ("status", "reviewed_at", "id"),
                     "CREATE INDEX IF NOT EXISTS ix_followup_status_reviewed_id "
