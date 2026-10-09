@@ -1339,6 +1339,109 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             finally:
                 migration.op = original_op
 
+    def test_pending_migrations_accept_runtime_precreated_schema(self):
+        import importlib
+
+        import sqlalchemy as sa
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+
+        module_names = (
+            "migrations.versions.zb2c3d4e5f6_add_initial_hr_approver_snapshot",
+            "migrations.versions.c1d2e3f4a5b6_add_attendance_delay_workflow",
+            "migrations.versions.zc3d4e5f6a7_add_user_calendar_events",
+            "migrations.versions.zd3e4f5a6b7_add_user_calendar_reminders",
+            "migrations.versions.ze4f5a6b7c8d_add_supply_request_special_routes",
+            "migrations.versions.zf5a6b7c8d9e_add_attendance_approval_inbox_indexes",
+            "migrations.versions.zg6b7c8d9e0_add_workflow_request_views_and_reminder_guard",
+            "migrations.versions.zh7c8d9e0f1_add_hr_request_notification_dedupe",
+        )
+        migrations = [importlib.import_module(name) for name in module_names]
+        db.session.remove()
+        with db.engine.begin() as connection:
+            operations = Operations(MigrationContext.configure(connection))
+            original_ops = [(migration, migration.op) for migration in migrations]
+            try:
+                for migration in migrations:
+                    migration.op = operations
+                    migration.upgrade()
+                    migration.upgrade()
+            finally:
+                for migration, original_op in original_ops:
+                    migration.op = original_op
+
+            inspector = sa.inspect(connection)
+            self.assertIn(
+                "initial_approver_user_ids",
+                {
+                    column["name"]
+                    for column in inspector.get_columns("hr_request_approval_step")
+                },
+            )
+            self.assertIn("user_calendar_events", inspector.get_table_names())
+            self.assertTrue({
+                "reminder_minutes_before",
+                "reminder_sent_at",
+                "reminder_sent_for_start_at",
+            }.issubset({
+                column["name"]
+                for column in inspector.get_columns("user_calendar_events")
+            }))
+
+    def test_repaired_migrations_still_create_missing_schema(self):
+        import importlib
+
+        import sqlalchemy as sa
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+
+        snapshot_migration = importlib.import_module(
+            "migrations.versions.zb2c3d4e5f6_add_initial_hr_approver_snapshot"
+        )
+        calendar_migration = importlib.import_module(
+            "migrations.versions.zc3d4e5f6a7_add_user_calendar_events"
+        )
+        reminder_migration = importlib.import_module(
+            "migrations.versions.zd3e4f5a6b7_add_user_calendar_reminders"
+        )
+        migrations = (
+            snapshot_migration,
+            calendar_migration,
+            reminder_migration,
+        )
+        db.session.remove()
+        with db.engine.begin() as connection:
+            operations = Operations(MigrationContext.configure(connection))
+            original_ops = [(migration, migration.op) for migration in migrations]
+            try:
+                for migration in migrations:
+                    migration.op = operations
+                snapshot_migration.downgrade()
+                calendar_migration.downgrade()
+                snapshot_migration.upgrade()
+                calendar_migration.upgrade()
+                reminder_migration.upgrade()
+            finally:
+                for migration, original_op in original_ops:
+                    migration.op = original_op
+
+            inspector = sa.inspect(connection)
+            self.assertIn(
+                "initial_approver_user_ids",
+                {
+                    column["name"]
+                    for column in inspector.get_columns("hr_request_approval_step")
+                },
+            )
+            self.assertTrue({
+                "reminder_minutes_before",
+                "reminder_sent_at",
+                "reminder_sent_for_start_at",
+            }.issubset({
+                column["name"]
+                for column in inspector.get_columns("user_calendar_events")
+            }))
+
     def test_secretary_general_returns_to_the_leave_after_final_approval(self):
         db.session.add(UserPermission(
             user_id=self.secretary.id,

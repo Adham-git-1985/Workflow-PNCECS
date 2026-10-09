@@ -15,21 +15,48 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade():
-    with op.batch_alter_table("hr_request_approval_step") as batch_op:
-        batch_op.add_column(
-            sa.Column("initial_approver_user_ids", sa.Text(), nullable=True)
-        )
+TABLE = "hr_request_approval_step"
+COLUMN = "initial_approver_user_ids"
 
-    op.execute(sa.text(
-        "UPDATE hr_request_approval_step "
-        "SET initial_approver_user_ids = approver_user_ids "
-        "WHERE initial_approver_user_ids IS NULL "
-        "AND COALESCE(escalation_count, 0) = 0 "
-        "AND approver_user_ids IS NOT NULL"
-    ))
+
+def upgrade():
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if TABLE not in inspector.get_table_names():
+        return
+
+    columns = {
+        column["name"] for column in inspector.get_columns(TABLE)
+    }
+    if COLUMN not in columns:
+        with op.batch_alter_table(TABLE) as batch_op:
+            batch_op.add_column(
+                sa.Column(COLUMN, sa.Text(), nullable=True)
+            )
+        columns.add(COLUMN)
+
+    if {
+        COLUMN,
+        "approver_user_ids",
+        "escalation_count",
+    }.issubset(columns):
+        op.execute(sa.text(
+            "UPDATE hr_request_approval_step "
+            "SET initial_approver_user_ids = approver_user_ids "
+            "WHERE initial_approver_user_ids IS NULL "
+            "AND COALESCE(escalation_count, 0) = 0 "
+            "AND approver_user_ids IS NOT NULL"
+        ))
 
 
 def downgrade():
-    with op.batch_alter_table("hr_request_approval_step") as batch_op:
-        batch_op.drop_column("initial_approver_user_ids")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if TABLE not in inspector.get_table_names():
+        return
+    columns = {
+        column["name"] for column in inspector.get_columns(TABLE)
+    }
+    if COLUMN in columns:
+        with op.batch_alter_table(TABLE) as batch_op:
+            batch_op.drop_column(COLUMN)
