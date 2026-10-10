@@ -15,6 +15,7 @@ from models import (
     WorkflowInstance,
     WorkflowInstanceStep,
     WorkflowRequest,
+    WorkflowRequestView,
     WorkflowStepTask,
 )
 from workflow import workflow_bp
@@ -421,6 +422,13 @@ class WorkflowMentionHierarchyTests(unittest.TestCase):
             1,
         )
 
+        db.session.add(WorkflowRequestView(
+            user_id=self.lower_user.id,
+            request_id=request_row.id,
+            step_order=1,
+        ))
+        db.session.commit()
+
         with self.app.test_request_context(f"/workflow/request/{request_row.id}/note"), patch(
             "workflow.routes.current_user", self.department_user
         ), patch("workflow.routes._send_mention_internal_message"), patch(
@@ -440,6 +448,10 @@ class WorkflowMentionHierarchyTests(unittest.TestCase):
         self.assertTrue(_user_can_view_request(self.lower_user, request_row))
         self.assertEqual(task.status, "PENDING")
         self.assertEqual(task.response, "NONE")
+        self.assertIsNone(WorkflowRequestView.query.filter_by(
+            user_id=self.lower_user.id,
+            request_id=request_row.id,
+        ).first())
 
     def test_mentioned_user_contribution_completes_only_the_mention_task(self):
         request_row = WorkflowRequest(

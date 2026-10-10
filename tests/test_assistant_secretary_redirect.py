@@ -13,6 +13,7 @@ from models import (
     WorkflowInstance,
     WorkflowInstanceStep,
     WorkflowRequest,
+    WorkflowRequestView,
     WorkflowTemplate,
 )
 from workflow import workflow_bp
@@ -170,6 +171,19 @@ class AssistantSecretaryRedirectTests(unittest.TestCase):
 
     def _assert_redirect(self, *, dynamic):
         request_row, step = self._create_request(dynamic=dynamic)
+        db.session.add_all((
+            WorkflowRequestView(
+                user_id=self.assistant.id,
+                request_id=request_row.id,
+                step_order=step.step_order,
+            ),
+            WorkflowRequestView(
+                user_id=self.general_manager.id,
+                request_id=request_row.id,
+                step_order=step.step_order,
+            ),
+        ))
+        db.session.commit()
         with self.app.test_client() as client:
             self._login(client)
             response = client.post(
@@ -189,6 +203,14 @@ class AssistantSecretaryRedirectTests(unittest.TestCase):
         self.assertIsNone(redirected_step.approver_user_id)
         self.assertTrue(_user_can_act_on_step(self.general_manager, redirected_step))
         self.assertTrue(_user_can_view_request(self.assistant, request_row))
+        self.assertIsNone(WorkflowRequestView.query.filter_by(
+            user_id=self.general_manager.id,
+            request_id=request_row.id,
+        ).first())
+        self.assertIsNotNone(WorkflowRequestView.query.filter_by(
+            user_id=self.assistant.id,
+            request_id=request_row.id,
+        ).first())
         self.assertIsNotNone(AuditLog.query.filter_by(
             request_id=request_row.id,
             action=ASSISTANT_SECRETARY_STEP_REDIRECT_ACTION,

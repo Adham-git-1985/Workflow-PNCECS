@@ -10,6 +10,7 @@ from models import (
     WorkflowInstance,
     WorkflowInstanceStep,
     WorkflowRequest,
+    WorkflowRequestView,
     WorkflowStepTask,
     WorkflowTemplate,
     WorkflowTemplateParallelAssignee,
@@ -168,6 +169,11 @@ class ParallelStepAuthorizationTests(unittest.TestCase):
 
     def test_only_selected_candidates_receive_access_and_notification(self):
         self.instance.current_step_order = 2
+        db.session.add(WorkflowRequestView(
+            user_id=self.selected.id,
+            request_id=self.request.id,
+            step_order=2,
+        ))
         db.session.commit()
 
         authorize_parallel_step(
@@ -189,6 +195,10 @@ class ParallelStepAuthorizationTests(unittest.TestCase):
         }
         self.assertEqual(task_user_ids, {self.selected.id})
         self.assertEqual(notification_user_ids, {self.selected.id})
+        self.assertIsNone(WorkflowRequestView.query.filter_by(
+            user_id=self.selected.id,
+            request_id=self.request.id,
+        ).first())
         self.assertTrue(_user_can_view_request(self.selected, self.request))
         self.assertFalse(_user_can_view_request(self.excluded, self.request))
         self.assertFalse(_user_can_view_request(self.outsider, self.request))

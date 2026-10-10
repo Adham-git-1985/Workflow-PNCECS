@@ -30,6 +30,7 @@ from models import (
     SystemSetting,
 )
 from services.workflow_confidentiality import filter_confidential_workflow_user_ids
+from services.workflow_request_views import invalidate_workflow_request_views
 from services.attendance_delay_workflow import (
     archive_delay_workflow_snapshot,
     attendance_delay_parallel_candidate_user_ids,
@@ -1057,6 +1058,10 @@ def _ensure_parallel_tasks(
 
     # Notify all initial assignees once, and notify any assignees added after activation.
     if notify_ids:
+        # Explicitly authorized participants receive a fresh task on the
+        # already-active step. Their earlier visit must not suppress the new
+        # marker merely because the numeric step did not change.
+        invalidate_workflow_request_views(req.id, user_ids=created_ids)
         _notify_users(
             notify_ids,
             f"مهمة متزامنة للطلب #{req.id}: يرجى الرد (للتوثيق فقط).",
@@ -1466,6 +1471,10 @@ def reopen_workflow_to_step(
     # actor for subsequent routing while the audit keeps the real actor.
     inst.last_step_actor_id = int(effective_user_id or actor_user_id)
     _activate_step_sla(target_step, started_at=now, reset=True)
+    # A reopen is a fresh assignment even when it resumes the same numbered
+    # step. Clear the old per-user read state inside this transaction so the
+    # request is marked new again for everyone who can now see it.
+    invalidate_workflow_request_views(req.id)
 
     sla_note = {
         "PRESERVE": "تم الإبقاء على إعداد SLA الحالي للخطوات المعاد فتحها.",

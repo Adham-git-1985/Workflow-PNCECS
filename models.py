@@ -1461,6 +1461,15 @@ class Notification(db.Model):
         db.Index("ix_notification_created", "created_at"),
         db.Index("ix_notification_event_key", "event_key"),
         db.Index(
+            "uq_notification_followup_reminder_event",
+            "user_id",
+            "event_key",
+            "is_mirror",
+            unique=True,
+            sqlite_where=db.text("event_key LIKE 'followup-reminder:%'"),
+            postgresql_where=db.text("event_key LIKE 'followup-reminder:%'"),
+        ).ddl_if(dialect=("sqlite", "postgresql")),
+        db.Index(
             "uq_notification_hr_request_event",
             "user_id",
             "event_key",

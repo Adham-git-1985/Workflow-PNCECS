@@ -43,7 +43,8 @@
                         <td>{{ req.id }}</td>
                         <td>
                             <strong>{{ req.title }}</strong>
-                            {% if req.id in new_request_ids %}
+                            {% set normalized_status = (req.status or '')|trim|upper %}
+                            {% if req.id in new_request_ids and normalized_status not in ['DRAFT', 'APPROVED', 'REJECTED', 'CLOSED'] %}
                                 <span class="badge rounded-pill text-bg-danger ms-1">جديد</span>
                             {% endif %}
                         </td>

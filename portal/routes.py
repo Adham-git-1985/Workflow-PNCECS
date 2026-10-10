@@ -1382,6 +1382,50 @@ def _approval_inbox_pending_count(user=None) -> int:
         total += len(_visible_maternity_departures("PENDING", user=selected_user))
     except Exception:
         pass
+    try:
+        can_manage_hr_ss = bool(
+            selected_user.has_perm(HR_SS_WORKFLOWS_MANAGE)
+            or selected_user.has_perm(HR_REQUESTS_VIEW_ALL)
+        )
+        can_approve_hr_ss = bool(selected_user.has_perm(HR_SS_APPROVE))
+        if can_manage_hr_ss or can_approve_hr_ss:
+            hr_ss_query = (
+                HRSSRequestApproval.query
+                .join(HRSSRequest)
+                .filter(
+                    HRSSRequest.status == "IN_REVIEW",
+                    HRSSRequestApproval.status == "PENDING",
+                )
+            )
+            if not can_manage_hr_ss:
+                role_normalized = (
+                    (getattr(selected_user, "role", None) or "")
+                    .strip()
+                    .upper()
+                    .replace("_", "")
+                    .replace("-", "")
+                    .replace(" ", "")
+                )
+                role_column_normalized = func.replace(
+                    func.replace(
+                        func.replace(
+                            func.upper(HRSSRequestApproval.approver_role),
+                            "_",
+                            "",
+                        ),
+                        "-",
+                        "",
+                    ),
+                    " ",
+                    "",
+                )
+                hr_ss_query = hr_ss_query.filter(or_(
+                    HRSSRequestApproval.approver_user_id == user_id,
+                    role_column_normalized == role_normalized,
+                ))
+            total += _safe_count(hr_ss_query)
+    except Exception:
+        pass
 
     if cache is not None and cache_key is not None:
         cache[cache_key] = total

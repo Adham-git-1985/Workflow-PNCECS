@@ -77,8 +77,10 @@ from services.workflow_confidentiality import (
     is_confidential_workflow,
 )
 from services.workflow_request_views import (
+    invalidate_workflow_request_views,
     mark_workflow_request_viewed,
     unopened_workflow_request_ids,
+    workflow_request_can_be_new,
 )
 from services.correspondence_workflow import (
     correspondence_target_user_ids,
@@ -1134,6 +1136,9 @@ def _grant_mention_access(
                 track_for_actor=True,
                 auto_commit=False,
             )
+
+        if task_created:
+            invalidate_workflow_request_views(req.id, user_ids=[uid])
 
         if task_created and user not in added:
             added.append(user)
@@ -5667,13 +5672,18 @@ def work_dashboard():
     page = min(page, pages)
     start = (page - 1) * per_page
     page_rows = filtered[start:start + per_page]
+    new_badge_rows = [
+        row
+        for row in page_rows
+        if workflow_request_can_be_new(row["req"].status)
+    ]
     new_request_ids = unopened_workflow_request_ids(
         current_user.id,
         {
             int(row["req"].id): int(
                 getattr(row.get("inst"), "current_step_order", 0) or 0
             )
-            for row in page_rows
+            for row in new_badge_rows
         },
     )
     for row in page_rows:
@@ -8768,6 +8778,11 @@ def redirect_assistant_secretary_step(request_id, step_order):
         db.session.rollback()
         flash("لا يوجد مدير عام مكلّف على الجهة المختارة.", "danger")
         return redirect(url_for("workflow.view_request", request_id=req.id))
+
+    # This hand-off keeps the same step number. Invalidate only the new
+    # assignees' earlier visits so a repeated assignment is shown as new while
+    # existing followers retain their own read state.
+    invalidate_workflow_request_views(req.id, user_ids=target_user_ids)
 
     actor_label = working_user.full_name or working_user.email or "مساعد الأمين العام"
     for target_user_id in target_user_ids:

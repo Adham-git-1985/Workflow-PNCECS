@@ -10,9 +10,11 @@ from models import (
     WorkflowInstance,
     WorkflowInstanceStep,
     WorkflowRequest,
+    WorkflowRequestView,
     WorkflowStepTask,
 )
 from portal.perm_defs import ALL_KEYS as PORTAL_ALL_KEYS, PERMS as PORTAL_PERMS
+from services.workflow_request_views import unopened_workflow_request_ids
 from workflow.engine import decide_step, reopen_workflow_to_step
 
 
@@ -97,6 +99,20 @@ class WorkflowReopenToStepTests(unittest.TestCase):
         return user
 
     def test_reopen_resets_selected_step_and_preserves_prior_history(self):
+        db.session.add(WorkflowRequestView(
+            user_id=self.second_approver.id,
+            request_id=self.request_row.id,
+            step_order=2,
+        ))
+        db.session.commit()
+        self.assertEqual(
+            unopened_workflow_request_ids(
+                self.second_approver.id,
+                {self.request_row.id: 2},
+            ),
+            set(),
+        )
+
         reopened_step = reopen_workflow_to_step(
             self.request_row.id,
             2,
@@ -122,6 +138,13 @@ class WorkflowReopenToStepTests(unittest.TestCase):
         self.assertIsNone(self.second_step.note)
         self.assertIsNotNone(self.second_step.due_at)
         self.assertEqual(WorkflowStepTask.query.count(), 0)
+        self.assertEqual(
+            unopened_workflow_request_ids(
+                self.second_approver.id,
+                {self.request_row.id: 2},
+            ),
+            {self.request_row.id},
+        )
         self.assertIsNotNone(AuditLog.query.filter_by(
             request_id=self.request_row.id,
             action="WORKFLOW_REOPENED_TO_STEP",

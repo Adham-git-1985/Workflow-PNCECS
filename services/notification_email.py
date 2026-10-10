@@ -52,6 +52,9 @@ _EMAIL_DELIVERY_MODES = {
 }
 NOTIFICATION_EMAILS_DISABLED_REASON = "Notification emails are disabled; the notification remains available in the system."
 EMAIL_UNAVAILABLE_CANCELLED_REASON = "Skipped: recipient has no configured delivery email address."
+HR_REQUEST_RECIPIENT_CANCELLED_REASON = (
+    "Skipped: recipient is no longer authorized to receive this HR request email."
+)
 STALE_DELIVERY_RETRY_REASON = "Previous email worker stopped before completion; retrying once."
 
 
@@ -124,7 +127,7 @@ def _can_receive_hr_request_notification_email(user: User, notification: Notific
     """Limit HR mail to the requester, current approvers, or decision actor."""
     link_match = _HR_REQUEST_LINK_RE.match((getattr(notification, "link_url", None) or "").strip())
     if not link_match:
-        return True
+        return False
 
     kind = KIND_LEAVE if link_match.group(1) == "leaves" else KIND_PERMISSION
     request_id = int(link_match.group(2))
@@ -327,6 +330,19 @@ def send_pending_notification_emails(limit: int = 100, now: datetime | None = No
             delivery.status = FAILED
             delivery.next_attempt_at = None
             delivery.last_error = "Recipient or notification is unavailable."
+            db.session.commit()
+            continue
+
+        notification_mode = (
+            getattr(notification, "email_delivery_mode", "") or ""
+        ).strip().upper()
+        if (
+            notification_mode == HR_REQUEST_EMAIL_MODE
+            and not _can_receive_hr_request_notification_email(user, notification)
+        ):
+            delivery.status = "CANCELLED"
+            delivery.next_attempt_at = None
+            delivery.last_error = HR_REQUEST_RECIPIENT_CANCELLED_REASON
             db.session.commit()
             continue
 

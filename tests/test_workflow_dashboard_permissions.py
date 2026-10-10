@@ -297,6 +297,55 @@ class WorkflowDashboardPermissionTests(unittest.TestCase):
         self.assertIn("جميع المسارات", body)
         self.assertIn("عرض جميع المسارات", body)
 
+    def test_dashboard_new_badge_is_limited_to_active_requests(self):
+        db.session.add(UserPermission(
+            user_id=self.employee.id,
+            key="WORKFLOW_DASHBOARD_READ",
+            is_allowed=True,
+        ))
+        request_ids_by_status = {}
+        for status in ("DRAFT", "IN_PROGRESS", "APPROVED", "REJECTED", "CLOSED"):
+            request_row = WorkflowRequest(
+                requester_id=self.employee.id,
+                title=f"New badge status {status}",
+                description="",
+                status=status,
+            )
+            db.session.add(request_row)
+            db.session.flush()
+            request_ids_by_status[status] = request_row.id
+            instance = WorkflowInstance(
+                request_id=request_row.id,
+                current_step_order=1,
+                is_completed=status in {"APPROVED", "REJECTED", "CLOSED"},
+            )
+            db.session.add(instance)
+            db.session.flush()
+            db.session.add(WorkflowInstanceStep(
+                instance_id=instance.id,
+                step_order=1,
+                approver_kind="USER",
+                approver_user_id=self.employee.id,
+                status=(
+                    "PENDING"
+                    if status in {"DRAFT", "IN_PROGRESS"}
+                    else status if status in {"APPROVED", "REJECTED"} else "APPROVED"
+                ),
+            ))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client)
+            with patch("workflow.routes.render_template", return_value="ok") as render:
+                response = client.get("/workflow/work?queue=all")
+                rows = render.call_args.kwargs["rows"]
+
+        self.assertEqual(response.status_code, 200)
+        rows_by_id = {row["req"].id: row for row in rows}
+        self.assertTrue(rows_by_id[request_ids_by_status["IN_PROGRESS"]]["is_new"])
+        for status in ("DRAFT", "APPROVED", "REJECTED", "CLOSED"):
+            self.assertFalse(rows_by_id[request_ids_by_status[status]]["is_new"])
+
     def test_org_node_manager_sees_pending_step_in_inbox(self):
         assistant = User(
             email="assistant-secretary@example.test",

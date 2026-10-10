@@ -9,6 +9,19 @@ from extensions import db
 from models import WorkflowInstance, WorkflowRequestView
 
 
+WORKFLOW_NEW_BADGE_EXCLUDED_STATUSES = frozenset({
+    "DRAFT",
+    "APPROVED",
+    "REJECTED",
+    "CLOSED",
+})
+
+
+def workflow_request_can_be_new(status: str | None) -> bool:
+    """Return whether a request status represents live workflow work."""
+    return (status or "").strip().upper() not in WORKFLOW_NEW_BADGE_EXCLUDED_STATUSES
+
+
 def workflow_current_step_orders(request_ids) -> dict[int, int]:
     """Load current step numbers in bounded batches; missing instances use zero."""
     normalized_ids = list(dict.fromkeys(
@@ -72,6 +85,33 @@ def unopened_workflow_request_ids(
         for request_id, current_step_order in normalized.items()
         if viewed_steps.get(request_id) != current_step_order
     }
+
+
+def invalidate_workflow_request_views(
+    request_id: int,
+    *,
+    user_ids=None,
+) -> int:
+    """Make an existing assignment appear new again; caller owns the transaction.
+
+    Reopening a request or reassigning its active step can create a fresh task
+    without changing ``current_step_order``. Removing the affected read-state
+    rows lets the existing badge logic distinguish that fresh assignment from
+    the earlier visit without requiring another schema revision.
+    """
+    query = WorkflowRequestView.query.filter(
+        WorkflowRequestView.request_id == int(request_id),
+    )
+    if user_ids is not None:
+        normalized_user_ids = sorted({
+            int(user_id)
+            for user_id in user_ids
+            if user_id
+        })
+        if not normalized_user_ids:
+            return 0
+        query = query.filter(WorkflowRequestView.user_id.in_(normalized_user_ids))
+    return int(query.delete(synchronize_session=False) or 0)
 
 
 def mark_workflow_request_viewed(

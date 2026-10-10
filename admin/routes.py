@@ -26,6 +26,7 @@ from filters.request_filters import apply_request_filters
 from filters.request_filters import get_sla_days, get_escalation_days
 from services.workflow_request_views import (
     unopened_workflow_request_ids,
+    workflow_request_can_be_new,
     workflow_current_step_orders,
 )
 from utils.ui_labels import ui_label
@@ -472,7 +473,13 @@ def admin_requests():
         WorkflowRequest.created_at.desc()
     ).all()
 
-    request_ids = [int(workflow_request.id) for workflow_request in requests]
+    # A missing view row means "new". Limit that rule to live work so a new
+    # deployment does not label every historical terminal request as new.
+    request_ids = [
+        int(workflow_request.id)
+        for workflow_request in requests
+        if workflow_request_can_be_new(workflow_request.status)
+    ]
     current_steps = workflow_current_step_orders(request_ids)
     new_request_ids = unopened_workflow_request_ids(
         current_user.id,
