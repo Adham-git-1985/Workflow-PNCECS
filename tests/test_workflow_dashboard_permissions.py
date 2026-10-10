@@ -6,6 +6,7 @@ from unittest.mock import patch
 from flask import Flask, g
 from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
+from sqlalchemy import event
 
 from extensions import db
 from models import (
@@ -430,12 +431,28 @@ class WorkflowDashboardPermissionTests(unittest.TestCase):
 
         previous_size = self.app.config.get("WORKFLOW_INBOX_PAGE_SIZE")
         self.app.config["WORKFLOW_INBOX_PAGE_SIZE"] = 10
+        statements = []
+
+        def capture_queries(_conn, _cursor, statement, parameters, _context, _executemany):
+            normalized = " ".join(statement.lower().split())
+            if (
+                normalized.startswith("select")
+                and "workflow_request" in normalized
+                and "workflow_instances" in normalized
+                and "workflow_instance_steps" in normalized
+            ):
+                statements.append((normalized, parameters))
+
         try:
             with self.app.test_client() as client:
                 self._login(client, self.admin)
                 with patch("workflow.routes.render_template", return_value="ok") as render:
-                    response = client.get("/workflow/inbox?page=2")
-                    context = render.call_args.kwargs
+                    event.listen(db.engine, "before_cursor_execute", capture_queries)
+                    try:
+                        response = client.get("/workflow/inbox?page=2")
+                        context = render.call_args.kwargs
+                    finally:
+                        event.remove(db.engine, "before_cursor_execute", capture_queries)
         finally:
             if previous_size is None:
                 self.app.config.pop("WORKFLOW_INBOX_PAGE_SIZE", None)
@@ -448,6 +465,17 @@ class WorkflowDashboardPermissionTests(unittest.TestCase):
         self.assertEqual(context["inbox_pages"], 3)
         self.assertEqual(len(context["rows"]), 10)
         self.assertEqual(len(context["new_request_ids"]), 10)
+        self.assertTrue(
+            any(
+                "workflow_instances.is_completed is " in statement
+                and "workflow_instance_steps.status =" in statement
+                and "order by workflow_request.id desc" in statement
+                and " limit " in statement
+                and " offset " in statement
+                for statement, _params in statements
+            ),
+            "The super-admin inbox rows must be paginated by the database",
+        )
 
         self.app.config["WORKFLOW_INBOX_PAGE_SIZE"] = 10
         try:

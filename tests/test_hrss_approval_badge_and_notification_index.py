@@ -1,10 +1,11 @@
 import unittest
 
 from flask import Flask
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 
 from extensions import db
 from models import (
+    EmployeeFollowupReport,
     HRSSRequest,
     HRSSRequestApproval,
     Notification,
@@ -136,6 +137,63 @@ class HRSSApprovalBadgeAndNotificationIndexTests(unittest.TestCase):
         self.assertIn("uq_notification_followup_reminder_event", database_indexes)
         self.assertTrue(
             database_indexes["uq_notification_followup_reminder_event"]["unique"]
+        )
+
+    def test_work_queue_performance_indexes_exist_on_fresh_schema(self):
+        hrss_request_indexes = {
+            index["name"]
+            for index in inspect(db.engine).get_indexes("hr_ss_request")
+        }
+        notification_indexes = {
+            index["name"]
+            for index in inspect(db.engine).get_indexes("notification")
+        }
+        workflow_request_indexes = {
+            index["name"]
+            for index in inspect(db.engine).get_indexes("workflow_request")
+        }
+        hrss_approval_indexes = {
+            row[0]
+            for row in db.session.execute(text(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'index' AND tbl_name = 'hr_ss_request_approval'"
+            ))
+        }
+        followup_indexes = {
+            index["name"]
+            for index in inspect(db.engine).get_indexes(
+                EmployeeFollowupReport.__tablename__
+            )
+        }
+
+        self.assertIn(
+            "ix_notification_admin_visible_users",
+            notification_indexes,
+        )
+        self.assertIn(
+            "ix_notification_admin_user_latest",
+            notification_indexes,
+        )
+        self.assertIn(
+            "ix_workflow_request_created_id",
+            workflow_request_indexes,
+        )
+        self.assertIn("ix_hr_ss_request_status_id", hrss_request_indexes)
+        self.assertIn(
+            "ix_hr_ss_approval_status_user_request",
+            hrss_approval_indexes,
+        )
+        self.assertIn(
+            "ix_hr_ss_approval_status_role_norm_request",
+            hrss_approval_indexes,
+        )
+        self.assertIn(
+            "ix_followup_employee_reminder_due",
+            followup_indexes,
+        )
+        self.assertIn(
+            "ix_followup_manager_reminder_due",
+            followup_indexes,
         )
 
 

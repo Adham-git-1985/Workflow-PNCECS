@@ -22,8 +22,13 @@ from models import WorkflowRequest, SystemSetting, AuditLog, ArchivedFile, Workf
 from extensions import db
 from sqlalchemy import func, or_
 from datetime import datetime, timedelta
-from filters.request_filters import apply_request_filters
-from filters.request_filters import get_sla_days, get_escalation_days
+from filters.request_filters import (
+    apply_request_filters,
+    calculate_sla_state,
+    get_sla_days,
+    get_escalation_days,
+    load_sla_settings,
+)
 from services.workflow_request_views import (
     unopened_workflow_request_ids,
     workflow_request_can_be_new,
@@ -461,23 +466,48 @@ def manage_permissions():
 @login_required
 @perm_required("PORTAL_ADMIN_PERMISSIONS_MANAGE")  # SUPER/SUPERADMIN bypass exists in User.has_perm
 def admin_requests():
-
+    now = datetime.utcnow()
+    sla_days, escalation_days = load_sla_settings()
     base_query = WorkflowRequest.query
 
     query = apply_request_filters(
         base_query,
-        request.args
+        request.args,
+        sla_days=sla_days,
+        escalation_days=escalation_days,
+        now=now,
     )
 
-    requests = query.order_by(
-        WorkflowRequest.created_at.desc()
-    ).all()
+    page = max(request.args.get("page", 1, type=int) or 1, 1)
+    configured_page_size = current_app.config.get("ADMIN_REQUESTS_PAGE_SIZE", 25)
+    try:
+        configured_page_size = int(configured_page_size)
+    except (TypeError, ValueError):
+        configured_page_size = 25
+    requested_page_size = request.args.get(
+        "per_page",
+        configured_page_size,
+        type=int,
+    )
+    page_size = max(10, min(requested_page_size or configured_page_size, 100))
+    pagination = query.order_by(
+        WorkflowRequest.created_at.desc(),
+        WorkflowRequest.id.desc(),
+    ).paginate(page=page, per_page=page_size, error_out=False)
+    if pagination.total and page > pagination.pages:
+        page = pagination.pages
+        pagination = query.order_by(
+            WorkflowRequest.created_at.desc(),
+            WorkflowRequest.id.desc(),
+        ).paginate(page=page, per_page=page_size, error_out=False)
+    page_requests = pagination.items
 
     # A missing view row means "new". Limit that rule to live work so a new
-    # deployment does not label every historical terminal request as new.
+    # deployment does not label every historical terminal request as new. The
+    # lookup is intentionally limited to the rendered database page.
     request_ids = [
         int(workflow_request.id)
-        for workflow_request in requests
+        for workflow_request in page_requests
         if workflow_request_can_be_new(workflow_request.status)
     ]
     current_steps = workflow_current_step_orders(request_ids)
@@ -488,11 +518,32 @@ def admin_requests():
             for request_id in request_ids
         },
     )
+    sla_states = {
+        int(workflow_request.id): calculate_sla_state(
+            workflow_request,
+            sla_days,
+            escalation_days,
+            now=now,
+        )
+        for workflow_request in page_requests
+    }
+    pagination_query_args = request.args.to_dict(flat=False)
+    pagination_query_args.pop("page", None)
+    pagination_query_args["per_page"] = [str(page_size)]
+    export_query_args = {
+        key: value
+        for key, value in pagination_query_args.items()
+        if key != "per_page"
+    }
 
     return render_template(
         "admin/requests.html",
-        requests=requests,
+        requests=page_requests,
+        pagination=pagination,
+        pagination_query_args=pagination_query_args,
+        export_query_args=export_query_args,
         new_request_ids=new_request_ids,
+        sla_states=sla_states,
         is_admin=True
     )
 

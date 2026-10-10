@@ -8,6 +8,7 @@ import time
 import logging
 import mimetypes
 import math
+from types import SimpleNamespace
 from io import BytesIO
 from datetime import datetime, timedelta
 from urllib.parse import quote
@@ -29,7 +30,7 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-from sqlalchemy import and_, func, update, or_
+from sqlalchemy import and_, case, func, update, or_
 from sqlalchemy.orm import joinedload
 
 from . import workflow_bp
@@ -83,7 +84,8 @@ from services.workflow_request_views import (
     workflow_request_can_be_new,
 )
 from services.correspondence_workflow import (
-    correspondence_target_user_ids,
+    bulk_correspondence_target_user_ids,
+    correspondence_actor_target_keys,
     correspondence_context,
     sync_correspondence_from_workflow,
 )
@@ -4570,28 +4572,179 @@ def _correspondence_inbox_tasks(actor_users, search: str = "") -> list[dict]:
         "DRAFT": "استكمال مسودة المعاملة واتخاذ الإجراء المناسب",
     }
 
+    def chunks(values, size=400):
+        normalized_values = list(values)
+        for offset in range(0, len(normalized_values), size):
+            yield normalized_values[offset:offset + size]
+
+    actor_target_keys = sorted(correspondence_actor_target_keys(actor_ids))
+
     tasks: list[dict] = []
     for kind, model, date_attr, party_attr in (
         ("IN", InboundMail, "received_date", "sender"),
         ("OUT", OutboundMail, "sent_date", "recipient"),
     ):
-        candidates = (
-            model.query
+        # Preserve the legacy newest-1500 boundary, but keep those rows as a
+        # scalar subquery.  Only assignments represented by the current actor
+        # are hydrated as ORM objects below.
+        recent_ids = (
+            db.session.query(model.id.label("item_id"))
             .filter(~func.upper(model.status).in_(_CORR_TASK_TERMINAL_STATUSES))
             .order_by(model.created_at.desc(), model.id.desc())
             .limit(1500)
-            .all()
+            .subquery()
         )
+
+        effective_target_kind = func.upper(func.trim(case(
+            (
+                and_(
+                    model.current_target_kind.isnot(None),
+                    model.current_target_kind != "",
+                ),
+                model.current_target_kind,
+            ),
+            else_=model.competence_kind,
+        )))
+        effective_target_id = case(
+            (
+                and_(
+                    model.current_target_id.isnot(None),
+                    model.current_target_id != 0,
+                ),
+                model.current_target_id,
+            ),
+            else_=model.competence_id,
+        )
+
+        matched_item_ids: set[int] = set()
+        for actor_id_chunk in chunks(sorted(actor_ids)):
+            matched_item_ids.update(
+                int(item_id)
+                for (item_id,) in (
+                    db.session.query(model.id)
+                    .join(recent_ids, recent_ids.c.item_id == model.id)
+                    .filter(model.current_assignee_id.in_(actor_id_chunk))
+                    .all()
+                )
+            )
+
+        # Chunk the inverse target identities so SQLite never receives an
+        # oversized parameter list even for actors with many assignments.
+        for target_key_chunk in chunks(actor_target_keys, size=300):
+            target_ids_by_kind: dict[str, set[int]] = {}
+            for target_kind, target_id in target_key_chunk:
+                target_ids_by_kind.setdefault(target_kind, set()).add(int(target_id))
+            target_clauses = [
+                and_(
+                    effective_target_kind == target_kind,
+                    effective_target_id.in_(sorted(target_ids)),
+                )
+                for target_kind, target_ids in target_ids_by_kind.items()
+                if target_ids
+            ]
+            if not target_clauses:
+                continue
+            matched_item_ids.update(
+                int(item_id)
+                for (item_id,) in (
+                    db.session.query(model.id)
+                    .join(recent_ids, recent_ids.c.item_id == model.id)
+                    .filter(or_(*target_clauses))
+                    .all()
+                )
+            )
+
+        candidates = []
+        for item_id_chunk in chunks(sorted(matched_item_ids)):
+            candidate_rows = (
+                db.session.query(
+                    model.id,
+                    model.ref_no,
+                    model.competence_kind,
+                    model.competence_id,
+                    model.competence_label,
+                    model.current_target_kind,
+                    model.current_target_id,
+                    model.current_target_label,
+                    model.current_assignee_id,
+                    model.status,
+                    model.subject,
+                    model.body,
+                    getattr(model, party_attr),
+                    getattr(model, date_attr),
+                    model.created_at,
+                    model.due_date,
+                    model.confidentiality,
+                )
+                .filter(model.id.in_(item_id_chunk))
+                .all()
+            )
+            for row in candidate_rows:
+                item = SimpleNamespace(
+                    id=row[0],
+                    ref_no=row[1],
+                    competence_kind=row[2],
+                    competence_id=row[3],
+                    competence_label=row[4],
+                    current_target_kind=row[5],
+                    current_target_id=row[6],
+                    current_target_label=row[7],
+                    current_assignee_id=row[8],
+                    status=row[9],
+                    subject=row[10],
+                    body=row[11],
+                    created_at=row[14],
+                    due_date=row[15],
+                    confidentiality=row[16],
+                )
+                setattr(item, party_attr, row[12])
+                setattr(item, date_attr, row[13])
+                candidates.append(item)
+        candidates.sort(
+            key=lambda item: (item.created_at or datetime.min, int(item.id)),
+            reverse=True,
+        )
+
+        targets = [
+            {
+                "kind": (
+                    getattr(item, "current_target_kind", None)
+                    or getattr(item, "competence_kind", None)
+                ),
+                "id": (
+                    getattr(item, "current_target_id", None)
+                    or getattr(item, "competence_id", None)
+                ),
+            }
+            for item in candidates
+        ]
+        resolved_target_user_ids = bulk_correspondence_target_user_ids(targets)
+
+        visible_candidates = []
         for item in candidates:
             target = {
                 "kind": getattr(item, "current_target_kind", None) or getattr(item, "competence_kind", None),
                 "id": getattr(item, "current_target_id", None) or getattr(item, "competence_id", None),
                 "label": getattr(item, "current_target_label", None) or getattr(item, "competence_label", None),
             }
-            assigned_user_ids = set(correspondence_target_user_ids(target))
-            if getattr(item, "current_assignee_id", None):
-                assigned_user_ids.add(int(item.current_assignee_id))
-            if not actor_ids.intersection(assigned_user_ids):
+            direct_assignment = bool(
+                getattr(item, "current_assignee_id", None)
+                and int(item.current_assignee_id) in actor_ids
+            )
+            try:
+                target_key = (
+                    str(target.get("kind") or "").strip().upper(),
+                    int(target.get("id")),
+                )
+            except (TypeError, ValueError):
+                target_key = None
+            target_assignment = bool(
+                target_key is not None
+                and actor_ids.intersection(
+                    resolved_target_user_ids.get(target_key, ())
+                )
+            )
+            if not (direct_assignment or target_assignment):
                 continue
 
             haystack = " ".join(str(value or "") for value in (
@@ -4605,17 +4758,65 @@ def _correspondence_inbox_tasks(actor_users, search: str = "") -> list[dict]:
             if search_normalized and search_normalized not in haystack:
                 continue
 
-            movement_filter = (
-                CorrMovement.inbound_id == item.id
-                if kind == "IN"
-                else CorrMovement.outbound_id == item.id
+            visible_candidates.append((item, target))
+
+        latest_movements = {}
+        visible_item_ids = [int(item.id) for item, _target in visible_candidates]
+        movement_parent_column = (
+            CorrMovement.inbound_id if kind == "IN" else CorrMovement.outbound_id
+        )
+        for item_id_chunk in chunks(visible_item_ids):
+            movement_rows = (
+                db.session.query(
+                    movement_parent_column,
+                    CorrMovement.actor_user_id,
+                    CorrMovement.note,
+                    CorrMovement.created_at,
+                    CorrMovement.id,
+                )
+                .filter(
+                    movement_parent_column.in_(item_id_chunk),
+                    CorrMovement.action.in_(assignment_actions),
+                )
+                .order_by(
+                    movement_parent_column.asc(),
+                    CorrMovement.created_at.desc(),
+                    CorrMovement.id.desc(),
+                )
+                .all()
             )
-            movement = (
-                CorrMovement.query
-                .filter(movement_filter, CorrMovement.action.in_(assignment_actions))
-                .order_by(CorrMovement.created_at.desc(), CorrMovement.id.desc())
-                .first()
-            )
+            for parent_id, actor_user_id, note, created_at, movement_id in movement_rows:
+                latest_movements.setdefault(
+                    int(parent_id),
+                    (actor_user_id, note, created_at, movement_id),
+                )
+
+        movement_actor_ids = sorted({
+            int(movement[0])
+            for movement in latest_movements.values()
+            if movement[0]
+        })
+        movement_actors = {}
+        for actor_id_chunk in chunks(movement_actor_ids):
+            for actor_id, name, username, email in (
+                db.session.query(User.id, User.name, User.username, User.email)
+                .filter(User.id.in_(actor_id_chunk))
+                .all()
+            ):
+                movement_actors[int(actor_id)] = SimpleNamespace(
+                    id=int(actor_id),
+                    name=name,
+                    username=username,
+                    email=email,
+                    full_name=(name or "").strip() or username or email or f"User #{actor_id}",
+                )
+
+        for item, target in visible_candidates:
+            movement = latest_movements.get(int(item.id))
+            movement_actor_id = movement[0] if movement else None
+            movement_note = movement[1] if movement else None
+            movement_created_at = movement[2] if movement else None
+
             status = (getattr(item, "status", None) or ("RECEIVED" if kind == "IN" else "DRAFT")).upper()
             tasks.append({
                 "kind": kind,
@@ -4628,9 +4829,9 @@ def _correspondence_inbox_tasks(actor_users, search: str = "") -> list[dict]:
                 "status": status,
                 "status_label": CORR_STATUS_LABELS.get(status, status),
                 "expected": expected_by_status.get(status, "متابعة المعاملة واتخاذ الإجراء المناسب"),
-                "note": getattr(movement, "note", None),
-                "assigned_by": getattr(movement, "actor", None),
-                "assigned_at": getattr(movement, "created_at", None) or item.created_at,
+                "note": movement_note,
+                "assigned_by": movement_actors.get(int(movement_actor_id)) if movement_actor_id else None,
+                "assigned_at": movement_created_at or item.created_at,
                 "due_date": getattr(item, "due_date", None),
                 "due_state": corr_due_state(getattr(item, "due_date", None)),
                 "confidentiality": (getattr(item, "confidentiality", None) or "NORMAL").upper(),
@@ -5175,9 +5376,39 @@ def inbox():
             # No clauses -> no results
             q = q.filter(db.text("1=0"))
 
-    rows = q.order_by(WorkflowRequest.id.desc()).all()
+    requested_inbox_page = max(1, request.args.get("page", type=int, default=1))
+    try:
+        inbox_per_page = max(
+            10,
+            min(int(current_app.config.get("WORKFLOW_INBOX_PAGE_SIZE", 25)), 100),
+        )
+    except (TypeError, ValueError):
+        inbox_per_page = 25
 
-    if actor_ids:
+    # The super-admin query already represents the complete Workflow inbox:
+    # unlike personal inboxes it needs neither mention expansion nor dynamic
+    # hierarchy-bypass discovery.  Paginate that result in SQL so loading page
+    # 2 does not hydrate and permission-snapshot every pending request first.
+    database_paginated = bool(
+        is_super
+        and execution.get("execution_context") == "SELF"
+        and _is_admin(_workflow_actor())
+    )
+    if database_paginated:
+        workflow_total = int(q.order_by(None).count())
+        inbox_pages = max(1, (workflow_total + inbox_per_page - 1) // inbox_per_page)
+        inbox_page = min(requested_inbox_page, inbox_pages)
+        inbox_start = (inbox_page - 1) * inbox_per_page
+        rows = (
+            q.order_by(WorkflowRequest.id.desc())
+            .offset(inbox_start)
+            .limit(inbox_per_page)
+            .all()
+        )
+    else:
+        rows = q.order_by(WorkflowRequest.id.desc()).all()
+
+    if actor_ids and not database_paginated:
         pending_mention_rows = (
             db.session.query(WorkflowRequest, WorkflowInstance, WorkflowInstanceStep)
             .join(WorkflowInstance, WorkflowInstance.request_id == WorkflowRequest.id)
@@ -5346,19 +5577,12 @@ def inbox():
                 filtered.append((req, inst, step))
             rows = filtered
 
-    workflow_total = len(rows)
-    inbox_page = max(1, request.args.get("page", type=int, default=1))
-    try:
-        inbox_per_page = max(
-            10,
-            min(int(current_app.config.get("WORKFLOW_INBOX_PAGE_SIZE", 25)), 100),
-        )
-    except (TypeError, ValueError):
-        inbox_per_page = 25
-    inbox_pages = max(1, (workflow_total + inbox_per_page - 1) // inbox_per_page)
-    inbox_page = min(inbox_page, inbox_pages)
-    inbox_start = (inbox_page - 1) * inbox_per_page
-    rows = rows[inbox_start:inbox_start + inbox_per_page]
+    if not database_paginated:
+        workflow_total = len(rows)
+        inbox_pages = max(1, (workflow_total + inbox_per_page - 1) // inbox_per_page)
+        inbox_page = min(requested_inbox_page, inbox_pages)
+        inbox_start = (inbox_page - 1) * inbox_per_page
+        rows = rows[inbox_start:inbox_start + inbox_per_page]
     new_request_ids = unopened_workflow_request_ids(
         current_user.id,
         {

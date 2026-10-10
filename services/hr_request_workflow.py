@@ -14,6 +14,7 @@ from typing import Iterable
 
 from sqlalchemy import exists, func, or_
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload, load_only, noload
 
 from extensions import db
 from models import (
@@ -2291,7 +2292,15 @@ def process_pending_approvals(*, now: datetime | None = None, send_notifications
 
 def request_ids_user_can_act_on(user: User, kind: str) -> list[int]:
     kind = (kind or "").upper()
-    if _can_approve_all_requests(user):
+    if not user or not getattr(user, "id", None):
+        return []
+
+    can_approve_every_request = _can_approve_all_requests(user)
+    try:
+        can_approve_every_request = can_approve_every_request or user.has_role("SUPER_ADMIN")
+    except Exception:
+        pass
+    if can_approve_every_request:
         return [
             int(request_id)
             for (request_id,) in (
@@ -2323,11 +2332,135 @@ def request_ids_user_can_act_on(user: User, kind: str) -> list[int]:
         )
         .all()
     )
-    ids: list[int] = []
+    if not pending_steps:
+        return []
+
+    # Resolve delegations once for the whole inbox.  Calling ``can_user_act``
+    # for every row previously performed a latest-delegation query for every
+    # candidate approver, making Portal entry time grow with all pending HR
+    # requests in the system.  Preserve its exact "latest active delegation"
+    # rule while loading the relevant rows in bounded batches.
+    approver_ids = {
+        int(approver_id)
+        for step in pending_steps
+        for approver_id in _step_approver_ids(step)
+        if approver_id
+    }
+    delegated_approver_ids: set[int] = set()
+    now = datetime.utcnow()
+    candidate_delegator_ids = {
+        int(from_user_id)
+        for (from_user_id,) in (
+            db.session.query(Delegation.from_user_id)
+            .filter(
+                Delegation.to_user_id == int(user.id),
+                Delegation.is_active.is_(True),
+                Delegation.starts_at <= now,
+                Delegation.expires_at >= now,
+            )
+            .distinct()
+            .all()
+        )
+        if from_user_id and int(from_user_id) in approver_ids
+    }
+    candidate_delegator_id_list = sorted(candidate_delegator_ids)
+    for offset in range(0, len(candidate_delegator_id_list), 400):
+        chunk = candidate_delegator_id_list[offset:offset + 400]
+        delegation_rows = (
+            db.session.query(
+                Delegation.from_user_id,
+                Delegation.to_user_id,
+            )
+            .filter(
+                Delegation.from_user_id.in_(chunk),
+                Delegation.is_active.is_(True),
+                Delegation.starts_at <= now,
+                Delegation.expires_at >= now,
+            )
+            .order_by(
+                Delegation.from_user_id.asc(),
+                Delegation.expires_at.desc(),
+                Delegation.id.desc(),
+            )
+            .all()
+        )
+        seen_delegators: set[int] = set()
+        for from_user_id, to_user_id in delegation_rows:
+            normalized_from_id = int(from_user_id)
+            if normalized_from_id in seen_delegators:
+                continue
+            seen_delegators.add(normalized_from_id)
+            if to_user_id and int(to_user_id) == int(user.id):
+                delegated_approver_ids.add(normalized_from_id)
+
+    # A Secretary-General compensatory-leave copy is explicitly read-only.
+    # Batch that exception instead of loading the leave and observer once per
+    # pending step before even checking its assigned approver.
+    read_only_request_ids: set[int] = set()
+    if kind == KIND_LEAVE:
+        pending_request_ids = {int(step.request_id) for step in pending_steps}
+        observer_request_ids = {
+            int(request_id)
+            for (request_id,) in (
+                db.session.query(HRRequestObserver.request_id)
+                .filter(
+                    HRRequestObserver.request_kind == KIND_LEAVE,
+                    HRRequestObserver.user_id == int(user.id),
+                    HRRequestObserver.observer_scope == "SECRETARY_GENERAL_VIEW_ONLY",
+                )
+                .all()
+            )
+            if request_id and int(request_id) in pending_request_ids
+        }
+        observer_id_list = sorted(observer_request_ids)
+        for offset in range(0, len(observer_id_list), 400):
+            chunk = observer_id_list[offset:offset + 400]
+            leave_rows = (
+                HRLeaveRequest.query
+                .options(
+                    load_only(HRLeaveRequest.id, HRLeaveRequest.leave_type_id),
+                    noload("*"),
+                    joinedload(HRLeaveRequest.leave_type),
+                )
+                .filter(HRLeaveRequest.id.in_(chunk))
+                .all()
+            )
+            read_only_request_ids.update(
+                int(row.id) for row in leave_rows if is_compensatory_leave(row)
+            )
+
+    scope_user_ids: dict[str, set[int]] = {}
+
+    def user_matches_scope(scope: str) -> bool:
+        if scope not in scope_user_ids:
+            if scope == SCOPE_HR:
+                scope_user_ids[scope] = {int(value) for value in hr_approval_user_ids()}
+            elif scope == SCOPE_SECRETARY_GENERAL:
+                scope_user_ids[scope] = {
+                    int(value) for value in secretary_general_user_ids()
+                }
+            else:
+                scope_user_ids[scope] = set()
+        return int(user.id) in scope_user_ids[scope]
+
+    ids: set[int] = set()
     for step in pending_steps:
-        if can_user_act(user, step):
-            ids.append(int(step.request_id))
-    return sorted(set(ids))
+        request_id = int(step.request_id)
+        if request_id in read_only_request_ids:
+            continue
+        step_approver_ids = _step_approver_ids(step)
+        if step_approver_ids:
+            if any(
+                int(approver_id) == int(user.id)
+                or int(approver_id) in delegated_approver_ids
+                for approver_id in step_approver_ids
+            ):
+                ids.add(request_id)
+            continue
+        scope = (step.approver_scope or SCOPE_USER).upper()
+        if user_matches_scope(scope):
+            ids.add(request_id)
+    return sorted(ids)
 
 
 def can_view_request(user: User, kind: str, request_id: int) -> bool:

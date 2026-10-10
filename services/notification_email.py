@@ -4,14 +4,24 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from html import escape
+import json
 import re
 import unicodedata
 
 from flask import current_app
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_, select
 
 from extensions import db
-from models import HRLeaveRequest, HRPermissionRequest, Notification, NotificationEmailDelivery, Role, TroubleTicket, User
+from models import (
+    HRLeaveRequest,
+    HRPermissionRequest,
+    HRRequestApprovalStep,
+    Notification,
+    NotificationEmailDelivery,
+    Role,
+    TroubleTicket,
+    User,
+)
 from services.delivery_controls import (
     EMAIL_DISABLED_REASON,
     email_delivery_enabled,
@@ -19,7 +29,6 @@ from services.delivery_controls import (
 from services.hr_request_workflow import (
     KIND_LEAVE,
     KIND_PERMISSION,
-    can_receive_request_notification,
 )
 from services.workflow_task_email import (
     EMAIL_SEND_LEASE_MINUTES,
@@ -124,15 +133,40 @@ def _can_receive_ticket_notification_email(user: User, notification: Notificatio
 
 
 def _can_receive_hr_request_notification_email(user: User, notification: Notification) -> bool:
-    """Limit HR mail to the requester, current approvers, or decision actor."""
+    """Limit HR mail to the requester, current approvers, or decision actor.
+
+    This deliberately performs one fresh scalar query immediately before SMTP.
+    Avoiding ORM entities here prevents eager-loading request attachments/users
+    and approval-history relationships while retaining the stale-recipient
+    safety check for every individual delivery.
+    """
     link_match = _HR_REQUEST_LINK_RE.match((getattr(notification, "link_url", None) or "").strip())
     if not link_match:
         return False
 
     kind = KIND_LEAVE if link_match.group(1) == "leaves" else KIND_PERMISSION
     request_id = int(link_match.group(2))
-    row = db.session.get(HRLeaveRequest if kind == KIND_LEAVE else HRPermissionRequest, request_id)
-    if not row:
+    request_model = HRLeaveRequest if kind == KIND_LEAVE else HRPermissionRequest
+    recipient_state = (
+        db.session.query(
+            request_model.user_id,
+            HRRequestApprovalStep.approver_user_id,
+            HRRequestApprovalStep.approver_user_ids,
+        )
+        .select_from(request_model)
+        .outerjoin(
+            HRRequestApprovalStep,
+            and_(
+                HRRequestApprovalStep.request_kind == kind,
+                HRRequestApprovalStep.request_id == request_model.id,
+                HRRequestApprovalStep.status == "PENDING",
+            ),
+        )
+        .filter(request_model.id == request_id)
+        .order_by(HRRequestApprovalStep.step_order.asc())
+        .first()
+    )
+    if not recipient_state:
         return False
     notification_type = (getattr(notification, "type", None) or "").strip().upper()
     if (
@@ -144,7 +178,25 @@ def _can_receive_hr_request_notification_email(user: User, notification: Notific
         # decision closes that step, the ordinary current-approver resolver no
         # longer contains them, but their decision receipt remains legitimate.
         return True
-    return can_receive_request_notification(user, kind, request_id)
+
+    authorized_ids = {int(recipient_state.user_id)}
+    approver_ids: set[int] = set()
+    raw_approver_ids = (recipient_state.approver_user_ids or "").strip()
+    if raw_approver_ids:
+        try:
+            parsed = json.loads(raw_approver_ids)
+            values = parsed if isinstance(parsed, list) else [parsed]
+            approver_ids.update(int(value) for value in values if value)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            approver_ids.update(
+                int(value.strip())
+                for value in raw_approver_ids.split(",")
+                if value.strip().isdigit()
+            )
+    if not approver_ids and recipient_state.approver_user_id:
+        approver_ids.add(int(recipient_state.approver_user_id))
+    authorized_ids.update(approver_ids)
+    return int(user.id) in authorized_ids
 
 
 def _email_content(user: User, notification: Notification) -> tuple[str, str, str]:
@@ -209,27 +261,43 @@ def enqueue_notification_email(notification: Notification) -> bool:
 
 def _recover_stale_notification_deliveries(now: datetime) -> None:
     """Return notification rows abandoned by a stopped worker to the queue."""
-    stale = (
-        NotificationEmailDelivery.query
-        .filter(
-            NotificationEmailDelivery.status == SENDING,
-            or_(
-                NotificationEmailDelivery.next_attempt_at.is_(None),
-                NotificationEmailDelivery.next_attempt_at <= now,
-            ),
-        )
-        .all()
+    stale_filter = (
+        NotificationEmailDelivery.status == SENDING,
+        or_(
+            NotificationEmailDelivery.next_attempt_at.is_(None),
+            NotificationEmailDelivery.next_attempt_at <= now,
+        ),
     )
-    for delivery in stale:
-        if int(delivery.attempt_count or 0) >= MAX_ATTEMPTS:
-            delivery.status = FAILED
-            delivery.next_attempt_at = None
-            delivery.last_error = delivery.last_error or "Maximum email delivery attempts reached."
-        else:
-            delivery.status = PENDING
-            delivery.next_attempt_at = None
-            delivery.last_error = STALE_DELIVERY_RETRY_REASON
-    if stale:
+    failed = (
+        NotificationEmailDelivery.query
+        .filter(*stale_filter)
+        .filter(NotificationEmailDelivery.attempt_count >= MAX_ATTEMPTS)
+        .update(
+            {
+                NotificationEmailDelivery.status: FAILED,
+                NotificationEmailDelivery.next_attempt_at: None,
+                NotificationEmailDelivery.last_error: func.coalesce(
+                    NotificationEmailDelivery.last_error,
+                    "Maximum email delivery attempts reached.",
+                ),
+            },
+            synchronize_session=False,
+        )
+    )
+    pending = (
+        NotificationEmailDelivery.query
+        .filter(*stale_filter)
+        .filter(NotificationEmailDelivery.attempt_count < MAX_ATTEMPTS)
+        .update(
+            {
+                NotificationEmailDelivery.status: PENDING,
+                NotificationEmailDelivery.next_attempt_at: None,
+                NotificationEmailDelivery.last_error: STALE_DELIVERY_RETRY_REASON,
+            },
+            synchronize_session=False,
+        )
+    )
+    if failed or pending:
         db.session.commit()
 
 
@@ -269,32 +337,44 @@ def send_pending_notification_emails(limit: int = 100, now: datetime | None = No
     """Send explicitly opted-in notification mail with one retry per row."""
     now = now or datetime.utcnow()
     _recover_stale_notification_deliveries(now)
-    pending_deliveries = NotificationEmailDelivery.query.filter_by(status=PENDING).all()
-    eligible_deliveries = []
-    legacy_deliveries = []
-    for delivery in pending_deliveries:
-        mode = (
-            getattr(delivery.notification, "email_delivery_mode", "") or ""
-        ).strip().upper()
-        if mode in _EMAIL_DELIVERY_MODES:
-            eligible_deliveries.append(delivery)
-        else:
-            legacy_deliveries.append(delivery)
-
-    for delivery in legacy_deliveries:
-        delivery.status = "CANCELLED"
-        delivery.next_attempt_at = None
-        delivery.last_error = NOTIFICATION_EMAILS_DISABLED_REASON
-    if legacy_deliveries:
+    normalized_mode = func.upper(func.trim(func.coalesce(Notification.email_delivery_mode, "")))
+    eligible_notification_exists = select(Notification.id).where(
+        Notification.id == NotificationEmailDelivery.notification_id,
+        normalized_mode.in_(sorted(_EMAIL_DELIVERY_MODES)),
+    ).exists()
+    pending_query = NotificationEmailDelivery.query.filter(
+        NotificationEmailDelivery.status == PENDING,
+    )
+    legacy_count = (
+        pending_query
+        .filter(~eligible_notification_exists)
+        .update(
+            {
+                NotificationEmailDelivery.status: "CANCELLED",
+                NotificationEmailDelivery.next_attempt_at: None,
+                NotificationEmailDelivery.last_error: NOTIFICATION_EMAILS_DISABLED_REASON,
+            },
+            synchronize_session=False,
+        )
+    )
+    if legacy_count:
         db.session.commit()
 
-    if not eligible_deliveries:
+    eligible_pending_query = NotificationEmailDelivery.query.filter(
+        NotificationEmailDelivery.status == PENDING,
+        eligible_notification_exists,
+    )
+    if eligible_pending_query.with_entities(NotificationEmailDelivery.id).first() is None:
         return 0
     if not email_delivery_enabled():
-        for delivery in eligible_deliveries:
-            delivery.status = "CANCELLED"
-            delivery.next_attempt_at = None
-            delivery.last_error = EMAIL_DISABLED_REASON
+        eligible_pending_query.update(
+            {
+                NotificationEmailDelivery.status: "CANCELLED",
+                NotificationEmailDelivery.next_attempt_at: None,
+                NotificationEmailDelivery.last_error: EMAIL_DISABLED_REASON,
+            },
+            synchronize_session=False,
+        )
         db.session.commit()
         return 0
 
@@ -302,22 +382,42 @@ def send_pending_notification_emails(limit: int = 100, now: datetime | None = No
     if not config["ready"]:
         return 0
 
-    for delivery in eligible_deliveries:
-        if int(delivery.attempt_count or 0) >= MAX_ATTEMPTS:
-            delivery.status = FAILED
-            delivery.next_attempt_at = None
-            delivery.last_error = delivery.last_error or "Maximum email delivery attempts reached."
-    db.session.commit()
+    exhausted_count = (
+        eligible_pending_query
+        .filter(NotificationEmailDelivery.attempt_count >= MAX_ATTEMPTS)
+        .update(
+            {
+                NotificationEmailDelivery.status: FAILED,
+                NotificationEmailDelivery.next_attempt_at: None,
+                NotificationEmailDelivery.last_error: func.coalesce(
+                    NotificationEmailDelivery.last_error,
+                    "Maximum email delivery attempts reached.",
+                ),
+            },
+            synchronize_session=False,
+        )
+    )
+    if exhausted_count:
+        db.session.commit()
 
-    due_deliveries = [
-        delivery
-        for delivery in eligible_deliveries
-        if delivery.status == PENDING
-        and int(delivery.attempt_count or 0) < MAX_ATTEMPTS
-        and (delivery.next_attempt_at is None or delivery.next_attempt_at <= now)
-    ]
-    due_deliveries.sort(key=lambda row: (row.created_at or datetime.min, row.id or 0))
-    due_deliveries = due_deliveries[:max(1, min(int(limit), 200))]
+    due_deliveries = (
+        NotificationEmailDelivery.query
+        .filter(
+            NotificationEmailDelivery.status == PENDING,
+            NotificationEmailDelivery.attempt_count < MAX_ATTEMPTS,
+            eligible_notification_exists,
+            or_(
+                NotificationEmailDelivery.next_attempt_at.is_(None),
+                NotificationEmailDelivery.next_attempt_at <= now,
+            ),
+        )
+        .order_by(
+            NotificationEmailDelivery.created_at.asc(),
+            NotificationEmailDelivery.id.asc(),
+        )
+        .limit(max(1, min(int(limit), 200)))
+        .all()
+    )
 
     sent = 0
     for queued_delivery in due_deliveries:

@@ -47,7 +47,7 @@ from werkzeug.utils import secure_filename
 
 from . import portal_bp
 from extensions import db
-from sqlalchemy import or_, and_, text, func, case, false
+from sqlalchemy import or_, and_, text, func, case, false, literal_column
 from sqlalchemy.sql import exists
 from sqlalchemy.exc import IntegrityError, OperationalError
 from utils.perms import perm_required
@@ -986,21 +986,16 @@ def _portal_flags():
 
     can_meetings_manage = has(PORTAL_MEETINGS_MANAGE)
     can_portal_admin = any(has(k) for k in PORTAL_ADMIN_DASHBOARD_PERMS)
-    assigned_hr_request = False
-    try:
-        assigned_hr_request = bool(
-            _current_user_approvable_request_ids(KIND_LEAVE)
-            or _current_user_approvable_request_ids(KIND_PERMISSION)
-        )
-    except Exception:
-        pass
+    # Opening the approvals inbox is available to every Portal employee and
+    # authorization is resolved per request.  Do not scan all pending HR
+    # workflow rows merely to build an otherwise unused layout flag on every
+    # Portal page.
     can_approve = (
         has(HR_APPROVALS_VIEW)
         or has(HR_REQUESTS_APPROVE)
         or has(HR_REQUESTS_VIEW_ALL)
         or has(HR_SS_APPROVE)
         or has(HR_SS_WORKFLOWS_MANAGE)
-        or assigned_hr_request
     )
     # Every Portal employee may open the personal approvals inbox.  Action
     # permissions are still resolved per request and per workflow stage.
@@ -1389,7 +1384,7 @@ def _approval_inbox_pending_count(user=None) -> int:
         )
         can_approve_hr_ss = bool(selected_user.has_perm(HR_SS_APPROVE))
         if can_manage_hr_ss or can_approve_hr_ss:
-            hr_ss_query = (
+            hr_ss_base_query = (
                 HRSSRequestApproval.query
                 .join(HRSSRequest)
                 .filter(
@@ -1397,7 +1392,12 @@ def _approval_inbox_pending_count(user=None) -> int:
                     HRSSRequestApproval.status == "PENDING",
                 )
             )
-            if not can_manage_hr_ss:
+            if can_manage_hr_ss:
+                total += _safe_count(hr_ss_base_query)
+            else:
+                direct_count = _safe_count(hr_ss_base_query.filter(
+                    HRSSRequestApproval.approver_user_id == user_id,
+                ))
                 role_normalized = (
                     (getattr(selected_user, "role", None) or "")
                     .strip()
@@ -1406,24 +1406,31 @@ def _approval_inbox_pending_count(user=None) -> int:
                     .replace("-", "")
                     .replace(" ", "")
                 )
-                role_column_normalized = func.replace(
+                role_column_normalized = func.upper(
                     func.replace(
                         func.replace(
-                            func.upper(HRSSRequestApproval.approver_role),
-                            "_",
-                            "",
+                            func.replace(
+                                HRSSRequestApproval.approver_role,
+                                literal_column("'_'"),
+                                literal_column("''"),
+                            ),
+                            literal_column("'-'"),
+                            literal_column("''"),
                         ),
-                        "-",
-                        "",
-                    ),
-                    " ",
-                    "",
+                        literal_column("' '"),
+                        literal_column("''"),
+                    )
                 )
-                hr_ss_query = hr_ss_query.filter(or_(
-                    HRSSRequestApproval.approver_user_id == user_id,
-                    role_column_normalized == role_normalized,
-                ))
-            total += _safe_count(hr_ss_query)
+                role_count = 0
+                if role_normalized:
+                    role_count = _safe_count(hr_ss_base_query.filter(
+                        role_column_normalized == role_normalized,
+                        or_(
+                            HRSSRequestApproval.approver_user_id.is_(None),
+                            HRSSRequestApproval.approver_user_id != user_id,
+                        ),
+                    ))
+                total += direct_count + role_count
     except Exception:
         pass
 
@@ -1440,42 +1447,40 @@ def _inject_portal_context():
 
     flags = _portal_flags()
 
-    can_review_manual_attendance = _hr_can_approve_attendance_edit()
-    approvals_pending = (
-        _approval_inbox_pending_count(current_user)
-        if flags.get('can_approve') or can_review_manual_attendance
-        else 0
+    # This value is consumed only by the HR module navigation.  Resolving the
+    # HR/Secretary-General audience can touch several organization tables, so
+    # skip it on the Portal home and unrelated modules.
+    can_review_manual_attendance = (
+        _hr_can_approve_attendance_edit()
+        if request.path.startswith('/portal/hr')
+        else False
     )
+
+    # The tracked templates do not render a global approvals badge.  The home
+    # route computes its visible counter explicitly and exposes it through its
+    # own ``stats`` object; avoid repeating the full inbox calculation in this
+    # context processor on every Portal response.
+    approvals_pending = int(getattr(g, '_portal_home_approvals_pending', 0) or 0)
 
     # Store: count files shared with me (user or role). This enables a "Shared files" shortcut
     # even when STORE_READ is not granted.
+    # No current Portal template renders this legacy counter.  Store schema
+    # readiness remains enforced by Store routes themselves, not every Portal
+    # page request.
     store_shared_count = 0
-    try:
-        _ensure_store_schema()
-        role = (getattr(current_user, 'role', None) or '').strip().upper() or None
-        now = datetime.utcnow()
-        q_shared = (
-            StoreFilePermission.query
-            .join(StoreFile, StoreFilePermission.file_id == StoreFile.id)
-            .filter(StoreFile.is_deleted == False)  # noqa: E712
-            .filter(or_(
-                StoreFilePermission.user_id == current_user.id,
-                StoreFilePermission.role == role,
-            ))
-            .filter(or_(StoreFilePermission.expires_at.is_(None), StoreFilePermission.expires_at > now))
-        )
-        store_shared_count = _safe_count(q_shared)
-    except Exception:
-        store_shared_count = 0
 
     
     # Portal access requests badge (pending)
     access_pending = 0
     my_pending = 0
-    try:
-        my_pending = _safe_count(PortalAccessRequest.query.filter(PortalAccessRequest.user_id == current_user.id, PortalAccessRequest.status == 'PENDING'))
-    except Exception:
-        my_pending = 0
+    cached_my_pending = getattr(g, '_portal_home_access_pending', None)
+    if cached_my_pending is not None:
+        my_pending = int(cached_my_pending)
+    else:
+        try:
+            my_pending = _safe_count(PortalAccessRequest.query.filter(PortalAccessRequest.user_id == current_user.id, PortalAccessRequest.status == 'PENDING'))
+        except Exception:
+            my_pending = 0
 
     try:
         if current_user.has_perm(PORTAL_ADMIN_PERMISSIONS_MANAGE):
@@ -1501,25 +1506,30 @@ def _inject_portal_context():
     meetings_week_count = 0
     meeting_tasks_open = 0
     absence_board_visible = _portal_can_view_absence_board()
-    try:
-        now = datetime.utcnow()
-        week_to = now + timedelta(days=7)
-        meetings_week_count = _safe_count(
-            _meeting_visible_query(PortalMeeting.query)
-            .filter(PortalMeeting.status == 'SCHEDULED')
-            .filter(PortalMeeting.start_at >= now)
-            .filter(PortalMeeting.start_at < week_to)
-        )
-        meeting_tasks_open = _safe_count(
-            PortalMeetingTask.query
-            .join(PortalMeeting, PortalMeeting.id == PortalMeetingTask.meeting_id)
-            .filter(PortalMeetingTask.assignee_user_id == current_user.id)
-            .filter(PortalMeetingTask.status.in_(('OPEN', 'IN_PROGRESS')))
-            .filter(_meeting_access_condition(current_user.id))
-        )
-    except Exception:
-        meetings_week_count = 0
-        meeting_tasks_open = 0
+    portal_home_stats = getattr(g, '_portal_home_stats', None)
+    if isinstance(portal_home_stats, dict):
+        meetings_week_count = int(portal_home_stats.get('meetings_week', 0) or 0)
+        meeting_tasks_open = int(portal_home_stats.get('meeting_tasks_open', 0) or 0)
+    else:
+        try:
+            now = datetime.utcnow()
+            week_to = now + timedelta(days=7)
+            meetings_week_count = _safe_count(
+                _meeting_visible_query(PortalMeeting.query)
+                .filter(PortalMeeting.status == 'SCHEDULED')
+                .filter(PortalMeeting.start_at >= now)
+                .filter(PortalMeeting.start_at < week_to)
+            )
+            meeting_tasks_open = _safe_count(
+                PortalMeetingTask.query
+                .join(PortalMeeting, PortalMeeting.id == PortalMeetingTask.meeting_id)
+                .filter(PortalMeetingTask.assignee_user_id == current_user.id)
+                .filter(PortalMeetingTask.status.in_(('OPEN', 'IN_PROGRESS')))
+                .filter(_meeting_access_condition(current_user.id))
+            )
+        except Exception:
+            meetings_week_count = 0
+            meeting_tasks_open = 0
 
     return {
         'portal_flags': flags,
@@ -4342,6 +4352,7 @@ def index():
 
     # Pending access requests per service (shown inside disabled cards)
     access_reqs: dict[str, PortalAccessRequest] = {}
+    pending_rows = []
     try:
         pending_rows = (
             PortalAccessRequest.query
@@ -4356,6 +4367,7 @@ def index():
                 access_reqs[svc] = r
     except Exception:
         access_reqs = {}
+        pending_rows = []
 
     stats = {
         'corr_in_30': 0,
@@ -4494,6 +4506,13 @@ def index():
         last_meetings = []
         next_meeting = None
         meeting_open_tasks = []
+
+    # Blueprint context processors run while ``render_template`` builds this
+    # response.  Reuse the home-page results there instead of repeating the
+    # approvals, access-request and meeting queries for the same request.
+    g._portal_home_approvals_pending = int(stats['approvals_pending'] or 0)
+    g._portal_home_access_pending = len(pending_rows)
+    g._portal_home_stats = stats
 
     # --- Circulars (last 5) ---
     last_circulars = []
@@ -15163,7 +15182,39 @@ def _visible_maternity_departures(
         HRAttendanceSpecialCase.created_at.desc(),
         HRAttendanceSpecialCase.id.desc(),
     ).limit(500).all()
-    return [row for row in rows if _can_review_maternity_departure(row, selected_user)]
+    if not rows:
+        return []
+    try:
+        if (
+            selected_user.has_role('ADMIN')
+            or selected_user.has_role('SUPER_ADMIN')
+            or selected_user.has_perm(HR_ATT_EDIT_APPROVE)
+            or selected_user.has_perm(HR_REQUESTS_VIEW_ALL)
+        ):
+            return rows
+    except Exception:
+        pass
+
+    # Resolve the whole employee set once.  The former per-row helper repeated
+    # the organization/direct-manager traversal for as many as 500 maternity
+    # requests whenever the Portal badge or approvals inbox was opened.
+    employees_by_id = {
+        int(row.user_id): row.user
+        for row in rows
+        if getattr(row, 'user', None) is not None
+    }
+    managers_by_employee = _attendance_schedule_responsible_managers_map(
+        list(employees_by_id.values())
+    )
+    selected_user_id = int(selected_user.id)
+    return [
+        row
+        for row in rows
+        if any(
+            int(manager.id) == selected_user_id
+            for manager in managers_by_employee.get(int(row.user_id), ())
+        )
+    ]
 
 
 def _attendance_summary_keys_for_period(user_id: int, day: str, day_to: str | None) -> set[tuple[int, str]]:
@@ -17778,7 +17829,11 @@ def _attendance_schedule_responsible_managers_map(users: list[User]) -> dict[int
 def _attendance_schedule_has_reports(manager_user_id: int) -> bool:
     """Cheaply determine whether the team tab can apply to this user."""
     manager_user_id = int(manager_user_id)
-    if bool(
+    cache = _attendance_schedule_request_cache("has_reports")
+    if manager_user_id in cache:
+        return bool(cache[manager_user_id])
+
+    has_reports = bool(
         EmployeeFile.query.filter_by(direct_manager_user_id=manager_user_id).first()
         or EmployeeResponsibleAssignment.query.filter_by(
             responsible_user_id=manager_user_id,
@@ -17793,26 +17848,37 @@ def _attendance_schedule_has_reports(manager_user_id: int) -> bool:
             OrgUnitManager.manager_user_id == manager_user_id,
             OrgUnitManager.deputy_user_id == manager_user_id,
         )).first()
-    ):
-        return True
-    actor = db.session.get(User, manager_user_id)
-    if not _attendance_schedule_is_general_director(actor):
-        return False
-    return bool(_attendance_schedule_general_director_reports(manager_user_id))
+    )
+    if not has_reports:
+        actor = db.session.get(User, manager_user_id)
+        has_reports = bool(
+            _attendance_schedule_is_general_director(actor)
+            and _attendance_schedule_general_director_reports(manager_user_id)
+        )
+    cache[manager_user_id] = has_reports
+    return has_reports
 
 
 def _attendance_schedule_direct_reports(
     manager_user_id: int,
     employee_users: list[User] | None = None,
 ) -> list[User]:
+    manager_user_id = int(manager_user_id)
+    cache = _attendance_schedule_request_cache("direct_reports")
+    if employee_users is None and manager_user_id in cache:
+        return cache[manager_user_id]
+
     reports = []
     users = employee_users if employee_users is not None else _attendance_schedule_employee_users()
+    managers_by_employee = _attendance_schedule_responsible_managers_map(users)
     for user in users:
-        if int(user.id) == int(manager_user_id):
+        if int(user.id) == manager_user_id:
             continue
-        managers = _attendance_schedule_responsible_managers(int(user.id))
-        if any(int(manager.id) == int(manager_user_id) for manager in managers):
+        managers = managers_by_employee.get(int(user.id), ())
+        if any(int(manager.id) == manager_user_id for manager in managers):
             reports.append(user)
+    if employee_users is None:
+        cache[manager_user_id] = reports
     return reports
 
 
@@ -23004,33 +23070,67 @@ def hr_approvals():
     if not _hr_approvals_can_open(current_user):
         abort(403)
 
+    status = (request.args.get("status") or "SUBMITTED").upper()
+    allowed_status = {"SUBMITTED", "APPROVED", "REJECTED", "CANCELLED", "ALL"}
+    if status not in allowed_status:
+        status = "SUBMITTED"
+
     can_view_all = False
     try:
         can_view_all = current_user.has_perm(HR_REQUESTS_VIEW_ALL)
     except Exception:
         pass
 
-    assigned_leave_ids = _current_user_approvable_request_ids(KIND_LEAVE)
-    assigned_permission_ids = _current_user_approvable_request_ids(KIND_PERMISSION)
-    participated_leave_ids = set(
-        _hr_request_ids_for_user(current_user, KIND_LEAVE, participated=True)
+    assigned_leave_ids = (
+        [] if can_view_all else _current_user_approvable_request_ids(KIND_LEAVE)
     )
-    participated_permission_ids = set(
-        _hr_request_ids_for_user(current_user, KIND_PERMISSION, participated=True)
+    assigned_permission_ids = (
+        [] if can_view_all else _current_user_approvable_request_ids(KIND_PERMISSION)
     )
-    view_only_leave_ids = {
-        int(observer.request_id)
-        for observer in HRRequestObserver.query.filter_by(
-            request_kind=KIND_LEAVE,
-            user_id=current_user.id,
-            observer_scope="SECRETARY_GENERAL_VIEW_ONLY",
-        ).all()
-    }
+    participated_leave_ids: set[int] = set()
+    participated_permission_ids: set[int] = set()
+    observer_ids_by_kind = {KIND_LEAVE: set(), KIND_PERMISSION: set()}
+    view_only_leave_ids: set[int] = set()
+    if status != "SUBMITTED" and not can_view_all:
+        participated_leave_ids = set(
+            _hr_request_ids_for_user(current_user, KIND_LEAVE, participated=True)
+        )
+        participated_permission_ids = set(
+            _hr_request_ids_for_user(current_user, KIND_PERMISSION, participated=True)
+        )
+        observer_rows = (
+            db.session.query(
+                HRRequestObserver.request_kind,
+                HRRequestObserver.request_id,
+                HRRequestObserver.observer_scope,
+            )
+            .filter(
+                HRRequestObserver.user_id == current_user.id,
+                HRRequestObserver.request_kind.in_((KIND_LEAVE, KIND_PERMISSION)),
+            )
+            .all()
+        )
+        for observer_kind, request_id, observer_scope in observer_rows:
+            observer_ids_by_kind.setdefault(observer_kind, set()).add(int(request_id))
+            if (
+                observer_kind == KIND_LEAVE
+                and observer_scope == "SECRETARY_GENERAL_VIEW_ONLY"
+            ):
+                view_only_leave_ids.add(int(request_id))
 
-    status = (request.args.get("status") or "SUBMITTED").upper()
-    allowed_status = {"SUBMITTED", "APPROVED", "REJECTED", "CANCELLED", "ALL"}
-    if status not in allowed_status:
-        status = "SUBMITTED"
+    if status != "SUBMITTED" and can_view_all:
+        view_only_leave_ids = {
+            int(request_id)
+            for (request_id,) in (
+                db.session.query(HRRequestObserver.request_id)
+                .filter_by(
+                    request_kind=KIND_LEAVE,
+                    user_id=current_user.id,
+                    observer_scope="SECRETARY_GENERAL_VIEW_ONLY",
+                )
+                .all()
+            )
+        }
     maternity_reqs = _visible_maternity_departures(status)
     attendance_schedule_reqs, attendance_manual_reqs = _attendance_approval_inbox_rows(status)
 
@@ -23049,10 +23149,7 @@ def hr_approvals():
             if kind == KIND_LEAVE
             else assigned_permission_ids
         )
-        ids.update(
-            int(row.request_id)
-            for row in HRRequestObserver.query.filter_by(request_kind=kind, user_id=current_user.id).all()
-        )
+        ids.update(observer_ids_by_kind.get(kind, set()))
         return ids
 
     def _base(query, kind: str):
@@ -23079,11 +23176,46 @@ def hr_approvals():
         for row in leave_reqs
         if can_delete_approved_leave and _is_leave_approved_for_permanent_deletion(row)
     }
-    current_stage_labels = {}
-    for row in list(leave_reqs) + list(perm_reqs):
-        kind = KIND_LEAVE if isinstance(row, HRLeaveRequest) else KIND_PERMISSION
-        step = current_hr_request_step(kind, row.id)
-        current_stage_labels[(kind, row.id)] = hr_stage_label(step.stage_code) if step else "-"
+    current_stage_labels = {
+        (KIND_LEAVE, int(row.id)): "-" for row in leave_reqs
+    }
+    current_stage_labels.update({
+        (KIND_PERMISSION, int(row.id)): "-" for row in perm_reqs
+    })
+    request_ids_by_kind = {
+        KIND_LEAVE: [int(row.id) for row in leave_reqs],
+        KIND_PERMISSION: [int(row.id) for row in perm_reqs],
+    }
+    stage_filters = [
+        and_(
+            HRRequestApprovalStep.request_kind == request_kind,
+            HRRequestApprovalStep.request_id.in_(request_ids),
+        )
+        for request_kind, request_ids in request_ids_by_kind.items()
+        if request_ids
+    ]
+    if stage_filters:
+        current_steps = (
+            db.session.query(
+                HRRequestApprovalStep.request_kind,
+                HRRequestApprovalStep.request_id,
+                HRRequestApprovalStep.stage_code,
+            )
+            .filter(
+                HRRequestApprovalStep.status == "PENDING",
+                or_(*stage_filters),
+            )
+            .order_by(
+                HRRequestApprovalStep.request_kind.asc(),
+                HRRequestApprovalStep.request_id.asc(),
+                HRRequestApprovalStep.step_order.asc(),
+            )
+            .all()
+        )
+        for request_kind, request_id, stage_code in current_steps:
+            key = (request_kind, int(request_id))
+            if current_stage_labels.get(key) == "-":
+                current_stage_labels[key] = hr_stage_label(stage_code)
 
     return render_template(
         "portal/hr/approvals.html",

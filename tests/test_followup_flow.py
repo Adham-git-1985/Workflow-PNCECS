@@ -8,6 +8,7 @@ from docx import Document
 from flask import Flask
 from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
+from sqlalchemy import event
 
 from extensions import db
 from models import (
@@ -739,10 +740,26 @@ class FollowupFlowTests(unittest.TestCase):
                 send_followup_reminders(now=datetime(2026, 10, 6, 23, 11)),
                 1,
             )
-            self.assertEqual(
-                send_followup_reminders(now=datetime(2026, 10, 6, 23, 12)),
-                0,
-            )
+            reminder_queries = []
+
+            def capture_reminder_queries(_conn, _cursor, statement, _params, _context, _many):
+                normalized = " ".join(statement.lower().split())
+                if normalized.startswith("select") and "employee_followup_reports" in normalized:
+                    reminder_queries.append(normalized)
+
+            event.listen(db.engine, "before_cursor_execute", capture_reminder_queries)
+            try:
+                self.assertEqual(
+                    send_followup_reminders(now=datetime(2026, 10, 6, 23, 12)),
+                    0,
+                )
+            finally:
+                event.remove(db.engine, "before_cursor_execute", capture_reminder_queries)
+            self.assertEqual(len(reminder_queries), 2)
+            self.assertTrue(any(
+                "last_manager_reminder_at" in statement
+                for statement in reminder_queries
+            ))
             self.assertEqual(
                 send_followup_reminders(now=datetime(2026, 10, 7, 0, 0)),
                 0,

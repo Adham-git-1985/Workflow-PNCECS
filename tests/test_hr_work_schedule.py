@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from flask import Flask, g
 from jinja2 import Environment
+from sqlalchemy import event
 
 from extensions import db
 from models import (
@@ -30,6 +31,7 @@ from portal.routes import (
     _attendance_schedule_apply_form,
     _attendance_schedule_direct_reports,
     _attendance_schedule_fork_plan,
+    _attendance_schedule_has_reports,
     _attendance_schedule_is_final_approver,
     _attendance_schedule_latest_plan,
     _attendance_schedule_responsible_managers,
@@ -97,6 +99,7 @@ class AttendanceSchedulePersistenceTests(unittest.TestCase):
         db.session.remove()
         db.drop_all()
         db.create_all()
+        g._attendance_schedule_cache = {}
         self.employee = User(
             email="schedule-employee@example.test",
             name="موظف الجدول",
@@ -574,6 +577,68 @@ class AttendanceSchedulePersistenceTests(unittest.TestCase):
         self.assertEqual([user.id for user in first], [self.manager.id])
         self.assertEqual([user.id for user in second], [self.manager.id])
         resolver.assert_called_once_with(self.employee.id)
+
+    def test_direct_reports_use_bounded_bulk_queries_and_request_cache(self):
+        extra_users = [
+            User(
+                email=f"schedule-report-{index}@example.test",
+                name=f"Schedule report {index}",
+                password_hash="not-used",
+                role="EMPLOYEE",
+            )
+            for index in range(25)
+        ]
+        db.session.add_all(extra_users)
+        db.session.flush()
+        db.session.add_all(
+            EmployeeFile(
+                user_id=user.id,
+                direct_manager_user_id=self.manager.id,
+            )
+            for user in extra_users
+        )
+        db.session.commit()
+        manager_id = int(self.manager.id)
+        expected_ids = {int(self.employee.id), *(int(user.id) for user in extra_users)}
+        statements = []
+
+        def record_statement(*_args):
+            statements.append(1)
+
+        event.listen(db.engine, "before_cursor_execute", record_statement)
+        try:
+            with self.app.test_request_context("/portal/hr/attendance/work-schedule"):
+                first = _attendance_schedule_direct_reports(manager_id)
+                first_query_count = len(statements)
+                second = _attendance_schedule_direct_reports(manager_id)
+                second_query_count = len(statements)
+        finally:
+            event.remove(db.engine, "before_cursor_execute", record_statement)
+
+        self.assertEqual({int(user.id) for user in first}, expected_ids)
+        self.assertEqual({int(user.id) for user in second}, expected_ids)
+        self.assertLessEqual(first_query_count, 24)
+        self.assertEqual(second_query_count, first_query_count)
+
+    def test_has_reports_is_reused_within_one_page_request(self):
+        manager_id = int(self.manager.id)
+        statements = []
+
+        def record_statement(*_args):
+            statements.append(1)
+
+        event.listen(db.engine, "before_cursor_execute", record_statement)
+        try:
+            with self.app.test_request_context("/portal/hr/attendance/work-schedule"):
+                self.assertTrue(_attendance_schedule_has_reports(manager_id))
+                first_query_count = len(statements)
+                self.assertTrue(_attendance_schedule_has_reports(manager_id))
+                second_query_count = len(statements)
+        finally:
+            event.remove(db.engine, "before_cursor_execute", record_statement)
+
+        self.assertGreater(first_query_count, 0)
+        self.assertEqual(second_query_count, first_query_count)
 
     def test_opening_personal_schedule_defers_team_and_organization_rosters(self):
         undecorated_view = inspect.unwrap(hr_work_schedule)

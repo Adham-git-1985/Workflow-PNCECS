@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from unittest.mock import patch
 
 from flask import Flask
+from sqlalchemy import event
 
 from extensions import db
 from models import (
@@ -232,7 +233,9 @@ class NotificationEmailTests(unittest.TestCase):
             stage_code="DIRECT_MANAGER",
             approver_scope="USER",
             approver_user_id=self.user.id,
-            approver_user_ids=f"[{self.user.id}]",
+            # Legacy/damaged snapshots can contain JSON null. The scalar
+            # approver column remains the same fallback used by Workflow.
+            approver_user_ids="null",
             status="PENDING",
         ))
         notifications = (
@@ -259,14 +262,108 @@ class NotificationEmailTests(unittest.TestCase):
             self.assertTrue(enqueue_notification_email(notification))
         db.session.commit()
 
-        with patch("services.notification_email._send_email") as send_email:
-            self.assertEqual(send_pending_notification_emails(), 2)
+        authorization_queries = []
+
+        def capture_authorization_query(_conn, _cursor, statement, _params, _context, _many):
+            normalized = " ".join(statement.lower().split())
+            if "hr_leave_request" in normalized and "hr_request_approval_step" in normalized:
+                authorization_queries.append(normalized)
+
+        event.listen(db.engine, "before_cursor_execute", capture_authorization_query)
+        try:
+            with patch("services.notification_email._send_email") as send_email:
+                self.assertEqual(send_pending_notification_emails(), 2)
+        finally:
+            event.remove(db.engine, "before_cursor_execute", capture_authorization_query)
 
         self.assertEqual(send_email.call_count, 2)
+        self.assertEqual(len(authorization_queries), 2)
+        self.assertTrue(all("left outer join hr_request_approval_step" in sql for sql in authorization_queries))
         self.assertEqual(
             {delivery.status for delivery in NotificationEmailDelivery.query.all()},
             {"SENT"},
         )
+
+    def test_hr_request_recipient_is_rechecked_between_deliveries(self):
+        requester = User(
+            email="requester-live-check@example.test",
+            name="Requester",
+            password_hash="unused",
+            role="EMPLOYEE",
+        )
+        replacement = User(
+            email="replacement-approver@example.test",
+            name="Replacement",
+            password_hash="unused",
+            role="EMPLOYEE",
+        )
+        leave_type = HRLeaveType(code="ANNUAL", name_ar="Annual")
+        db.session.add_all((requester, replacement, leave_type))
+        db.session.flush()
+        leave_request = HRLeaveRequest(
+            user_id=requester.id,
+            leave_type_id=leave_type.id,
+            start_date="2026-10-10",
+            end_date="2026-10-10",
+            status="SUBMITTED",
+        )
+        db.session.add(leave_request)
+        db.session.flush()
+        approval_step = HRRequestApprovalStep(
+            request_kind="LEAVE",
+            request_id=leave_request.id,
+            flow_revision=1,
+            step_order=1,
+            stage_code="DIRECT_MANAGER",
+            approver_scope="USER",
+            approver_user_id=self.user.id,
+            approver_user_ids=f"[{self.user.id}]",
+            status="PENDING",
+        )
+        db.session.add(approval_step)
+        notifications = (
+            Notification(
+                user_id=requester.id,
+                message="Your leave request was submitted",
+                source="portal",
+                link_url=f"/portal/hr/approvals/leaves/{leave_request.id}",
+                email_delivery_mode=HR_REQUEST_EMAIL_MODE,
+                is_read=False,
+            ),
+            Notification(
+                user_id=self.user.id,
+                message="Old approval assignment",
+                source="portal",
+                link_url=f"/portal/hr/approvals/leaves/{leave_request.id}",
+                email_delivery_mode=HR_REQUEST_EMAIL_MODE,
+                is_read=False,
+            ),
+        )
+        db.session.add_all(notifications)
+        db.session.flush()
+        for notification in notifications:
+            self.assertTrue(enqueue_notification_email(notification))
+        db.session.commit()
+
+        def reassign_after_first_send(*_args, **_kwargs):
+            step = db.session.get(HRRequestApprovalStep, approval_step.id)
+            step.approver_user_id = replacement.id
+            step.approver_user_ids = f"[{replacement.id}]"
+            db.session.commit()
+
+        with patch(
+            "services.notification_email._send_email",
+            side_effect=reassign_after_first_send,
+        ) as send_email:
+            self.assertEqual(send_pending_notification_emails(), 1)
+
+        self.assertEqual(send_email.call_count, 1)
+        statuses = {
+            delivery.user_id: delivery.status
+            for delivery in NotificationEmailDelivery.query.all()
+        }
+        self.assertEqual(statuses[requester.id], "SENT")
+        self.assertEqual(statuses[self.user.id], "CANCELLED")
 
     def test_hr_request_email_cancels_unrelated_or_stale_recipient(self):
         requester = User(
@@ -415,6 +512,49 @@ class NotificationEmailTests(unittest.TestCase):
             )
 
         self.assertEqual(send_email.call_count, 2)
+
+    def test_email_worker_applies_the_delivery_limit_in_sql(self):
+        for index in range(12):
+            notification = Notification(
+                user_id=self.user.id,
+                message=f"Bounded delivery {index}",
+                source="portal",
+                email_delivery_mode=ATTENDANCE_SCHEDULE_EMAIL_MODE,
+                is_read=False,
+            )
+            db.session.add(notification)
+            db.session.flush()
+            self.assertTrue(enqueue_notification_email(notification))
+        db.session.commit()
+
+        statements = []
+
+        def capture_queries(_conn, _cursor, statement, _params, _context, _many):
+            normalized = " ".join(statement.lower().split())
+            if normalized.startswith("select") and "notification_email_deliveries" in normalized:
+                statements.append(normalized)
+
+        event.listen(db.engine, "before_cursor_execute", capture_queries)
+        try:
+            with patch("services.notification_email._send_email") as send_email:
+                self.assertEqual(send_pending_notification_emails(limit=3), 3)
+        finally:
+            event.remove(db.engine, "before_cursor_execute", capture_queries)
+
+        self.assertEqual(send_email.call_count, 3)
+        self.assertEqual(NotificationEmailDelivery.query.filter_by(status="SENT").count(), 3)
+        self.assertEqual(NotificationEmailDelivery.query.filter_by(status="PENDING").count(), 9)
+        bounded_selects = [
+            sql for sql in statements
+            if "order by notification_email_deliveries.created_at asc" in sql
+        ]
+        self.assertEqual(len(bounded_selects), 1)
+        self.assertIn(" limit ", bounded_selects[0])
+        self.assertIn("exists (select notification.id", bounded_selects[0])
+        self.assertIn(
+            "notification.id = notification_email_deliveries.notification_id",
+            bounded_selects[0],
+        )
 
 
 if __name__ == "__main__":

@@ -1355,6 +1355,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             "migrations.versions.zf5a6b7c8d9e_add_attendance_approval_inbox_indexes",
             "migrations.versions.zg6b7c8d9e0_add_workflow_request_views_and_reminder_guard",
             "migrations.versions.zh7c8d9e0f1_add_hr_request_notification_dedupe",
+            "migrations.versions.zi8d9e0f1a2_add_notification_work_queue_indexes",
         )
         migrations = [importlib.import_module(name) for name in module_names]
         db.session.remove()

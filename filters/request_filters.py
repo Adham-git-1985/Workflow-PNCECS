@@ -4,7 +4,45 @@ from models import WorkflowRequest
 from models import SystemSetting
 
 
-def apply_request_filters(query, args):
+DEFAULT_SLA_DAYS = 3
+DEFAULT_ESCALATION_DAYS = 2
+_SLA_SETTING_KEYS = ("SLA_DAYS", "ESCALATION_DAYS")
+
+
+def load_sla_settings():
+    """Load both SLA thresholds with one query.
+
+    List pages call this once and reuse the returned values for filtering and
+    display.  Keeping the conversion here also makes malformed settings fall
+    back safely instead of breaking the whole requests page.
+    """
+    rows = (
+        SystemSetting.query
+        .filter(SystemSetting.key.in_(_SLA_SETTING_KEYS))
+        .all()
+    )
+    values = {row.key: row.value for row in rows}
+
+    def configured_int(key, default):
+        try:
+            return int(values.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    return (
+        configured_int("SLA_DAYS", DEFAULT_SLA_DAYS),
+        configured_int("ESCALATION_DAYS", DEFAULT_ESCALATION_DAYS),
+    )
+
+
+def apply_request_filters(
+    query,
+    args,
+    *,
+    sla_days=None,
+    escalation_days=None,
+    now=None,
+):
 
     if args.getlist("status"):
         query = query.filter(
@@ -47,12 +85,16 @@ def apply_request_filters(query, args):
         ))
 
     if args.get("sla_state"):
-        sla_days = get_sla_days()
-        esc_days = get_escalation_days()
+        if sla_days is None or escalation_days is None:
+            loaded_sla_days, loaded_escalation_days = load_sla_settings()
+            if sla_days is None:
+                sla_days = loaded_sla_days
+            if escalation_days is None:
+                escalation_days = loaded_escalation_days
 
-        now = datetime.utcnow()
+        now = now or datetime.utcnow()
         sla_deadline = now - timedelta(days=sla_days)
-        esc_deadline = now - timedelta(days=sla_days + esc_days)
+        esc_deadline = now - timedelta(days=sla_days + escalation_days)
 
         # فقط الطلبات غير النهائية
         query = query.filter(
@@ -79,26 +121,34 @@ def apply_request_filters(query, args):
 
 def get_sla_days():
     setting = SystemSetting.query.filter_by(key="SLA_DAYS").first()
-    return int(setting.value) if setting else 3
+    return int(setting.value) if setting else DEFAULT_SLA_DAYS
 
 
 def get_escalation_days():
     setting = SystemSetting.query.filter_by(key="ESCALATION_DAYS").first()
-    return int(setting.value) if setting else 2
+    return int(setting.value) if setting else DEFAULT_ESCALATION_DAYS
 
-def get_sla_state(request_obj):
-    sla_days = get_sla_days()
-    esc_days = get_escalation_days()
 
+def calculate_sla_state(
+    request_obj,
+    sla_days,
+    escalation_days,
+    *,
+    now=None,
+):
+    """Calculate one request's SLA state without issuing database queries."""
     if request_obj.status in ["APPROVED", "REJECTED", "CLOSED"]:
         return None
 
-    now = datetime.utcnow()
+    now = now or datetime.utcnow()
     age = now - request_obj.created_at
 
     if age <= timedelta(days=sla_days):
         return "ON_TRACK"
-    elif age <= timedelta(days=sla_days + esc_days):
+    if age <= timedelta(days=sla_days + escalation_days):
         return "BREACHED"
-    else:
-        return "ESCALATED"
+    return "ESCALATED"
+
+def get_sla_state(request_obj):
+    sla_days, escalation_days = load_sla_settings()
+    return calculate_sla_state(request_obj, sla_days, escalation_days)

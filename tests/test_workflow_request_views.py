@@ -2,10 +2,12 @@ import unittest
 from unittest.mock import patch
 
 from flask import Flask
+from sqlalchemy import event
 
 from admin.routes import admin_requests
 from extensions import db
-from models import User, WorkflowInstance, WorkflowRequest, WorkflowRequestView
+from filters.request_filters import load_sla_settings
+from models import SystemSetting, User, WorkflowInstance, WorkflowRequest, WorkflowRequestView
 from services.workflow_request_views import (
     invalidate_workflow_request_views,
     mark_workflow_request_viewed,
@@ -178,6 +180,92 @@ class WorkflowRequestViewTests(unittest.TestCase):
         self.assertTrue({row.id for row in excluded_requests}.isdisjoint(
             captured["new_request_ids"],
         ))
+
+    def test_admin_all_requests_paginates_in_database_and_loads_sla_once(self):
+        for index in range(29):
+            request_row = WorkflowRequest(
+                requester=self.user,
+                title=f"Paginated request {index:02d}",
+                status="IN_PROGRESS",
+            )
+            db.session.add(request_row)
+            db.session.flush()
+            db.session.add(WorkflowInstance(
+                request_id=request_row.id,
+                current_step_order=1,
+                is_completed=False,
+            ))
+        db.session.commit()
+
+        captured = {}
+        setting_queries = 0
+
+        def capture_template(_template_name, **context):
+            captured.update(context)
+            return "ok"
+
+        def count_setting_queries(_conn, _cursor, statement, _parameters, _context, _many):
+            nonlocal setting_queries
+            if "system_setting" in statement.lower():
+                setting_queries += 1
+
+        route = admin_requests
+        while hasattr(route, "__wrapped__"):
+            route = route.__wrapped__
+
+        original_page_size = self.app.config.get("ADMIN_REQUESTS_PAGE_SIZE")
+        self.app.config["ADMIN_REQUESTS_PAGE_SIZE"] = 10
+        event.listen(db.engine, "before_cursor_execute", count_setting_queries)
+        try:
+            with self.app.test_request_context("/admin/requests?page=2"):
+                with (
+                    patch("admin.routes.current_user", self.user),
+                    patch("admin.routes.render_template", side_effect=capture_template),
+                ):
+                    self.assertEqual(route(), "ok")
+        finally:
+            event.remove(db.engine, "before_cursor_execute", count_setting_queries)
+            if original_page_size is None:
+                self.app.config.pop("ADMIN_REQUESTS_PAGE_SIZE", None)
+            else:
+                self.app.config["ADMIN_REQUESTS_PAGE_SIZE"] = original_page_size
+
+        rendered_ids = {row.id for row in captured["requests"]}
+        self.assertEqual(len(rendered_ids), 10)
+        self.assertEqual(captured["pagination"].page, 2)
+        self.assertEqual(captured["pagination"].total, 30)
+        self.assertEqual(set(captured["sla_states"]), rendered_ids)
+        self.assertTrue(captured["new_request_ids"].issubset(rendered_ids))
+        self.assertEqual(setting_queries, 1)
+
+    def test_admin_all_requests_clamps_an_out_of_range_page(self):
+        captured = {}
+
+        def capture_template(_template_name, **context):
+            captured.update(context)
+            return "ok"
+
+        route = admin_requests
+        while hasattr(route, "__wrapped__"):
+            route = route.__wrapped__
+        with self.app.test_request_context("/admin/requests?page=999"):
+            with (
+                patch("admin.routes.current_user", self.user),
+                patch("admin.routes.render_template", side_effect=capture_template),
+            ):
+                self.assertEqual(route(), "ok")
+
+        self.assertEqual(captured["pagination"].page, 1)
+        self.assertEqual([row.id for row in captured["requests"]], [self.request_id])
+
+    def test_sla_settings_keep_existing_zero_or_negative_values(self):
+        db.session.add_all((
+            SystemSetting(key="SLA_DAYS", value="0"),
+            SystemSetting(key="ESCALATION_DAYS", value="-1"),
+        ))
+        db.session.commit()
+
+        self.assertEqual(load_sla_settings(), (0, -1))
 
 
 if __name__ == "__main__":

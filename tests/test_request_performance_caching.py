@@ -214,7 +214,7 @@ class RequestPerformanceCachingTests(unittest.TestCase):
             with patch("portal.routes.current_user", user), patch(
                 "portal.routes._current_user_approvable_request_ids",
                 return_value=[],
-            ):
+            ) as find_assignments:
                 first = _portal_flags()
                 first_call_count = user.has_perm.call_count
                 second = _portal_flags()
@@ -222,6 +222,7 @@ class RequestPerformanceCachingTests(unittest.TestCase):
         self.assertIs(first, second)
         self.assertGreater(first_call_count, 0)
         self.assertEqual(user.has_perm.call_count, first_call_count)
+        find_assignments.assert_not_called()
 
     def test_hr_attendance_badge_counts_assigned_rows_without_loading_the_inbox(self):
         user = User(
@@ -330,6 +331,58 @@ class RequestPerformanceCachingTests(unittest.TestCase):
 
         self.assertEqual(len(step_queries), 1)
         self.assertNotIn("join users", step_queries[0])
+
+    def test_approval_id_lookup_query_count_does_not_grow_per_pending_step(self):
+        selected_user = User(
+            email="approval-query-bound@example.test",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
+        other_approvers = [
+            User(
+                email=f"other-approver-{index}@example.test",
+                password_hash="not-used-in-test",
+                role="EMPLOYEE",
+            )
+            for index in range(60)
+        ]
+        db.session.add_all([selected_user, *other_approvers])
+        db.session.flush()
+        db.session.add_all([
+            HRRequestApprovalStep(
+                request_kind=KIND_PERMISSION,
+                request_id=1000 + index,
+                step_order=1,
+                stage_code="DIRECT_MANAGER",
+                approver_scope="USER",
+                approver_user_id=(
+                    selected_user.id if index == 0 else other_approvers[index - 1].id
+                ),
+                status="PENDING",
+            )
+            for index in range(61)
+        ])
+        db.session.commit()
+        db.session.expire_all()
+
+        query_count = 0
+
+        def count_queries(conn, cursor, statement, parameters, context, executemany):
+            nonlocal query_count
+            query_count += 1
+
+        event.listen(db.engine, "before_cursor_execute", count_queries)
+        try:
+            user = db.session.get(User, selected_user.id)
+            query_count = 0
+            self.assertEqual(
+                request_ids_user_can_act_on(user, KIND_PERMISSION),
+                [1000],
+            )
+        finally:
+            event.remove(db.engine, "before_cursor_execute", count_queries)
+
+        self.assertLessEqual(query_count, 10)
 
     def test_participated_id_lookup_avoids_joined_user_relationships(self):
         user = User(

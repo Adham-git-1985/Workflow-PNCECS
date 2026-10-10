@@ -996,6 +996,7 @@ class WorkflowRequest(db.Model):
             "source_corr_id",
         ),
         db.Index("ix_workflow_request_status_id", "status", "id"),
+        db.Index("ix_workflow_request_created_id", "created_at", "id"),
     )
 
 
@@ -1493,6 +1494,22 @@ class Notification(db.Model):
             "user_id",
             "is_mirror",
             "is_visible",
+            "id",
+        ),
+        db.Index(
+            "ix_notification_admin_visible_users",
+            "source",
+            "is_mirror",
+            "is_visible",
+            "user_id",
+        ),
+        db.Index(
+            "ix_notification_admin_user_latest",
+            "user_id",
+            "source",
+            "is_mirror",
+            "is_visible",
+            "created_at",
             "id",
         ),
     )
@@ -3376,6 +3393,9 @@ class HRSSWorkflowStepDefinition(db.Model):
 class HRSSRequest(db.Model):
     """An HR self-service request instance."""
     __tablename__ = "hr_ss_request"
+    __table_args__ = (
+        db.Index("ix_hr_ss_request_status_id", "status", "id"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
 
@@ -3424,6 +3444,28 @@ class HRSSRequestApproval(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("request_id", "step_no", name="uq_hr_ss_req_step"),
+        db.Index(
+            "ix_hr_ss_approval_status_user_request",
+            "status",
+            "approver_user_id",
+            "request_id",
+        ),
+        db.Index(
+            "ix_hr_ss_approval_status_role_norm_request",
+            "status",
+            db.func.upper(
+                db.func.replace(
+                    db.func.replace(
+                        db.func.replace(approver_role, "_", ""),
+                        "-",
+                        "",
+                    ),
+                    " ",
+                    "",
+                )
+            ),
+            "request_id",
+        ).ddl_if(dialect=("sqlite", "postgresql")),
     )
 
 
@@ -6432,6 +6474,18 @@ class EmployeeFollowupReport(db.Model):
         db.Index("ix_followup_manager_status", "manager_user_id", "status"),
         db.Index("ix_followup_status_reviewed_id", "status", "reviewed_at", "id"),
         db.Index("ix_followup_updated_id", "updated_at", "id"),
+        db.Index(
+            "ix_followup_employee_reminder_due",
+            "status",
+            "period_end",
+            "last_employee_reminder_at",
+        ),
+        db.Index(
+            "ix_followup_manager_reminder_due",
+            "status",
+            "submitted_at",
+            "last_manager_reminder_at",
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)

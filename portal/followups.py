@@ -24,7 +24,7 @@ from flask import (
 from flask_login import current_user, login_required
 from sqlalchemy import and_, case, func, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, load_only, noload
 
 from extensions import db
 from models import (
@@ -64,7 +64,7 @@ from utils.file_uploads import clean_original_filename, random_storage_name
 from utils.delegation_privacy import COMPETENT_AUTHORITY_LABEL
 from utils.notification_links import notification_target_path
 from utils.role_codes import canonical_role_key
-from utils.timezone import to_local_time
+from utils.timezone import local_day_start_utc, to_local_time
 
 from . import portal_bp
 
@@ -964,13 +964,42 @@ def send_followup_reminders(
     """Send one pre-deadline employee reminder and one manager review reminder."""
     now = now or datetime.utcnow()
     current_day = today or to_local_time(now).date()
+    current_day_start = local_day_start_utc(current_day)
+    next_day_start = local_day_start_utc(current_day + timedelta(days=1))
+    not_reminded_today_employee = or_(
+        EmployeeFollowupReport.last_employee_reminder_at.is_(None),
+        EmployeeFollowupReport.last_employee_reminder_at < current_day_start,
+        EmployeeFollowupReport.last_employee_reminder_at >= next_day_start,
+    )
+    not_reminded_today_manager = or_(
+        EmployeeFollowupReport.last_manager_reminder_at.is_(None),
+        EmployeeFollowupReport.last_manager_reminder_at < current_day_start,
+        EmployeeFollowupReport.last_manager_reminder_at >= next_day_start,
+    )
     sent = 0
     changed = False
-    draft_reports = EmployeeFollowupReport.query.filter(
-        EmployeeFollowupReport.status.in_(("DRAFT", "NEEDS_REVISION")),
-        EmployeeFollowupReport.period_end >= current_day,
-        EmployeeFollowupReport.period_end <= current_day + timedelta(days=3),
-    ).all()
+    reminder_load_options = (
+        load_only(
+            EmployeeFollowupReport.id,
+            EmployeeFollowupReport.employee_user_id,
+            EmployeeFollowupReport.manager_user_id,
+            EmployeeFollowupReport.manager_user_ids,
+            EmployeeFollowupReport.last_employee_reminder_at,
+            EmployeeFollowupReport.last_manager_reminder_at,
+        ),
+        noload("*"),
+    )
+    draft_reports = (
+        EmployeeFollowupReport.query
+        .options(*reminder_load_options)
+        .filter(
+            EmployeeFollowupReport.status.in_(("DRAFT", "NEEDS_REVISION")),
+            EmployeeFollowupReport.period_end >= current_day,
+            EmployeeFollowupReport.period_end <= current_day + timedelta(days=3),
+            not_reminded_today_employee,
+        )
+        .all()
+    )
     for report in draft_reports:
         last_reminder = to_local_time(report.last_employee_reminder_at)
         if last_reminder and last_reminder.date() == current_day:
@@ -987,11 +1016,17 @@ def send_followup_reminders(
         changed = True
         sent += int(bool(created))
 
-    pending_reports = EmployeeFollowupReport.query.filter(
-        EmployeeFollowupReport.status == "SUBMITTED",
-        EmployeeFollowupReport.submitted_at.isnot(None),
-        EmployeeFollowupReport.submitted_at <= now - timedelta(days=3),
-    ).all()
+    pending_reports = (
+        EmployeeFollowupReport.query
+        .options(*reminder_load_options)
+        .filter(
+            EmployeeFollowupReport.status == "SUBMITTED",
+            EmployeeFollowupReport.submitted_at.isnot(None),
+            EmployeeFollowupReport.submitted_at <= now - timedelta(days=3),
+            not_reminded_today_manager,
+        )
+        .all()
+    )
     for report in pending_reports:
         manager_ids = _followup_manager_ids(report)
         if not manager_ids:
