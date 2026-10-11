@@ -18663,9 +18663,17 @@ def hr_work_schedule():
         else int(db.session.query(func.count(EmployeeFile.user_id)).scalar() or 0)
     ) if can_view_all else 0
 
+    plan = _attendance_schedule_latest_plan(target_user.id, period_start_text)
+    review_stage = _attendance_schedule_review_stage(plan, current_user)
     target_is_visible_report = int(target_user.id) in report_ids
     if is_super_admin:
         editor_mode = "SUPER_ADMIN"
+    elif review_stage == "MANAGER":
+        editor_mode = "MANAGER"
+    elif review_stage == "GENERAL_DIRECTOR":
+        editor_mode = "GENERAL_DIRECTOR"
+    elif review_stage == "FINAL":
+        editor_mode = "SECRETARY_GENERAL"
     elif is_hr_manager:
         editor_mode = "HR"
     elif int(target_user.id) == int(current_user.id):
@@ -18679,7 +18687,6 @@ def hr_work_schedule():
     else:
         editor_mode = "VIEW_ONLY"
 
-    plan = _attendance_schedule_latest_plan(target_user.id, period_start_text)
     published_plan = _attendance_schedule_effective_plan(
         target_user.id,
         period_start_text,
@@ -18788,7 +18795,7 @@ def hr_work_schedule():
     )
     can_edit_days = bool(
         is_super_admin
-        or is_hr_manager
+        or editor_mode == "HR"
         or (editor_mode == "EMPLOYEE" and employee_can_request)
     )
     can_take_action = editor_mode in {
@@ -18904,6 +18911,15 @@ def _attendance_schedule_update_weekly_workflow():
     if is_super_admin:
         editor_mode = "SUPER_ADMIN"
         allowed_actions = {"super_publish", "hr_publish", "final_approve", "final_reject"}
+    elif review_stage == "MANAGER":
+        editor_mode = "MANAGER"
+        allowed_actions = {"manager_approve", "manager_reject"}
+    elif review_stage == "GENERAL_DIRECTOR":
+        editor_mode = "GENERAL_DIRECTOR"
+        allowed_actions = {"general_director_approve", "general_director_reject"}
+    elif review_stage == "FINAL":
+        editor_mode = "SECRETARY_GENERAL"
+        allowed_actions = {"final_approve", "final_reject"}
     elif is_hr_manager:
         editor_mode = "HR"
         allowed_actions = {"hr_save", "hr_publish"}
@@ -18916,9 +18932,6 @@ def _attendance_schedule_update_weekly_workflow():
     elif is_general_director and int(target_user.id) in visible_report_ids:
         editor_mode = "GENERAL_DIRECTOR"
         allowed_actions = {"general_director_approve", "general_director_reject"}
-    elif review_stage == "MANAGER":
-        editor_mode = "MANAGER"
-        allowed_actions = {"manager_approve", "manager_reject"}
     else:
         abort(403)
 

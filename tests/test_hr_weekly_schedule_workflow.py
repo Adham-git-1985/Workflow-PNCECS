@@ -12,12 +12,14 @@ from models import (
     HRAttendanceSchedulePlan,
     SystemSetting,
     User,
+    UserPermission,
     WorkSchedule,
 )
 from portal.routes import (
     _approved_schedule_day_map,
     _attendance_schedule_week_rows,
     _effective_schedule_for_user,
+    hr_work_schedule,
     hr_work_schedule_final_approve_all,
     hr_work_schedule_super_admin_publish_batch,
     hr_work_schedule_update,
@@ -124,6 +126,21 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
                 return_value="/portal/hr/attendance/work-schedule",
             ), patch("portal.routes.notify_attendance_schedule_stakeholders"), patch(
                 "portal.routes._portal_audit"
+            ):
+                return fn()
+
+    def _view_context(self, actor, target_user, period_start):
+        fn = inspect.unwrap(hr_work_schedule)
+        with self.app.test_request_context(
+            "/portal/hr/attendance/work-schedule",
+            query_string={
+                "start": period_start.isoformat(),
+                "employee_id": str(target_user.id),
+            },
+        ):
+            with patch("portal.routes.current_user", actor), patch(
+                "portal.routes.render_template",
+                side_effect=lambda _template, **context: context,
             ):
                 return fn()
 
@@ -273,6 +290,46 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
         employee_file = EmployeeFile.query.filter_by(user_id=self.employee.id).one()
         employee_file.direct_manager_user_id = None
         db.session.commit()
+
+        response = self._post(self.manager, {
+            "target_user_id": str(self.employee.id),
+            "period_start": period_start.isoformat(),
+            "plan_id": str(plan.id),
+            "action": "manager_approve",
+        })
+
+        self.assertEqual(response.status_code, 302)
+        db.session.refresh(plan)
+        self.assertEqual(plan.status, "MANAGER_APPROVED")
+        self.assertEqual(plan.manager_approved_by_id, self.manager.id)
+
+    def test_manager_stage_overrides_overlapping_hr_and_director_roles(self):
+        period_start = self._future_period_start()
+        self.manager.role = "GENERAL_DIRECTOR"
+        db.session.add(UserPermission(
+            user_id=self.manager.id,
+            key="HR_MASTERDATA_MANAGE",
+            is_allowed=True,
+        ))
+        plan = HRAttendanceSchedulePlan(
+            user_id=self.employee.id,
+            manager_user_id=self.manager.id,
+            period_start=period_start.isoformat(),
+            period_end=(period_start + timedelta(days=6)).isoformat(),
+            version_no=1,
+            status="SUBMITTED",
+            request_type="CHANGE_REQUEST",
+        )
+        db.session.add(plan)
+        db.session.commit()
+
+        employee_file = EmployeeFile.query.filter_by(user_id=self.employee.id).one()
+        employee_file.direct_manager_user_id = None
+        db.session.commit()
+
+        context = self._view_context(self.manager, self.employee, period_start)
+        self.assertEqual(context["editor_mode"], "MANAGER")
+        self.assertFalse(context["can_edit_days"])
 
         response = self._post(self.manager, {
             "target_user_id": str(self.employee.id),
