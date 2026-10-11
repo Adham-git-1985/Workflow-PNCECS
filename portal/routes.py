@@ -18891,12 +18891,10 @@ def _attendance_schedule_update_weekly_workflow():
     if not EmployeeFile.query.filter_by(user_id=target_user.id).first():
         abort(404)
 
+    latest = _attendance_schedule_latest_plan(target_user.id, period_start_text)
+    review_stage = _attendance_schedule_review_stage(latest, current_user)
     visible_reports = _attendance_schedule_visible_reports(int(current_user.id))
     visible_report_ids = {int(user.id) for user in visible_reports}
-    direct_report_ids = {
-        int(user.id)
-        for user in _attendance_schedule_direct_reports(int(current_user.id))
-    }
     is_super_admin = _attendance_schedule_is_super_admin()
     is_hr_manager = _attendance_schedule_is_hr_manager()
     can_edit_past_days = _attendance_schedule_can_edit_past_days()
@@ -18918,7 +18916,7 @@ def _attendance_schedule_update_weekly_workflow():
     elif is_general_director and int(target_user.id) in visible_report_ids:
         editor_mode = "GENERAL_DIRECTOR"
         allowed_actions = {"general_director_approve", "general_director_reject"}
-    elif int(target_user.id) in direct_report_ids:
+    elif review_stage == "MANAGER":
         editor_mode = "MANAGER"
         allowed_actions = {"manager_approve", "manager_reject"}
     else:
@@ -18928,7 +18926,6 @@ def _attendance_schedule_update_weekly_workflow():
     if action not in allowed_actions:
         abort(403)
 
-    latest = _attendance_schedule_latest_plan(target_user.id, period_start_text)
     posted_plan_id = (request.form.get("plan_id") or "").strip()
     if posted_plan_id and latest and int(posted_plan_id) != int(latest.id):
         flash("تم تحديث الجدول من جلسة أخرى. راجع أحدث نسخة قبل الحفظ.", "warning")

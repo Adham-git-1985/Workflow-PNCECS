@@ -256,6 +256,36 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
             "09:00",
         )
 
+    def test_saved_manager_can_approve_when_the_current_hierarchy_changes(self):
+        period_start = self._future_period_start()
+        plan = HRAttendanceSchedulePlan(
+            user_id=self.employee.id,
+            manager_user_id=self.manager.id,
+            period_start=period_start.isoformat(),
+            period_end=(period_start + timedelta(days=6)).isoformat(),
+            version_no=1,
+            status="SUBMITTED",
+            request_type="CHANGE_REQUEST",
+        )
+        db.session.add(plan)
+        db.session.commit()
+
+        employee_file = EmployeeFile.query.filter_by(user_id=self.employee.id).one()
+        employee_file.direct_manager_user_id = None
+        db.session.commit()
+
+        response = self._post(self.manager, {
+            "target_user_id": str(self.employee.id),
+            "period_start": period_start.isoformat(),
+            "plan_id": str(plan.id),
+            "action": "manager_approve",
+        })
+
+        self.assertEqual(response.status_code, 302)
+        db.session.refresh(plan)
+        self.assertEqual(plan.status, "MANAGER_APPROVED")
+        self.assertEqual(plan.manager_approved_by_id, self.manager.id)
+
     def test_hr_schedule_pattern_remains_effective_after_a_month(self):
         effective_start = date(2031, 9, 22)
         remote_schedule = WorkSchedule(
