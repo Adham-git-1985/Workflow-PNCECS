@@ -6780,6 +6780,11 @@ def meeting_view(meeting_id: int):
         users=_meeting_user_options(),
         task_assignees=_meeting_audience_users(row),
         can_manage=_meeting_can_manage(row),
+        can_propose_agenda=bool(
+            current_participant
+            and row.status == "SCHEDULED"
+            and not _meeting_can_manage(row)
+        ),
         can_delete=_is_super_admin(),
         current_participant=current_participant,
         status_labels=MEETING_STATUS_LABELS,
@@ -7203,15 +7208,30 @@ def meeting_update_attendance(meeting_id: int):
 
 @portal_bp.route("/meetings/<int:meeting_id>/agenda", methods=["POST"])
 @login_required
-@_perm(PORTAL_MEETINGS_MANAGE)
 def meeting_add_agenda_item(meeting_id: int):
     row = PortalMeeting.query.get_or_404(meeting_id)
-    _meeting_require_manager(row)
+    can_manage = _meeting_can_manage(row)
+    participant = _meeting_current_participant(row)
+    if not can_manage:
+        # An invitee may submit a proposed agenda item for a scheduled meeting,
+        # but may not edit, reorder, or assign existing agenda items.
+        if not participant or not _meeting_can_access(row):
+            abort(403)
+        if row.status != "SCHEDULED":
+            flash("لا يمكن إضافة مقترحات بعد انتهاء الاجتماع أو إلغائه.", "warning")
+            return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
     title = (request.form.get("agenda_title") or "").strip()
-    owner_user_id = _to_int(request.form.get("agenda_owner_user_id"))
     if not title:
         flash("عنوان بند الأجندة مطلوب.", "warning")
         return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+    if can_manage:
+        owner_user_id = _to_int(request.form.get("agenda_owner_user_id"))
+        notes = (request.form.get("agenda_notes") or "").strip() or None
+    else:
+        owner_user_id = getattr(current_user, "id", None)
+        notes = (request.form.get("agenda_notes") or "").strip()[:2000] or None
+
     next_order = 10
     try:
         current_orders = [int(i.sort_order or 0) for i in row.agenda_items or []]
@@ -7221,11 +7241,47 @@ def meeting_add_agenda_item(meeting_id: int):
     db.session.add(PortalMeetingAgendaItem(
         meeting_id=row.id,
         title=title[:255],
+        notes=notes,
         owner_user_id=owner_user_id,
         sort_order=next_order,
     ))
+    if not can_manage:
+        proposer_label = _meeting_user_label(current_user, f"#{current_user.id}")
+        owner_id = getattr(row, "created_by_user_id", None)
+        body_lines = [
+            f"أضاف {proposer_label} مقترح بند إلى الاجتماع.",
+            "",
+            f"الاجتماع: {row.title}",
+            f"البند المقترح: {title[:255]}",
+        ]
+        if notes:
+            body_lines.extend(["", "الملاحظات:", notes])
+        body_lines.extend([
+            "",
+            "رابط فتح الاجتماع:",
+            url_for("portal.meeting_view", meeting_id=row.id, _external=True),
+        ])
+        if owner_id and int(owner_id) != int(getattr(current_user, "id", 0) or 0):
+            _meeting_notify_users(
+                [owner_id],
+                f"مقترح بند: {title[:255]} - {row.title}",
+                level="INFO",
+                subject=f"مقترح بند لاجتماع: {row.title}",
+                body="\n".join(body_lines),
+                sender_id=getattr(current_user, "id", None),
+                link_url=notification_target_path("PORTAL_MEETING", row.id),
+            )
+        _portal_audit(
+            "MEETING_AGENDA_PROPOSAL_ADD",
+            note=f"meeting_id={row.id} proposer_id={getattr(current_user, 'id', None)} title={title[:255]}",
+            target_type="PORTAL_MEETING",
+            target_id=row.id,
+        )
     db.session.commit()
-    flash("تمت إضافة بند الأجندة.", "success")
+    if can_manage:
+        flash("تمت إضافة بند الأجندة.", "success")
+    else:
+        flash("تمت إضافة مقترحك إلى أجندة الاجتماع وإشعار المنظم.", "success")
     return redirect(url_for("portal.meeting_view", meeting_id=row.id))
 
 

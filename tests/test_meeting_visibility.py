@@ -11,6 +11,7 @@ from models import (
     Notification,
     NotificationEmailDelivery,
     PortalMeeting,
+    PortalMeetingAgendaItem,
     PortalMeetingParticipant,
     PortalMeetingTask,
     User,
@@ -183,6 +184,49 @@ class MeetingVisibilityTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(PortalMeetingTask.query.filter_by(meeting_id=self.meeting.id).count(), 1)
+
+    def test_invitee_can_add_agenda_proposal_and_organizer_is_notified(self):
+        client = self.app.test_client()
+        self._login(client, self.invitee.id)
+
+        view = client.get(f"/portal/meetings/{self.meeting.id}")
+        self.assertEqual(view.status_code, 200)
+        self.assertIn(b'name="agenda_notes"', view.data)
+
+        response = client.post(
+            f"/portal/meetings/{self.meeting.id}/agenda",
+            data={
+                "agenda_title": "Invitee proposal",
+                "agenda_notes": "Please review the implementation timeline.",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+
+        proposal = PortalMeetingAgendaItem.query.filter_by(
+            meeting_id=self.meeting.id,
+            title="Invitee proposal",
+        ).one()
+        self.assertEqual(proposal.owner_user_id, self.invitee.id)
+        self.assertEqual(proposal.notes, "Please review the implementation timeline.")
+        notification = Notification.query.filter_by(
+            user_id=self.organizer.id,
+            link_url=f"/portal/meetings/{self.meeting.id}",
+        ).filter(Notification.message.like("%Invitee proposal%")).one()
+        self.assertIn("Invitee proposal", notification.message)
+
+    def test_uninvited_user_cannot_add_agenda_proposal(self):
+        client = self.app.test_client()
+        self._login(client, self.outsider.id)
+
+        response = client.post(
+            f"/portal/meetings/{self.meeting.id}/agenda",
+            data={"agenda_title": "Unauthorized proposal"},
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            PortalMeetingAgendaItem.query.filter_by(meeting_id=self.meeting.id).count(),
+            0,
+        )
 
     def test_only_super_admin_can_delete_a_meeting(self):
         client = self.app.test_client()
