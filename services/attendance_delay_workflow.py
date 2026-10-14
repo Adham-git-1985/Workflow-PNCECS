@@ -38,6 +38,7 @@ from models import (
 from services.hr_request_workflow import (
     administrative_affairs_manager_user_ids,
     hr_notification_user_ids,
+    resolve_responsible_managers,
     secretary_general_user_ids,
 )
 from utils.file_uploads import clean_original_filename, random_storage_name
@@ -47,6 +48,7 @@ from utils.notification_links import notification_target_path
 ATTENDANCE_DELAY_WORKFLOW_LABEL = "نموذج تأخير عن العمل"
 ATTENDANCE_DELAY_RESPONSE_LABEL = "نموذج تبرير غياب / تأخير"
 ATTENDANCE_DELAY_OVERDUE_TYPE = "ATTENDANCE_DELAY_OVERDUE"
+ATTENDANCE_DELAY_DIRECT_MANAGERS_ROLE = "ATTENDANCE_DELAY_DIRECT_MANAGERS"
 logger = logging.getLogger(__name__)
 
 
@@ -363,6 +365,31 @@ def attendance_delay_parallel_candidate_user_ids(
     """
     if not is_attendance_delay_workflow(req):
         return []
+    if (
+        step
+        and (getattr(step, "approver_role", None) or "").strip().upper()
+        == ATTENDANCE_DELAY_DIRECT_MANAGERS_ROLE
+    ):
+        # The direct-manager stage is created as PARALLEL_SYNC when an
+        # employee has more than one effective responsible manager.  Keep the
+        # primary manager stored on the runtime step for compatibility, then
+        # add every active responsible manager to the candidate pool.
+        selected_ids = _as_ids((getattr(step, "approver_user_id", None),))
+        case = get_delay_case_for_request(getattr(req, "id", None))
+        if case and getattr(case, "employee_id", None):
+            try:
+                selected_ids.update(
+                    int(manager.id)
+                    for manager in resolve_responsible_managers(int(case.employee_id))
+                    if getattr(manager, "id", None)
+                    and int(manager.id) != int(case.employee_id)
+                )
+            except Exception:
+                logger.exception(
+                    "Unable to resolve all direct managers for attendance-delay request %s",
+                    getattr(req, "id", None),
+                )
+        return sorted(selected_ids)
     if (
         step
         and (getattr(step, "approver_role", None) or "").strip().upper()

@@ -417,6 +417,7 @@ from services.hr_request_workflow import (
     start_request_flow,
 )
 from services.attendance_delay_workflow import (
+    ATTENDANCE_DELAY_DIRECT_MANAGERS_ROLE,
     ATTENDANCE_DELAY_RESPONSE_LABEL,
     ATTENDANCE_DELAY_WORKFLOW_LABEL,
     archive_generated_docx,
@@ -10779,7 +10780,8 @@ def hr_attendance_delay_start(summary_id):
         return redirect(url_for('workflow.view_request', request_id=existing.workflow_request_id))
 
     employee = User.query.get(summary.user_id)
-    manager = resolve_direct_manager(summary.user_id)
+    direct_managers = resolve_responsible_managers(summary.user_id)
+    manager = direct_managers[0] if direct_managers else None
     if not employee:
         flash("تعذر العثور على الموظف المرتبط بسجل الدوام.", "danger")
         return redirect(url_for('portal.hr_report_delay'))
@@ -10825,9 +10827,18 @@ def hr_attendance_delay_start(summary_id):
         },
         {
             "step_order": 2,
-            "mode": "SEQUENTIAL",
+            # Keep the existing sequential route for the common one-manager
+            # case. When several effective responsible managers are assigned,
+            # create one synchronized approval stage so all of them are shown
+            # and receive a task.
+            "mode": "PARALLEL_SYNC" if len(direct_managers) > 1 else "SEQUENTIAL",
             "approver_kind": "USER",
             "approver_user_id": manager.id,
+            "approver_role": (
+                ATTENDANCE_DELAY_DIRECT_MANAGERS_ROLE
+                if len(direct_managers) > 1
+                else None
+            ),
             "label": "اعتماد المدير المباشر",
             "reason": "مراجعة تبرير الموظف واتخاذ قرار الاعتماد أو الرفض.",
             "sla_days": 1,

@@ -14,6 +14,7 @@ from models import (
     ArchivedFile,
     AttendanceDailySummary,
     EmployeeFile,
+    EmployeeResponsibleAssignment,
     HRAttendanceDelayRequest,
     Notification,
     OrgNode,
@@ -341,6 +342,74 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         )
         self.assertIn("ظرف طارئ", repaired_text)
         self.assertIn("الاعتماد النهائي", repaired_text)
+
+    def test_delay_routes_all_effective_managers_in_parallel(self):
+        second_manager = User(
+            email="delay-second-manager@example.test",
+            name="Second Delay Manager",
+            password_hash="x",
+            role="MANAGER",
+        )
+        db.session.add(second_manager)
+        db.session.flush()
+        db.session.add_all((
+            EmployeeResponsibleAssignment(
+                employee_user_id=self.employee.id,
+                responsible_user_id=self.manager.id,
+                reason="Primary responsible manager",
+            ),
+            EmployeeResponsibleAssignment(
+                employee_user_id=self.employee.id,
+                responsible_user_id=second_manager.id,
+                reason="Secondary responsible manager",
+            ),
+        ))
+        db.session.commit()
+
+        case, request_row = self._start()
+        steps = WorkflowInstanceStep.query.filter_by(
+            instance_id=request_row.workflow_instance.id,
+        ).order_by(WorkflowInstanceStep.step_order.asc()).all()
+        self.assertEqual(steps[1].mode, "PARALLEL_SYNC")
+        self.assertEqual(
+            steps[1].approver_role,
+            "ATTENDANCE_DELAY_DIRECT_MANAGERS",
+        )
+
+        self._login(self.employee)
+        response = self.client.post(
+            f"/portal/hr/reports/attendance/delay/{case.id}/respond",
+            data={"case_kind": "DELAY", "reason": "ظرف طارئ", "has_document": "NO"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(request_row.workflow_instance.current_step_order, 2)
+        self.assertEqual(
+            {
+                task.assignee_user_id
+                for task in WorkflowStepTask.query.filter_by(step_order=2).all()
+            },
+            {self.manager.id, second_manager.id},
+        )
+
+        rendered = {}
+
+        def capture_render(_template, **context):
+            rendered.update(context)
+            return "ok"
+
+        with patch.object(
+            workflow_routes,
+            "render_template",
+            side_effect=capture_render,
+        ):
+            response = self.client.get(f"/workflow/request/{request_row.id}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            {
+                manager.id for manager in rendered["attendance_delay_direct_managers"]
+            },
+            {self.manager.id, second_manager.id},
+        )
 
     def test_attendance_delay_hr_resolvers_match_the_configured_roles(self):
         self.assertIn(

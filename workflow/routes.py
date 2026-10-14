@@ -205,6 +205,7 @@ from services.attendance_delay_workflow import (
     get_delay_case_for_request,
     is_attendance_delay_workflow,
 )
+from services.hr_request_workflow import resolve_responsible_managers
 from services.workflow_delay_summary import (
     get_overdue_workflow_rows,
     is_workflow_delay_summary_viewer,
@@ -6760,6 +6761,17 @@ def _following_page(
 def view_request(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
     attendance_delay_case = get_delay_case_for_request(req.id)
+    attendance_delay_direct_managers = []
+    if attendance_delay_case and getattr(attendance_delay_case, "employee_id", None):
+        try:
+            attendance_delay_direct_managers = resolve_responsible_managers(
+                int(attendance_delay_case.employee_id)
+            )
+        except Exception:
+            logger.exception(
+                "Unable to resolve attendance-delay managers for request %s",
+                request_id,
+            )
     attendance_delay_employee = bool(
         attendance_delay_case
         and int(getattr(attendance_delay_case, "employee_id", 0) or 0) == int(current_user.id)
@@ -7298,6 +7310,11 @@ def view_request(request_id):
         active_mention_logs = {}
 
     user_ids = {int(req.requester_id)} if req.requester_id else set()
+    user_ids.update(
+        int(manager.id)
+        for manager in attendance_delay_direct_managers
+        if getattr(manager, "id", None)
+    )
     for step in steps:
         for user_id in (step.approver_user_id, step.decided_by_id):
             if user_id:
@@ -7771,6 +7788,7 @@ def view_request(request_id):
         corr_action_labels=CORR_ACTION_LABELS,
         execution_context=execution,
         attendance_delay_case=attendance_delay_case,
+        attendance_delay_direct_managers=attendance_delay_direct_managers,
         attendance_delay_employee=attendance_delay_employee,
         attendance_delay_employee_form=attendance_delay_employee_form,
         attendance_delay_response_label=ATTENDANCE_DELAY_RESPONSE_LABEL,

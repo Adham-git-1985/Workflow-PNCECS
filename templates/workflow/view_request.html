@@ -320,6 +320,8 @@
         {% if attendance_delay_case %}
           {% if current_step.approver_role == "ATTENDANCE_DELAY_HR_PARALLEL" %}
             هذه مرحلة اعتماد متزامنة للموارد البشرية؛ يجب أن يرد مدير دائرة الموارد البشرية ومدير عام الإدارة العامة للموارد الإدارية والمالية قبل الانتقال إلى الأمين العام.
+          {% elif current_step.approver_role == "ATTENDANCE_DELAY_DIRECT_MANAGERS" %}
+            هذه مرحلة اعتماد متزامنة؛ يجب أن يرد جميع المدراء المباشرين المرتبطين بالموظف قبل الانتقال إلى الموارد البشرية.
           {% else %}
             هذه مرحلة اعتماد لمسار التأخير؛ يُستكمل المسار حسب ترتيب الاعتمادات الظاهر أدناه، وأي رفض ينهي المسار.
           {% endif %}
@@ -630,9 +632,21 @@
     {% set route_name = s.routing_label or (route_user.full_name if route_user else None) or (route_user.email if route_user else None) or ('#' ~ s.approver_user_id) %}
     {% set route_title = s.routing_job_title or (route_user.job_title if route_user else None) %}
     <div class="border-start border-4 border-primary ps-2 mt-1">
-      <div><span class="badge bg-secondary me-1">مستخدم</span> <strong class="text-body">{{ route_name }}</strong></div>
-      <div class="small text-primary fw-semibold mt-1"><i class="bi bi-briefcase"></i> {{ route_title or 'لا يوجد مسمى وظيفي مسجل' }}</div>
-      {% if route_user and route_user.email %}<div class="small text-muted" dir="ltr">{{ route_user.email }}</div>{% endif %}
+      {% if s.approver_role == "ATTENDANCE_DELAY_DIRECT_MANAGERS" and attendance_delay_direct_managers %}
+        <div><span class="badge bg-secondary me-1">المديرون المباشرون</span></div>
+        <div class="d-flex flex-column gap-1 mt-1">
+          {% for direct_manager in attendance_delay_direct_managers %}
+            <div>
+              <strong class="text-body">{{ direct_manager.full_name or direct_manager.email }}</strong>
+              <span class="small text-primary fw-semibold"><i class="bi bi-briefcase"></i> {{ direct_manager.job_title or 'لا يوجد مسمى وظيفي مسجل' }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div><span class="badge bg-secondary me-1">مستخدم</span> <strong class="text-body">{{ route_name }}</strong></div>
+        <div class="small text-primary fw-semibold mt-1"><i class="bi bi-briefcase"></i> {{ route_title or 'لا يوجد مسمى وظيفي مسجل' }}</div>
+        {% if route_user and route_user.email %}<div class="small text-muted" dir="ltr">{{ route_user.email }}</div>{% endif %}
+      {% endif %}
       {% if s.routing_reason %}
         <div class="small mt-2"><span class="badge bg-primary-subtle text-primary border">سبب الإضافة</span> {{ s.routing_reason }}</div>
       {% elif not template %}
