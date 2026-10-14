@@ -7,8 +7,17 @@ from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
 
 from extensions import db
-from models import PortalMeeting, PortalMeetingParticipant, PortalMeetingTask, User, UserPermission
+from models import (
+    Notification,
+    NotificationEmailDelivery,
+    PortalMeeting,
+    PortalMeetingParticipant,
+    PortalMeetingTask,
+    User,
+    UserPermission,
+)
 from portal import portal_bp
+from portal.routes import _meeting_notify_users
 
 
 class MeetingVisibilityTests(unittest.TestCase):
@@ -202,6 +211,28 @@ class MeetingVisibilityTests(unittest.TestCase):
         self.assertEqual(edit_view.status_code, 200)
         self.assertIn(b"editMeetingParticipantPickerSearch", edit_view.data)
         self.assertIn(b"data-participant-search", edit_view.data)
+
+    def test_meeting_notification_is_added_to_employee_email_queue(self):
+        created = _meeting_notify_users(
+            [self.invitee.id],
+            "دعوة اجتماع: Private strategy meeting",
+            subject="دعوة اجتماع: Private strategy meeting",
+            body="تمت دعوتك إلى الاجتماع.",
+            link_url=f"/portal/meetings/{self.meeting.id}",
+        )
+        db.session.commit()
+
+        self.assertEqual(created, 1)
+        notification = Notification.query.filter_by(
+            user_id=self.invitee.id,
+            link_url=f"/portal/meetings/{self.meeting.id}",
+        ).one()
+        self.assertEqual(notification.email_delivery_mode, "MEETING")
+        delivery = NotificationEmailDelivery.query.filter_by(
+            notification_id=notification.id,
+        ).one()
+        self.assertEqual(delivery.user_id, self.invitee.id)
+        self.assertEqual(delivery.status, "PENDING")
 
 
 if __name__ == "__main__":

@@ -122,6 +122,7 @@ from services.delivery_controls import (
     notifications_enabled,
 )
 from services.workflow_task_email import resolve_user_delivery_email
+from services.notification_email import MEETING_EMAIL_MODE, enqueue_notification_email
 from services.user_calendar import (
     CALENDAR_EVENT_TYPE_LABELS,
     CALENDAR_REMINDER_OPTIONS,
@@ -3615,7 +3616,7 @@ def _meeting_notify_users(
         msg = msg[:252] + "..."
     now = datetime.utcnow()
     safe_link = safe_local_notification_url(link_url)
-    db.session.add_all([
+    notifications = [
         Notification(
             user_id=uid,
             message=msg,
@@ -3625,9 +3626,14 @@ def _meeting_notify_users(
             is_read=False,
             is_mirror=False,
             link_url=safe_link,
+            email_delivery_mode=MEETING_EMAIL_MODE,
         )
         for uid in clean_ids
-    ])
+    ]
+    db.session.add_all(notifications)
+    db.session.flush()
+    for notification in notifications:
+        enqueue_notification_email(notification)
 
     if subject or body:
         actor_id = sender_id or getattr(current_user, "id", None)

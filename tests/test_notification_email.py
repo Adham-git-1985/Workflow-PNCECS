@@ -18,6 +18,7 @@ from models import (
 from services.notification_email import (
     ATTENDANCE_SCHEDULE_EMAIL_MODE,
     HR_REQUEST_EMAIL_MODE,
+    MEETING_EMAIL_MODE,
     HR_REQUEST_RECIPIENT_CANCELLED_REASON,
     NOTIFICATION_EMAILS_DISABLED_REASON,
     enqueue_notification_email,
@@ -130,6 +131,33 @@ class NotificationEmailTests(unittest.TestCase):
         delivery = NotificationEmailDelivery.query.one()
         self.assertEqual(delivery.status, "SENT")
         self.assertIsNotNone(delivery.sent_at)
+
+    def test_meeting_notification_is_queued_and_sent(self):
+        notification = Notification(
+            user_id=self.user.id,
+            message="دعوة اجتماع: مراجعة خطة العمل",
+            source="portal",
+            link_url="/portal/meetings/42",
+            email_delivery_mode=MEETING_EMAIL_MODE,
+            is_read=False,
+        )
+        db.session.add(notification)
+        db.session.flush()
+
+        self.assertTrue(enqueue_notification_email(notification))
+        db.session.commit()
+
+        delivery = NotificationEmailDelivery.query.one()
+        self.assertEqual(delivery.status, "PENDING")
+        with patch("services.workflow_task_email.smtplib.SMTP") as smtp_class:
+            self.assertEqual(send_pending_notification_emails(), 1)
+
+        message = smtp_class.return_value.send_message.call_args.args[0]
+        self.assertEqual(message["To"], self.user.email)
+        self.assertIn("إشعار اجتماع", message["Subject"])
+        html_body = message.get_body(preferencelist=("html",)).get_content()
+        self.assertIn("فتح الاجتماع", html_body)
+        self.assertEqual(NotificationEmailDelivery.query.one().status, "SENT")
 
     def test_non_hr_email_with_hr_shaped_link_is_not_subject_to_hr_guard(self):
         notification = Notification(
