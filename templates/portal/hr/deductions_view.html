@@ -17,6 +17,12 @@
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_log') }}"><i class="bi bi-arrow-right"></i> السجل</a>
       <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_deductions_view', run_id=run.id, export='csv') }}"><i class="bi bi-download"></i> CSV</a>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_report_attendance_deductions', year=run.year, month=run.month) }}"><i class="bi bi-file-earmark-bar-graph"></i> التقرير</a>
+      {% if is_draft and can_approve %}
+        <form method="post" action="{{ url_for('portal.hr_deduction_refresh', run_id=run.id) }}" class="d-inline" onsubmit="return confirm('سيتم تحديث المعاينة من بيانات الدوام والمغادرات المعتمدة حالياً دون تغيير الرصيد. متابعة؟')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+          <button class="btn btn-outline-warning" type="submit"><i class="bi bi-arrow-repeat"></i> تحديث المعاينة الحالية</button>
+        </form>
+      {% endif %}
     </div>
   </div>
 </div>
@@ -66,20 +72,44 @@
       <tbody>
         {% for item in items %}
           {% set details = details_by_item.get(item.id, {}) %}
+          {% set summary = details.get('summary') or {} %}
+          {% set source_summary = details.get('source_summary') or {} %}
+          {% set departure_source = source_summary.get('DEPARTURES') or {} %}
+          {% set total_source_minutes = summary.get('selected_source_minutes') %}
+          {% if total_source_minutes is none %}{% set total_source_minutes = (summary.get('attendance_chargeable_minutes') or 0) + (summary.get('permission_chargeable_minutes') or 0) %}{% endif %}
+          {% if total_source_minutes == 0 and not summary and not source_summary %}{% set total_source_minutes = item.chargeable_minutes or 0 %}{% endif %}
           <tr>
             <td style="min-width:170px"><div class="fw-bold">{{ item.user.full_name or item.user.name or '—' }}</div><div class="text-muted small">{{ item.user.email or '' }}</div></td>
             <td>{{ item.late_minutes }} د</td>
             <td>{{ item.early_leave_minutes }} د</td>
             <td>{{ item.absent_days }} يوم</td>
-            <td>{{ item.departure_minutes or item.approved_permission_minutes or 0 }} د / {{ "%.2f"|format((item.departure_minutes or item.approved_permission_minutes or 0) / 60) }} س</td>
+            <td><div>{{ item.departure_minutes or item.approved_permission_minutes or 0 }} د / {{ "%.2f"|format((item.departure_minutes or item.approved_permission_minutes or 0) / 60) }} س</div>{% if departure_source %}<div class="small text-danger fw-semibold">داخل الخصم: {{ departure_source.get('current_consumed_minutes', departure_source.get('consumed_minutes', 0)) }} د</div>{% endif %}</td>
             <td>{{ "%.2f"|format(details.get('hours_per_day') or (((details.get('minutes_per_day', 390) or 390) / 60) or 6.5)) }} س</td>
             <td>{{ "%.2f"|format((item.excluded_minutes or 0) / 60) }} س</td>
-            <td class="fw-bold">{{ "%.2f"|format((item.chargeable_minutes or 0) / 60) }} س</td>
+            <td class="text-danger fw-bold fs-5">{{ "%.2f"|format((item.chargeable_minutes or 0) / 60) }} س</td>
             <td>{{ "%.2f"|format((item.remainder_minutes or 0) / 60) }} س</td>
             <td>{% if (item.carry_departure_minutes or item.carry_late_minutes or item.carry_early_leave_minutes) %}<span class="badge text-bg-info">نعم</span>{% else %}<span class="badge text-bg-secondary">لا</span>{% endif %}</td>
             <td><span class="badge text-bg-primary">{{ "%.0f"|format(item.leave_deduction_days or 0) }} يوم</span></td>
             <td><span class="badge text-bg-danger">{{ "%.2f"|format(item.salary_deduction_days or 0) }} يوم</span></td>
             <td class="small" style="min-width:220px">{{ item.note or '—' }}</td>
+          </tr>
+          <tr class="table-light">
+            <td colspan="14">
+              <div class="d-flex flex-wrap align-items-center gap-2">
+                <span class="border border-danger rounded px-2 py-1 text-danger fw-bold">إجمالي ساعات المصادر المحتسبة: {{ "%.2f"|format(total_source_minutes / 60) }} ساعة ({{ total_source_minutes }} دقيقة)</span>
+                <span class="border border-danger rounded px-2 py-1 text-danger fw-bold">المخصوم كأيام كاملة: {{ "%.2f"|format((item.chargeable_minutes or 0) / 60) }} ساعة</span>
+                {% if source_summary %}
+                  {% for code in ('DEPARTURES', 'LATE', 'EARLY') %}
+                    {% set source = source_summary.get(code) or {} %}
+                    <span class="border rounded px-2 py-1 {% if source.get('current_consumed_minutes', source.get('consumed_minutes', 0)) %}border-danger text-danger{% else %}text-muted{% endif %}">
+                      {{ source.get('label', code) }}: الحالي {{ source.get('current_minutes', 0) }} د · داخل الخصم {{ source.get('current_consumed_minutes', source.get('consumed_minutes', 0)) }} د
+                    </span>
+                  {% endfor %}
+                {% else %}
+                  <span class="text-muted small">هذه مسودة قديمة بلا تفاصيل مصادر؛ اضغط «تحديث المعاينة الحالية» لإظهار المغادرات والتأخير والخروج المبكر بدقة.</span>
+                {% endif %}
+              </div>
+            </td>
           </tr>
           <tr>
             <td colspan="14" class="bg-body-tertiary">
@@ -99,11 +129,11 @@
                 <div class="table-responsive mb-3"><table class="table table-sm table-bordered bg-white align-middle"><thead><tr><th>التاريخ</th><th>الحالة</th><th>دخول/خروج</th><th>تأخير</th><th>مبكر</th><th>محتسب</th><th>مستبعد</th><th>السبب</th></tr></thead><tbody>
                   {% for day in details.get('days', []) %}<tr><td>{{ day.day }}</td><td>{{ day.status_label or day.status }}</td><td>{{ day.first_in or '—' }} - {{ day.last_out or '—' }}</td><td>{{ day.late_minutes or 0 }} د</td><td>{{ day.early_minutes or 0 }} د</td><td>{{ day.chargeable_minutes or 0 }} د</td><td>{{ day.excluded_minutes or 0 }} د</td><td>{{ day.exclusion_label or (day.component_exceptions|join('، ')) or '—' }}{% if day.mission_title %}<div class="text-muted">{{ day.mission_title }}</div>{% endif %}</td></tr>{% else %}<tr><td colspan="8" class="text-center text-muted">لا توجد مخالفات أو أيام مستثناة.</td></tr>{% endfor %}
                 </tbody></table></div>
-                <h6>المغادرات</h6>
-                <div class="table-responsive"><table class="table table-sm table-bordered bg-white align-middle mb-0"><thead><tr><th>التاريخ</th><th>النوع</th><th>المصدر</th><th>الوقت</th><th>المدة</th><th>من السماح</th><th>محتسب</th><th>الاستثناء</th></tr></thead><tbody>
-                  {% for departure in details.get('departures', []) %}<tr><td>{{ departure.day }}</td><td>{{ departure.permission_name or departure.kind_label }}</td><td>{{ departure.source_label }}</td><td>{{ departure.from_time or '—' }} - {{ departure.to_time or '—' }}</td><td>{{ departure.minutes or 0 }} د</td><td>{{ departure.allowance_minutes or 0 }} د</td><td>{{ departure.chargeable_minutes or 0 }} د</td><td>{{ departure.exclusion_label or '—' }}</td></tr>{% else %}<tr><td colspan="8" class="text-center text-muted">لا توجد مغادرات.</td></tr>{% endfor %}
+                <h6>المغادرات التي دخلت في الخصم</h6>
+                <div class="table-responsive"><table class="table table-sm table-bordered bg-white align-middle mb-0"><thead><tr><th>التاريخ</th><th>النوع</th><th>المصدر</th><th>الوقت</th><th>المدة</th><th>المؤهل للخصم</th><th>من السماح</th><th>داخل خصم الدورة</th><th>الحالة/الاستثناء</th></tr></thead><tbody>
+                  {% for departure in details.get('departures', []) %}<tr class="{% if (departure.deduction_minutes or 0) %}table-danger{% endif %}"><td>{{ departure.day }}</td><td>{{ departure.permission_name or departure.kind_label }}</td><td>{{ departure.source_label }}</td><td>{{ departure.from_time or '—' }} - {{ departure.to_time or '—' }}</td><td>{{ departure.minutes or 0 }} د</td><td>{{ departure.eligible_minutes or departure.chargeable_minutes or 0 }} د</td><td>{{ departure.allowance_minutes or 0 }} د</td><td class="text-danger fw-bold">{% if departure.deduction_minutes is defined %}{{ departure.deduction_minutes or 0 }} د / {{ "%.2f"|format((departure.deduction_minutes or 0) / 60) }} س{% else %}—{% endif %}</td><td>{{ departure.exclusion_label or ('محتسبة' if (departure.deduction_minutes or 0) else 'غير داخلة في الخصم') }}</td></tr>{% else %}<tr><td colspan="9" class="text-center text-muted">لا توجد مغادرات.</td></tr>{% endfor %}
                 </tbody></table></div>
-                {% if details.get('source_summary') %}<h6 class="mt-3">ملخص المصادر والترحيل</h6><div class="table-responsive"><table class="table table-sm table-bordered bg-white"><thead><tr><th>المصدر</th><th>الحالي</th><th>مرحّل من السابق</th><th>المتاح</th><th>المستهلك</th><th>المتبقي</th><th>المرحّل للدورة القادمة</th></tr></thead><tbody>{% for code, source in details.get('source_summary', {}).items() %}<tr><td>{{ source.label or code }}</td><td>{{ source.current_minutes or 0 }} د</td><td>{{ source.carry_in_minutes or 0 }} د</td><td>{{ source.available_minutes or 0 }} د</td><td>{{ source.consumed_minutes or 0 }} د</td><td>{{ source.remainder_minutes or 0 }} د</td><td>{{ source.carry_out_minutes or 0 }} د</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+                {% if details.get('source_summary') %}<h6 class="mt-3">ملخص المصادر والترحيل</h6><div class="table-responsive"><table class="table table-sm table-bordered bg-white"><thead><tr><th>المصدر</th><th>الحالي</th><th>مرحّل من السابق</th><th>المتاح</th><th>المستهلك من المرحّل</th><th>المستهلك من الحالي</th><th>المتبقي</th><th>المرحّل للدورة القادمة</th></tr></thead><tbody>{% for code, source in details.get('source_summary', {}).items() %}<tr><td>{{ source.label or code }}</td><td>{{ source.current_minutes or 0 }} د</td><td>{{ source.carry_in_minutes or 0 }} د</td><td>{{ source.available_minutes or 0 }} د</td><td>{{ source.carried_consumed_minutes or 0 }} د</td><td class="text-danger fw-bold">{{ source.current_consumed_minutes if source.current_consumed_minutes is defined else source.consumed_minutes or 0 }} د</td><td>{{ source.remainder_minutes or 0 }} د</td><td>{{ source.carry_out_minutes or 0 }} د</td></tr>{% endfor %}</tbody></table></div>{% endif %}
               </div>
             </td>
           </tr>

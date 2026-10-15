@@ -50,6 +50,7 @@ from portal.routes import (
     run_automatic_leave_deduction_cycle,
     _one_time_leave_error,
     hr_deduction_approve,
+    hr_deduction_refresh,
     hr_deduction_reverse,
     hr_deductions_run,
     hr_leave_balances,
@@ -264,6 +265,56 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
         }
         self.assertEqual(departure_reasons["مغادرة مرضية"], "EXEMPT_PERMISSION_TYPE")
         self.assertEqual(departure_reasons["مغادرة رسمية"], "OFFICIAL_DEPARTURE")
+
+    def test_attended_remote_day_uses_its_attendance_and_departure_sources(self):
+        personal_permission = HRPermissionType(
+            code="PERSONAL_REMOTE",
+            name_ar="مغادرة شخصية",
+            counts_as_work=False,
+            deduct_from_allowance=True,
+        )
+        db.session.add(personal_permission)
+        db.session.flush()
+        # Thursday is a remote day for the fixed Mon-Wed office mask in this
+        # test. A real attendance result must still contribute its late,
+        # early-leave, and approved-departure minutes to the deduction.
+        db.session.add_all((
+            AttendanceDailySummary(
+                user_id=self.user.id,
+                day="2026-03-05",
+                first_in=datetime(2026, 3, 5, 8, 30),
+                last_out=datetime(2026, 3, 5, 14, 40),
+                late_minutes=30,
+                early_leave_minutes=20,
+                work_minutes=370,
+                status="OK",
+            ),
+            HRPermissionRequest(
+                user_id=self.user.id,
+                permission_type_id=personal_permission.id,
+                day="2026-03-05",
+                from_time="10:00",
+                to_time="11:00",
+                status="APPROVED",
+            ),
+        ))
+        db.session.commit()
+
+        result = _monthly_attendance_deduction_breakdown(
+            self.user.id,
+            2026,
+            3,
+            minutes_per_day=420,
+            allowance_minutes=0,
+        )
+
+        remote_day = next(row for row in result["details"]["days"] if row["day"] == "2026-03-05")
+        remote_departure = next(row for row in result["details"]["departures"] if row["day"] == "2026-03-05")
+        self.assertEqual(remote_day["classification"], "REMOTE")
+        self.assertEqual(remote_day["exclusion_code"], "")
+        self.assertEqual(remote_day["chargeable_minutes"], 50)
+        self.assertEqual(remote_departure["exclusion_code"], "")
+        self.assertEqual(remote_departure["chargeable_minutes"], 60)
 
     def test_balance_correction_and_reversal_recalculate_remaining_balance(self):
         leave_type = HRLeaveType(
@@ -692,6 +743,48 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
             logout_user()
         self.assertEqual(second_response.status_code, 302)
         self.assertEqual(run.status, "FINAL")
+
+    def test_refresh_draft_rebuilds_current_sources_without_finalizing(self):
+        self._add_normal_office_summaries()
+        admin = User(
+            email="refresh-admin@example.test",
+            name="Refresh Admin",
+            password_hash="not-used",
+            role="SUPER_ADMIN",
+        )
+        run = HRAttendanceDeductionRun(
+            year=2026,
+            month=3,
+            status="DRAFT",
+            config_snapshot_json=json.dumps({
+                "hours_per_day": 7,
+                "deduction_sequence": "SALARY_ONLY",
+            }),
+        )
+        db.session.add_all((admin, run))
+        db.session.flush()
+        item = HRAttendanceDeductionItem(
+            run_id=run.id,
+            user_id=self.user.id,
+            permission_allowance_minutes=0,
+            chargeable_minutes=0,
+            details_json=None,
+        )
+        db.session.add(item)
+        db.session.commit()
+
+        with self.app.test_request_context(
+            f"/portal/hr/deductions/{run.id}/refresh",
+            method="POST",
+        ):
+            login_user(admin)
+            response = hr_deduction_refresh(run.id)
+            logout_user()
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(run.status, "DRAFT")
+        self.assertEqual(item.late_minutes, 30)
+        self.assertTrue(item.details_json)
 
 
     def test_annual_balance_splits_2026_then_approves_current_closing_balance_for_2027(self):
