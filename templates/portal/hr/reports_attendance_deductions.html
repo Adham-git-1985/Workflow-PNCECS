@@ -1,0 +1,56 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تقرير خصم الإجازات{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-file-earmark-bar-graph"></i> تقرير خصم المغادرات من الإجازات</h4>
+      <div class="text-muted">تقرير شهري بالتفصيل، مع الحفاظ على اتجاه العربية في العرض والتصدير.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_attendance_deductions', year=year, month=month, status=status, user_id=user_id, export='xlsx') }}"><i class="bi bi-file-earmark-excel"></i> Excel</a>
+      <a class="btn btn-outline-danger" href="{{ url_for('portal.hr_report_attendance_deductions', year=year, month=month, status=status, user_id=user_id, export='pdf') }}"><i class="bi bi-file-earmark-pdf"></i> PDF</a>
+    </div>
+  </div>
+</div>
+
+<form method="get" class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <div class="row g-2 align-items-end">
+    <div class="col-6 col-md-2"><label class="form-label">السنة</label><input type="number" class="form-control" name="year" value="{{ year }}" min="2000" max="2100"></div>
+    <div class="col-6 col-md-2"><label class="form-label">الشهر</label><input type="number" class="form-control" name="month" value="{{ month }}" min="1" max="12"></div>
+    <div class="col-12 col-md-3"><label class="form-label">الموظف</label><select class="form-select" name="user_id"><option value="">الكل</option>{% for user in report_users %}<option value="{{ user.id }}" {% if user_id|string == user.id|string %}selected{% endif %}>{{ user.full_name or user.name or user.email }}</option>{% endfor %}</select></div>
+    <div class="col-12 col-md-2"><label class="form-label">الحالة</label><select class="form-select" name="status"><option value="">الكل</option><option value="DRAFT" {% if status == 'DRAFT' %}selected{% endif %}>مسودة</option><option value="FINAL" {% if status == 'FINAL' %}selected{% endif %}>معتمد</option><option value="REVERSED" {% if status == 'REVERSED' %}selected{% endif %}>معكوس</option></select></div>
+    <div class="col-12 col-md-3"><button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض التقرير</button></div>
+  </div>
+</form>
+
+<div class="alert alert-info small">يظهر الترحيل مستقلاً للمغادرات والتأخير والخروج المبكر. في وضع التجميع، يكون ترتيب استهلاك الساعات: المغادرات ثم التأخير ثم الخروج المبكر.</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="table-responsive">
+    <table class="table table-sm table-bordered align-middle text-nowrap">
+      <thead class="table-light"><tr>
+        <th>الموظف</th><th>الشهر</th><th>نوع الإجازة</th><th>المصادر</th>
+        <th>المغادرات</th><th>التأخير</th><th>الخروج المبكر</th><th>الأيام المخصومة</th>
+        <th>ساعات اليوم</th><th>الساعات الزائدة</th><th>ترحيل المغادرات</th><th>ترحيل التأخير</th><th>ترحيل الخروج</th>
+        <th>الحالة</th><th>من قام بالخصم</th>
+      </tr></thead>
+      <tbody>
+      {% for row in rows %}
+        <tr>
+          <td>{{ row.employee }}<div class="small text-muted">{{ row.employee_email }}</div></td>
+          <td>{{ row.month_label }}</td><td>{{ row.leave_type or '—' }}</td><td>{{ row.selected_sources or '—' }}</td>
+          <td>{{ row.departure_minutes }} د / {{ '%.2f'|format(row.departure_hours) }} س</td>
+          <td>{{ row.late_minutes }} د / {{ '%.2f'|format(row.late_hours) }} س</td>
+          <td>{{ row.early_minutes }} د / {{ '%.2f'|format(row.early_hours) }} س</td>
+          <td class="fw-bold">{{ '%.2f'|format(row.deducted_days) }}</td><td>{{ '%.2f'|format(row.threshold_hours) }}</td>
+          <td>{{ '%.2f'|format(row.excess_hours) }} س</td><td>{{ row.carry_departures }} د</td><td>{{ row.carry_late }} د</td><td>{{ row.carry_early }} د</td>
+          <td>{{ row.status_label }}</td><td>{{ row.actor or '—' }}</td>
+        </tr>
+      {% else %}<tr><td colspan="15" class="text-center text-muted py-4">لا توجد بيانات مطابقة.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

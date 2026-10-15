@@ -17,6 +17,7 @@ from models import (
 )
 from services.notification_email import (
     ATTENDANCE_SCHEDULE_EMAIL_MODE,
+    HR_DEDUCTION_EMAIL_MODE,
     HR_REQUEST_EMAIL_MODE,
     MEETING_EMAIL_MODE,
     HR_REQUEST_RECIPIENT_CANCELLED_REASON,
@@ -158,6 +159,55 @@ class NotificationEmailTests(unittest.TestCase):
         html_body = message.get_body(preferencelist=("html",)).get_content()
         self.assertIn("فتح الاجتماع", html_body)
         self.assertEqual(NotificationEmailDelivery.query.one().status, "SENT")
+
+    def test_leave_deduction_email_is_queued_only_for_the_employee(self):
+        other_user = User(
+            email="other@example.test",
+            name="Other",
+            password_hash="unused",
+            role="EMPLOYEE",
+        )
+        db.session.add(other_user)
+        db.session.flush()
+        notification = Notification(
+            user_id=self.user.id,
+            message="تم اعتماد خصم الإجازة",
+            type="HR_DEDUCTION_FINAL",
+            source="portal",
+            link_url="/portal/hr/me/balances-deductions?year=2026#myDeduction1",
+            email_delivery_mode=HR_DEDUCTION_EMAIL_MODE,
+            event_key="hr-deduction:final:1:1",
+            is_read=False,
+        )
+        db.session.add(notification)
+        db.session.flush()
+
+        self.assertTrue(enqueue_notification_email(notification))
+        db.session.commit()
+        self.assertEqual(NotificationEmailDelivery.query.count(), 1)
+        self.assertEqual(NotificationEmailDelivery.query.one().user_id, self.user.id)
+
+        with patch("services.notification_email._send_email") as send_email:
+            self.assertEqual(send_pending_notification_emails(), 1)
+        send_email.assert_called_once()
+        self.assertEqual(send_email.call_args.args[1], self.user.email)
+
+    def test_invalid_leave_deduction_email_shape_is_not_queued(self):
+        notification = Notification(
+            user_id=self.user.id,
+            message="خصم",
+            type="HR_DEDUCTION_FINAL",
+            source="portal",
+            link_url="/portal/hr/deductions/1",
+            email_delivery_mode=HR_DEDUCTION_EMAIL_MODE,
+            event_key="hr-deduction:final:1:1",
+            is_read=False,
+        )
+        db.session.add(notification)
+        db.session.flush()
+        self.assertFalse(enqueue_notification_email(notification))
+        db.session.commit()
+        self.assertEqual(NotificationEmailDelivery.query.count(), 0)
 
     def test_non_hr_email_with_hr_shaped_link_is_not_subject_to_hr_guard(self):
         notification = Notification(

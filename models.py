@@ -1479,6 +1479,15 @@ class Notification(db.Model):
             sqlite_where=db.text("event_key LIKE 'hr-request:%'"),
             postgresql_where=db.text("event_key LIKE 'hr-request:%'"),
         ).ddl_if(dialect=("sqlite", "postgresql")),
+        db.Index(
+            "uq_notification_hr_deduction_event",
+            "user_id",
+            "event_key",
+            "is_mirror",
+            unique=True,
+            sqlite_where=db.text("event_key LIKE 'hr-deduction:%'"),
+            postgresql_where=db.text("event_key LIKE 'hr-deduction:%'"),
+        ).ddl_if(dialect=("sqlite", "postgresql")),
         db.Index("ix_notification_user_mirror_read", "user_id", "is_mirror", "is_read"),
         db.Index("ix_notification_user_source_read", "user_id", "source", "is_read"),
         db.Index(
@@ -2342,12 +2351,22 @@ def _global_notification_observer_user_ids(session: Session) -> set[int]:
 
 
 def _is_hr_request_notification(notification: Notification) -> bool:
-    """Leave and departure notifications must never reach global observers."""
+    """Private HR notifications must never reach global observers.
+
+    Leave/permission requests and attendance-deduction receipts are addressed
+    to a specific employee or workflow participant.  A deduction receipt must
+    not be copied to users who hold the unrelated global-observer permission.
+    """
     link_url = (getattr(notification, "link_url", None) or "").strip().lower()
-    return link_url.startswith((
+    if link_url.startswith((
         "/portal/hr/approvals/leaves/",
         "/portal/hr/approvals/permissions/",
-    ))
+        "/portal/hr/me/balances-deductions",
+    )):
+        return True
+    notification_type = (getattr(notification, "type", None) or "").strip().upper()
+    email_mode = (getattr(notification, "email_delivery_mode", None) or "").strip().upper()
+    return notification_type in {"HR_DEDUCTION_FINAL", "HR_DEDUCTION_REVERSED"} or email_mode == "HR_DEDUCTION"
 
 
 @event.listens_for(Session, "before_flush")
@@ -4786,9 +4805,20 @@ class HRAttendanceDeductionConfig(db.Model):
     # Optional: flat amount per absent day (legacy).
     absent_day_value = db.Column(db.Float, nullable=True)
 
-    # Reference-system settings (7 hours -> 1 day)
+    # Reference-system settings (the default is configurable; the product
+    # default is 6.5 hours -> 1 leave day).
     deduction_style = db.Column(db.String(40), default="AGGREGATE", nullable=False)  # AGGREGATE / PER_CATEGORY
-    hours_per_day = db.Column(db.Float, default=7.0, nullable=False)
+    hours_per_day = db.Column(db.Float, default=6.5, nullable=False)
+
+    # New leave-deduction policy fields.  Keep the older source/carry fields
+    # below for backwards compatibility with existing installations.
+    source_selection_json = db.Column(db.Text, nullable=True, default='["DEPARTURES"]')
+    leave_type_selection_json = db.Column(db.Text, nullable=True)
+    automatic_enabled = db.Column(db.Boolean, default=False, nullable=False)
+    automatic_last_period = db.Column(db.String(7), nullable=True, index=True)
+    default_carry_departures = db.Column(db.Boolean, default=False, nullable=False)
+    default_carry_late = db.Column(db.Boolean, default=False, nullable=False)
+    default_carry_early = db.Column(db.Boolean, default=False, nullable=False)
 
     late_source = db.Column(db.String(20), default="SALARY", nullable=False)
     early_source = db.Column(db.String(20), default="SALARY", nullable=False)
@@ -4814,10 +4844,56 @@ class HRAttendanceDeductionConfig(db.Model):
     annual_leave_type = db.relationship("HRLeaveType", foreign_keys=[annual_leave_type_id], lazy="joined")
 
 
+class HRAttendanceDeductionOverride(db.Model):
+    """Optional threshold override by employee and/or leave type.
+
+    A row may target a leave type for everyone, an employee for every leave
+    type, or both for the most specific rule.  There is intentionally no
+    destructive uniqueness constraint because SQLite treats NULL values as
+    distinct; the resolver uses the newest active matching rule.
+    """
+
+    __tablename__ = "hr_att_deduction_override"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    leave_type_id = db.Column(db.Integer, db.ForeignKey("hr_leave_type.id"), nullable=True, index=True)
+    hours_per_day = db.Column(db.Float, nullable=False, default=6.5)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    note = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+
+    user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
+    leave_type = db.relationship("HRLeaveType", foreign_keys=[leave_type_id], lazy="joined")
+    created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+    updated_by = db.relationship("User", foreign_keys=[updated_by_id], lazy="joined")
+
+
 class HRAttendanceDeductionRun(db.Model):
     """A single deduction execution (تنفيذ الخصم) for a month."""
 
     __tablename__ = "hr_att_deduction_run"
+
+    __table_args__ = (
+        db.Index(
+            "ix_hr_att_deduction_run_status_period",
+            "status",
+            "year",
+            "month",
+            "id",
+        ),
+        db.Index(
+            "uq_hr_att_deduction_auto_period",
+            "year",
+            "month",
+            unique=True,
+            sqlite_where=db.text("execution_mode = 'AUTO'"),
+            postgresql_where=db.text("execution_mode = 'AUTO'"),
+        ).ddl_if(dialect=("sqlite", "postgresql")),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
 
@@ -4825,6 +4901,8 @@ class HRAttendanceDeductionRun(db.Model):
     month = db.Column(db.Integer, nullable=False, index=True)
 
     status = db.Column(db.String(20), default="DRAFT", nullable=False)  # DRAFT/FINAL/REVERSED
+    execution_mode = db.Column(db.String(24), default="MANUAL", nullable=False)  # MANUAL/AUTO/ADJUSTMENT
+    operation_type = db.Column(db.String(24), default="NORMAL", nullable=False)  # NORMAL/REVERSAL/ADJUSTMENT
     note = db.Column(db.Text, nullable=True)
 
     config_snapshot_json = db.Column(db.Text, nullable=True)
@@ -4837,6 +4915,14 @@ class HRAttendanceDeductionRun(db.Model):
     reversed_at = db.Column(db.DateTime, nullable=True, index=True)
     reversed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
     reversal_note = db.Column(db.Text, nullable=True)
+    reversal_of_run_id = db.Column(db.Integer, db.ForeignKey("hr_att_deduction_run.id"), nullable=True, index=True)
+    replacement_of_run_id = db.Column(db.Integer, db.ForeignKey("hr_att_deduction_run.id"), nullable=True, index=True)
+
+    carry_departures = db.Column(db.Boolean, default=False, nullable=False)
+    carry_late = db.Column(db.Boolean, default=False, nullable=False)
+    carry_early = db.Column(db.Boolean, default=False, nullable=False)
+    needs_review = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    review_reason = db.Column(db.Text, nullable=True)
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
@@ -4844,6 +4930,8 @@ class HRAttendanceDeductionRun(db.Model):
     created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
     approved_by = db.relationship("User", foreign_keys=[approved_by_id], lazy="joined")
     reversed_by = db.relationship("User", foreign_keys=[reversed_by_id], lazy="joined")
+    reversal_of_run = db.relationship("HRAttendanceDeductionRun", foreign_keys=[reversal_of_run_id], remote_side=[id], uselist=False)
+    replacement_of_run = db.relationship("HRAttendanceDeductionRun", foreign_keys=[replacement_of_run_id], remote_side=[id], uselist=False)
 class HRAttendanceDeductionItem(db.Model):
     """Per-employee deduction totals linked to a run."""
 
@@ -4859,6 +4947,13 @@ class HRAttendanceDeductionItem(db.Model):
     absent_days = db.Column(db.Integer, default=0, nullable=False)
 
     approved_permission_minutes = db.Column(db.Integer, default=0, nullable=False)
+    departure_minutes = db.Column(db.Integer, default=0, nullable=False)
+    carried_departure_minutes = db.Column(db.Integer, default=0, nullable=False)
+    carried_late_minutes = db.Column(db.Integer, default=0, nullable=False)
+    carried_early_leave_minutes = db.Column(db.Integer, default=0, nullable=False)
+    carry_departure_minutes = db.Column(db.Integer, default=0, nullable=False)
+    carry_late_minutes = db.Column(db.Integer, default=0, nullable=False)
+    carry_early_leave_minutes = db.Column(db.Integer, default=0, nullable=False)
     permission_allowance_minutes = db.Column(db.Integer, default=0, nullable=False)
     excluded_minutes = db.Column(db.Integer, default=0, nullable=False)
     chargeable_minutes = db.Column(db.Integer, default=0, nullable=False)
@@ -4879,6 +4974,7 @@ class HRAttendanceDeductionItem(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("run_id", "user_id", name="uq_hr_att_deduct_run_user"),
+        db.Index("ix_hr_att_deduction_item_user_run", "user_id", "run_id"),
     )
 
 

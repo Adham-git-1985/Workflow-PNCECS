@@ -54,12 +54,14 @@ DELEGATION_SENSITIVE_EMAIL_MODE = "DELEGATION_SENSITIVE"
 CALENDAR_REMINDER_EMAIL_MODE = "CALENDAR_REMINDER"
 HR_REQUEST_EMAIL_MODE = "HR_REQUEST"
 MEETING_EMAIL_MODE = "MEETING"
+HR_DEDUCTION_EMAIL_MODE = "HR_DEDUCTION"
 _EMAIL_DELIVERY_MODES = {
     ATTENDANCE_SCHEDULE_EMAIL_MODE,
     DELEGATION_SENSITIVE_EMAIL_MODE,
     CALENDAR_REMINDER_EMAIL_MODE,
     HR_REQUEST_EMAIL_MODE,
     MEETING_EMAIL_MODE,
+    HR_DEDUCTION_EMAIL_MODE,
 }
 NOTIFICATION_EMAILS_DISABLED_REASON = "Notification emails are disabled; the notification remains available in the system."
 EMAIL_UNAVAILABLE_CANCELLED_REASON = "Skipped: recipient has no configured delivery email address."
@@ -255,6 +257,13 @@ def enqueue_notification_email(notification: Notification) -> bool:
     mode = (notification.email_delivery_mode or "").strip().upper()
     if mode not in _EMAIL_DELIVERY_MODES:
         return False
+    if mode == HR_DEDUCTION_EMAIL_MODE:
+        notification_type = (getattr(notification, "type", None) or "").strip().upper()
+        link_url = (getattr(notification, "link_url", None) or "").strip().lower()
+        if notification_type not in {"HR_DEDUCTION_FINAL", "HR_DEDUCTION_REVERSED"}:
+            return False
+        if not link_url.startswith("/portal/hr/me/balances-deductions"):
+            return False
     if not email_delivery_enabled():
         return False
 

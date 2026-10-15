@@ -8,6 +8,7 @@ from extensions import db
 from portal.routes import (  # reuse leave helpers and SystemSetting table
     _activate_due_leave_rollover_decisions,
     _setting_get,
+    run_automatic_leave_deduction_cycle,
 )
 from services.attendance_schedule import send_attendance_schedule_reminders
 from services.attendance_delay_workflow import process_pending_delay_response_alerts
@@ -73,6 +74,14 @@ def _worker(app):
                 enabled = (_setting_get("HR_ALERTS_JOB_ENABLED") or "1").strip()
                 if enabled in ("1", "true", "True", "yes", "YES"):
                     _check_pending_leave_requests()
+                    try:
+                        # Keep the sensitive monthly deduction cycle outside
+                        # the legacy alert-check function.  It is still the
+                        # only scheduled automatic entry point, is idempotent,
+                        # and is never called by attendance uploads/edits.
+                        run_automatic_leave_deduction_cycle()
+                    except Exception:
+                        db.session.rollback()
                 interval = int(
                     (_setting_get("HR_ALERTS_JOB_INTERVAL_SEC") or "3600").strip()
                     or 3600

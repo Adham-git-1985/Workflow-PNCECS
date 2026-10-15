@@ -1,6 +1,7 @@
 import unittest
 
 from flask import Flask
+from sqlalchemy.exc import IntegrityError
 
 from extensions import db
 from models import Notification, Role, RolePermission, User, UserPermission
@@ -134,6 +135,55 @@ class GlobalNotificationObserverTests(unittest.TestCase):
             1,
         )
 
+    def test_general_secretary_gets_one_copy_for_a_multi_recipient_event_and_retry(self):
+        role = Role(code="GENERAL_SECRETARY", name_ar="الأمين العام", is_active=True)
+        db.session.add(role)
+        secretary = self._user("general-secretary@example.test", role=role.code)
+        first_recipient = self._user("batch-first@example.test")
+        second_recipient = self._user("batch-second@example.test")
+        retry_recipient = self._user("batch-retry@example.test")
+        db.session.add(RolePermission(
+            role=role.code,
+            permission=OBSERVER_PERMISSION,
+        ))
+        db.session.commit()
+
+        event_key = "workflow-secretary-batch-1"
+        db.session.add_all((
+            Notification(
+                user_id=first_recipient.id,
+                message="Batch update",
+                type="INFO",
+                source="workflow",
+                event_key=event_key,
+            ),
+            Notification(
+                user_id=second_recipient.id,
+                message="Batch update",
+                type="INFO",
+                source="workflow",
+                event_key=event_key,
+            ),
+        ))
+        db.session.commit()
+
+        # A retry/remainder of the same event must not create a second copy.
+        db.session.add(Notification(
+            user_id=retry_recipient.id,
+            message="Batch update",
+            type="INFO",
+            source="workflow",
+            event_key=event_key,
+        ))
+        db.session.commit()
+
+        self.assertEqual(Notification.query.filter_by(
+            user_id=secretary.id,
+            source="workflow",
+            event_key=event_key,
+            is_mirror=False,
+        ).count(), 1)
+
     def test_leave_request_notifications_are_not_copied_to_global_observers(self):
         observer = self._user("leave-observer@example.test")
         recipient = self._user("leave-recipient@example.test")
@@ -181,6 +231,56 @@ class GlobalNotificationObserverTests(unittest.TestCase):
             user_id=observer.id,
             is_mirror=False,
         ).count(), 0)
+
+    def test_leave_deduction_receipt_is_employee_only_and_idempotent(self):
+        observer = self._user("deduction-observer@example.test")
+        employee = self._user("deduction-employee@example.test")
+        db.session.add(UserPermission(
+            user_id=observer.id,
+            key=OBSERVER_PERMISSION,
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        event_key = f"hr-deduction:final:42:{employee.id}"
+        db.session.add(Notification(
+            user_id=employee.id,
+            message="تم اعتماد خصم الإجازة",
+            type="HR_DEDUCTION_FINAL",
+            source="portal",
+            link_url=f"/portal/hr/me/balances-deductions?year=2026#myDeduction42",
+            email_delivery_mode="HR_DEDUCTION",
+            event_key=event_key,
+        ))
+        db.session.commit()
+
+        self.assertEqual(Notification.query.filter_by(
+            user_id=observer.id,
+            is_mirror=False,
+        ).count(), 0)
+        self.assertEqual(Notification.query.filter_by(
+            user_id=employee.id,
+            event_key=event_key,
+            is_mirror=False,
+        ).count(), 1)
+
+        db.session.add(Notification(
+            user_id=employee.id,
+            message="تكرار غير مقصود",
+            type="HR_DEDUCTION_FINAL",
+            source="portal",
+            link_url="/portal/hr/me/balances-deductions?year=2026",
+            email_delivery_mode="HR_DEDUCTION",
+            event_key=event_key,
+        ))
+        with self.assertRaises(IntegrityError):
+            db.session.commit()
+        db.session.rollback()
+        self.assertEqual(Notification.query.filter_by(
+            user_id=employee.id,
+            event_key=event_key,
+            is_mirror=False,
+        ).count(), 1)
 
     def test_observer_permission_is_available_in_the_portal_permission_editor(self):
         self.assertIn(OBSERVER_PERMISSION, PORTAL_ALL_KEYS)

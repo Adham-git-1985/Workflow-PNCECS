@@ -14,6 +14,7 @@ from extensions import db
 from models import (
     AttendanceDailySummary,
     EmployeeFile,
+    HRAttendanceDeductionConfig,
     HRAttendanceDeductionItem,
     HRAttendanceDeductionRun,
     HRAttendanceSpecialCase,
@@ -45,6 +46,8 @@ from portal.routes import (
     _save_leave_rollover_decision,
     _leave_used_days_as_of,
     _monthly_attendance_deduction_breakdown,
+    _has_manual_deduction_operation,
+    run_automatic_leave_deduction_cycle,
     _one_time_leave_error,
     hr_deduction_approve,
     hr_deduction_reverse,
@@ -147,6 +150,18 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
                     status="OK",
                 ))
             current_day += timedelta(days=1)
+
+    def test_automatic_cycle_cannot_run_before_a_manual_cycle(self):
+        config = HRAttendanceDeductionConfig(automatic_enabled=True)
+        db.session.add(config)
+        db.session.commit()
+
+        self.assertFalse(_has_manual_deduction_operation())
+        self.assertEqual(run_automatic_leave_deduction_cycle(), 0)
+
+        db.session.refresh(config)
+        self.assertFalse(config.automatic_enabled)
+        self.assertEqual(HRAttendanceDeductionRun.query.count(), 0)
 
     def test_monthly_breakdown_applies_remote_mission_sick_and_special_exclusions(self):
         self._add_normal_office_summaries()

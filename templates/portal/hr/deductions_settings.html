@@ -11,6 +11,7 @@
     <div class="d-flex gap-2 flex-wrap">
       <a class="btn btn-primary" href="{{ url_for('portal.hr_deductions_run') }}"><i class="bi bi-eye"></i> إنشاء معاينة</a>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_log') }}"><i class="bi bi-list-check"></i> سجل الخصومات</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_report_attendance_deductions') }}"><i class="bi bi-file-earmark-bar-graph"></i> التقرير</a>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_system_screens') }}"><i class="bi bi-diagram-3"></i> مركز المنظومة</a>
     </div>
   </div>
@@ -19,9 +20,9 @@
 <div class="alert alert-info d-flex gap-3 align-items-start">
   <i class="bi bi-info-circle fs-4"></i>
   <div>
-    <div class="fw-bold">ترتيب الاحتساب المعتمد</div>
-    <div>استبعاد العطل والإجازات المعتمدة ← تطبيق ساعات سماح المغادرة ← الخصم من رصيد الإجازة ← الخصم من الراتب عند نفاد الرصيد.</div>
-    <div class="small mt-1">يُستثنى كذلك: العمل عن بُعد ضمن الهايبرد، المهمات والمغادرات الرسمية، المغادرات المرضية، والحالات أو الاستثناءات المسجلة من الموارد البشرية.</div>
+    <div class="fw-bold">سياسة الخصم المعتمدة</div>
+    <div>تختار الإدارة نوع الإجازة والمصادر المحتسبة لكل دورة. في وضع التجميع تستهلك الساعات بالترتيب: المغادرات ثم التأخير ثم الخروج المبكر، ولا يُخصم اليوم إلا بعد اكتمال الساعات المحددة.</div>
+    <div class="small mt-1">تُحتسب المغادرات والتأخيرات والخروجات المعتمدة أو المصححة فقط، وتُستبعد العطل والإجازات والاستثناءات الإدارية.</div>
   </div>
 </div>
 
@@ -34,23 +35,23 @@
 
   <div class="row g-3">
     <div class="col-12 col-md-4">
-      <label class="form-label fw-bold">ساعات سماح المغادرات شهرياً</label>
+      <label class="form-label fw-bold">السماح الشهري القديم للمغادرات</label>
       <div class="input-group">
         <input type="number" step="0.25" min="0" class="form-control" name="permission_allowance_hours"
-               value="{{ cfg.permission_allowance_hours if cfg else 6 }}" {% if not can_manage %}disabled{% endif %}>
+               value="{{ cfg.permission_allowance_hours if cfg else 0 }}" {% if not can_manage %}disabled{% endif %}>
         <span class="input-group-text">ساعة</span>
       </div>
-      <div class="form-text">القيمة العامة لكل موظف؛ يمكن تخصيص شهر معين من التقرير الشهري.</div>
+      <div class="form-text">للتوافق مع الإعداد القديم فقط. خصم الإجازات الجديد لا يطبق سماحاً إلا إذا حددته الإدارة صراحة.</div>
     </div>
 
     <div class="col-12 col-md-4">
       <label class="form-label fw-bold">ساعات يوم الخصم</label>
       <div class="input-group">
         <input type="number" step="0.25" min="0.25" class="form-control" name="hours_per_day"
-               value="{{ cfg.hours_per_day if cfg else 7 }}" {% if not can_manage %}disabled{% endif %}>
+               value="{{ cfg.hours_per_day if cfg else 6.5 }}" {% if not can_manage %}disabled{% endif %}>
         <span class="input-group-text">ساعة = يوم</span>
       </div>
-      <div class="form-text">مثال: كل 7 ساعات محتسبة تساوي يوم خصم واحداً.</div>
+      <div class="form-text">مثال: كل 6.5 ساعات محتسبة تساوي يوم إجازة واحداً. لا يحتسب اليوم إلا بعد اكتمال الساعات.</div>
     </div>
 
     <div class="col-12 col-md-4">
@@ -63,12 +64,47 @@
       </select>
     </div>
 
+    <div class="col-12 col-md-8">
+      <label class="form-label fw-bold">أنواع الإجازات المفعّلة للخصم</label>
+      <div class="border rounded-3 p-3">{% for leave_type in leave_types %}<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="leave_type_selection" value="{{ leave_type.id }}" id="enabledLeave{{ leave_type.id }}" {% if leave_type.id in selected_leave_type_ids %}checked{% endif %} {% if not can_manage %}disabled{% endif %}><label class="form-check-label" for="enabledLeave{{ leave_type.id }}">{{ leave_type.name_ar }}</label></div>{% else %}<span class="text-muted">لا توجد أنواع إجازات تملك رصيداً.</span>{% endfor %}</div>
+      <div class="form-text">يمكن تفعيل نوع واحد أو أكثر، ثم اختيار النوع المطلوب لهذه الدورة من شاشة المعاينة. الأنواع غير المحددة لا تُستخدم للخصم.</div>
+    </div>
+
     <div class="col-12 col-md-6">
       <label class="form-label fw-bold">ترتيب الخصم</label>
       <select class="form-select" name="deduction_sequence" {% if not can_manage %}disabled{% endif %}>
-        <option value="LEAVE_THEN_SALARY" {% if not cfg or cfg.deduction_sequence == 'LEAVE_THEN_SALARY' %}selected{% endif %}>من الإجازة أولاً، ثم الراتب عند نفاد الرصيد</option>
+        <option value="LEAVE_ONLY" {% if not cfg or cfg.deduction_sequence == 'LEAVE_ONLY' %}selected{% endif %}>من نوع الإجازة المحدد فقط</option>
+        <option value="LEAVE_THEN_SALARY" {% if cfg and cfg.deduction_sequence == 'LEAVE_THEN_SALARY' %}selected{% endif %}>من الإجازة أولاً، ثم الراتب عند نفاد الرصيد</option>
         <option value="SALARY_ONLY" {% if cfg and cfg.deduction_sequence == 'SALARY_ONLY' %}selected{% endif %}>من الراتب مباشرة</option>
       </select>
+    </div>
+
+    <div class="col-12 col-md-6">
+      <label class="form-label fw-bold">مصادر الساعات المسموح باحتسابها</label>
+      <div class="border rounded-3 p-3">
+        {% for value, label in deduction_source_opts %}
+          <div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="source_selection" value="{{ value }}" id="source{{ value }}" {% if value in selected_sources %}checked{% endif %} {% if not can_manage %}disabled{% endif %}><label class="form-check-label" for="source{{ value }}">{{ label }}</label></div>
+        {% endfor %}
+      </div>
+      <div class="form-text">يتم تحديد ما سيُخصم في كل دورة أيضاً من شاشة المعاينة؛ هذه القيم افتراضية فقط.</div>
+    </div>
+
+    <div class="col-12 col-md-6">
+      <label class="form-label fw-bold">التشغيل التلقائي للدورات القادمة</label>
+      <div class="form-check form-switch border rounded-3 p-3">
+        <input class="form-check-input" type="checkbox" name="automatic_enabled" id="automaticEnabled" {% if cfg and cfg.automatic_enabled %}checked{% endif %} {% if not can_manage or not has_final_deduction %}disabled{% endif %}>
+        <label class="form-check-label" for="automaticEnabled">تشغيل مرة واحدة لكل شهر ميلادي بعد انتهاء الشهر السابق</label>
+      </div>
+      <div class="form-text text-danger">لا يعمل هذا الخيار عند رفع أو تعديل الحضور؛ يعمل فقط في فحص شهري مجدول وبالإعدادات المحفوظة. يتاح بعد اعتماد أول دورة يدوياً.</div>
+    </div>
+
+    <div class="col-12">
+      <label class="form-label fw-bold">الإعداد الافتراضي للترحيل</label>
+      <div class="border rounded-3 p-3">
+        <div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="default_carry_departures" id="carryDepartures" {% if cfg and cfg.default_carry_departures %}checked{% endif %} {% if not can_manage %}disabled{% endif %}><label class="form-check-label" for="carryDepartures">ترحيل المغادرات</label></div>
+        <div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="default_carry_late" id="carryLate" {% if cfg and cfg.default_carry_late %}checked{% endif %} {% if not can_manage %}disabled{% endif %}><label class="form-check-label" for="carryLate">ترحيل التأخير</label></div>
+        <div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="default_carry_early" id="carryEarly" {% if cfg and cfg.default_carry_early %}checked{% endif %} {% if not can_manage %}disabled{% endif %}><label class="form-check-label" for="carryEarly">ترحيل الخروج المبكر</label></div>
+      </div>
     </div>
 
     <div class="col-12 col-md-3">
@@ -108,4 +144,19 @@
     </div>
   </div>
 </form>
+
+<div class="bg-white rounded-3 shadow-sm p-4 mt-3">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2"><h5 class="mb-0">استثناءات ساعات اليوم</h5><span class="small text-muted">الأولوية: موظف + نوع إجازة، ثم موظف، ثم نوع إجازة.</span></div>
+  <form method="post" class="row g-2 align-items-end border-bottom pb-3 mb-3">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}"><input type="hidden" name="action" value="save_override">
+    <div class="col-12 col-md-3"><label class="form-label small">الموظف (اختياري)</label><select class="form-select" name="override_user_id"><option value="">كل الموظفين</option>{% for user in override_users %}<option value="{{ user.id }}">{{ user.full_name or user.name or user.email }}</option>{% endfor %}</select></div>
+    <div class="col-12 col-md-3"><label class="form-label small">نوع الإجازة (اختياري)</label><select class="form-select" name="override_leave_type_id"><option value="">كل الأنواع</option>{% for leave_type in leave_types %}<option value="{{ leave_type.id }}">{{ leave_type.name_ar }}</option>{% endfor %}</select></div>
+    <div class="col-6 col-md-2"><label class="form-label small">ساعات اليوم</label><input class="form-control" name="override_hours_per_day" type="number" step="0.25" min="0.25" required></div>
+    <div class="col-12 col-md-3"><label class="form-label small">ملاحظة</label><input class="form-control" name="override_note"></div>
+    <div class="col-6 col-md-1"><button class="btn btn-outline-primary w-100" type="submit" {% if not can_manage %}disabled{% endif %}>إضافة</button></div>
+  </form>
+  <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>الموظف</th><th>نوع الإجازة</th><th>الساعات</th><th>ملاحظة</th><th></th></tr></thead><tbody>
+    {% for override in overrides %}<tr><td>{{ override.user.full_name if override.user else 'الكل' }}</td><td>{{ override.leave_type.name_ar if override.leave_type else 'كل الأنواع' }}</td><td>{{ override.hours_per_day }}</td><td>{{ override.note or '—' }}</td><td><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}"><input type="hidden" name="action" value="delete_override"><input type="hidden" name="override_id" value="{{ override.id }}"><button class="btn btn-sm btn-outline-danger" {% if not can_manage %}disabled{% endif %}>إيقاف</button></form></td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted">لا توجد استثناءات.</td></tr>{% endfor %}
+  </tbody></table></div>
+</div>
 {% endblock %}

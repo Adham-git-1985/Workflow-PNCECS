@@ -103,6 +103,7 @@
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_deductions_run') }}">تنفيذ الخصم</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_deductions_log') }}">سجل الخصومات</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_deductions_yearly') }}">الجدول السنوي</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_report_attendance_deductions') }}">تقرير خصم الإجازات</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_deductions_settings') }}">إعدادات الخصم</a></li>
               </ul>
             </li>
@@ -260,6 +261,7 @@
             <a class="list-group-item list-group-item-action" data-report-label="التقرير اليومي" href="{{ url_for('portal.hr_report_attendance_daily') }}"><i class="bi bi-calendar-date"></i> التقرير اليومي</a>
             <a class="list-group-item list-group-item-action" data-report-label="تقرير مراقبة تعديلات الدوام" href="{{ url_for('portal.hr_report_attendance_edits') }}"><i class="bi bi-pencil-square"></i> مراقبة تعديلات الدوام</a>
             <a class="list-group-item list-group-item-action" data-report-label="تقرير الحركات السالبة" href="{{ url_for('portal.hr_report_negative_movements') }}"><i class="bi bi-graph-down"></i> تقرير الحركات السالبة</a>
+            {% if current_user.has_perm('HR_ATTENDANCE_DEDUCTIONS_MANAGE') %}<a class="list-group-item list-group-item-action border border-primary" data-report-label="تقرير خصم المغادرات من الإجازات" href="{{ url_for('portal.hr_report_attendance_deductions') }}"><i class="bi bi-file-earmark-bar-graph text-primary"></i> تقرير خصم المغادرات من الإجازات</a>{% endif %}
             <hr class="my-3">
             <a class="list-group-item list-group-item-action" data-report-label="آخر دخول ناجح" href="{{ url_for('portal.hr_report_last_login') }}"><i class="bi bi-shield-check"></i> آخر دخول ناجح</a>
             <a class="list-group-item list-group-item-action" data-report-label="الحضور والانصراف والمغادرات" href="{{ url_for('portal.hr_report_attendance_permissions') }}"><i class="bi bi-clock-history"></i> الحضور والانصراف والمغادرات</a>

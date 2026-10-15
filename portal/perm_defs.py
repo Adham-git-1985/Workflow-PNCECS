@@ -154,6 +154,7 @@ PERMS: Dict[str, List[PermDef]] = {
         PermDef("HR_ATTENDANCE_EDIT", "تعديل الدوام", "تقديم تعديل يدوي للحضور أو الانصراف. لا يصبح نافذاً قبل اعتماده.", module="HR_ATTENDANCE"),
         PermDef("HR_ATTENDANCE_EDIT_APPROVE", "اعتماد تعديل الدوام", "اعتماد أو رفض تعديلات الدوام اليدوية المقدمة؛ التعديل المعتمد فقط يؤثر في الملخص اليومي.", module="HR_ATTENDANCE"),
         PermDef("HR_ATTENDANCE_EXPORT", "تصدير الدوام", "تصدير الدوام PDF/Excel.", module="HR_ATTENDANCE"),
+        PermDef("HR_ATTENDANCE_DEDUCTIONS_MANAGE", "إدارة خصم المغادرات من الإجازات", "إنشاء ومعاينة واعتماد وتصحيح خصومات الإجازات الشهرية.", module="HR_ATTENDANCE_DEDUCTIONS"),
         PermDef(
             "HR_ATTENDANCE_REPORTS_MANAGE",
             "إدارة رسائل تقارير الدوام",

@@ -1144,6 +1144,33 @@ def _ensure_runtime_schema():
                     "WHERE event_key LIKE 'hr-request:%'",
                 ),
                 (
+                    "notification",
+                    ("user_id", "event_key", "is_mirror"),
+                    "CREATE UNIQUE INDEX IF NOT EXISTS "
+                    "uq_notification_hr_deduction_event "
+                    "ON notification (user_id, event_key, is_mirror) "
+                    "WHERE event_key LIKE 'hr-deduction:%'",
+                ),
+                (
+                    "hr_att_deduction_run",
+                    ("status", "year", "month", "id"),
+                    "CREATE INDEX IF NOT EXISTS ix_hr_att_deduction_run_status_period "
+                    "ON hr_att_deduction_run (status, year, month, id)",
+                ),
+                (
+                    "hr_att_deduction_item",
+                    ("user_id", "run_id"),
+                    "CREATE INDEX IF NOT EXISTS ix_hr_att_deduction_item_user_run "
+                    "ON hr_att_deduction_item (user_id, run_id)",
+                ),
+                (
+                    "hr_att_deduction_run",
+                    ("year", "month", "execution_mode"),
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_hr_att_deduction_auto_period "
+                    "ON hr_att_deduction_run (year, month) "
+                    "WHERE execution_mode = 'AUTO'",
+                ),
+                (
                     "employee_followup_reports",
                     ("status", "reviewed_at", "id"),
                     "CREATE INDEX IF NOT EXISTS ix_followup_status_reviewed_id "
@@ -1832,6 +1859,15 @@ def _ensure_runtime_schema():
                 ("hr_att_deduction_config", "annual_leave_type_id", "INTEGER"),
                 ("hr_att_deduction_config", "deduction_sequence", "TEXT NOT NULL DEFAULT 'LEAVE_THEN_SALARY'"),
                 ("hr_att_deduction_config", "require_approval", "INTEGER NOT NULL DEFAULT 1"),
+                ("hr_att_deduction_config", "source_selection_json", "TEXT DEFAULT '[\"DEPARTURES\"]'"),
+                ("hr_att_deduction_config", "leave_type_selection_json", "TEXT"),
+                ("hr_att_deduction_config", "automatic_enabled", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_config", "automatic_last_period", "TEXT"),
+                ("hr_att_deduction_config", "default_carry_departures", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_config", "default_carry_late", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_config", "default_carry_early", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_run", "execution_mode", "TEXT NOT NULL DEFAULT 'MANUAL'"),
+                ("hr_att_deduction_run", "operation_type", "TEXT NOT NULL DEFAULT 'NORMAL'"),
                 ("hr_att_deduction_run", "config_snapshot_json", "TEXT"),
                 ("hr_att_deduction_run", "approved_at", "TEXT"),
                 ("hr_att_deduction_run", "approved_by_id", "INTEGER"),
@@ -1839,7 +1875,21 @@ def _ensure_runtime_schema():
                 ("hr_att_deduction_run", "reversed_at", "TEXT"),
                 ("hr_att_deduction_run", "reversed_by_id", "INTEGER"),
                 ("hr_att_deduction_run", "reversal_note", "TEXT"),
+                ("hr_att_deduction_run", "reversal_of_run_id", "INTEGER"),
+                ("hr_att_deduction_run", "replacement_of_run_id", "INTEGER"),
+                ("hr_att_deduction_run", "carry_departures", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_run", "carry_late", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_run", "carry_early", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_run", "needs_review", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_run", "review_reason", "TEXT"),
                 ("hr_att_deduction_item", "approved_permission_minutes", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "departure_minutes", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "carried_departure_minutes", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "carried_late_minutes", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "carried_early_leave_minutes", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "carry_departure_minutes", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "carry_late_minutes", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "carry_early_leave_minutes", "INTEGER NOT NULL DEFAULT 0"),
                 ("hr_att_deduction_item", "permission_allowance_minutes", "INTEGER NOT NULL DEFAULT 0"),
                 ("hr_att_deduction_item", "excluded_minutes", "INTEGER NOT NULL DEFAULT 0"),
                 ("hr_att_deduction_item", "chargeable_minutes", "INTEGER NOT NULL DEFAULT 0"),
@@ -1894,6 +1944,16 @@ def _ensure_runtime_schema():
                 "ON hr_attendance_schedule_plan (request_type, status, updated_at, id)",
                 "CREATE INDEX IF NOT EXISTS ix_hr_att_special_kind_approval_created "
                 "ON hr_att_special_case (kind, approval_status, created_at, id)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_notification_hr_deduction_event "
+                "ON notification (user_id, event_key, is_mirror) "
+                "WHERE event_key LIKE 'hr-deduction:%'",
+                "CREATE INDEX IF NOT EXISTS ix_hr_att_deduction_run_status_period "
+                "ON hr_att_deduction_run (status, year, month, id)",
+                "CREATE INDEX IF NOT EXISTS ix_hr_att_deduction_item_user_run "
+                "ON hr_att_deduction_item (user_id, run_id)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_hr_att_deduction_auto_period "
+                "ON hr_att_deduction_run (year, month) "
+                "WHERE execution_mode = 'AUTO'",
             ]:
                 try:
                     db.session.execute(text(_index_sql))
@@ -2161,6 +2221,73 @@ def _ensure_runtime_schema():
                         permission_key,
                         changed,
                     )
+            except Exception:
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
+
+            # Monthly leave deductions are a separate, sensitive capability.
+            # Grant it on first startup to the Administrative Affairs/HR
+            # audience while preserving any explicit deny rows already set by
+            # an administrator.
+            try:
+                from sqlalchemy import func
+                from models import RolePermission, UserPermission
+
+                permission_key = "HR_ATTENDANCE_DEDUCTIONS_MANAGE"
+                administrative_roles = {
+                    "HR", "HR_ADMIN", "HRADMIN", "HR_MANAGER", "HRMANAGER",
+                    "ADMINISTRATIVE_AFFAIRS_MANAGER", "ADMINISTRATIVEAFFAIRSMANAGER",
+                }
+                department_markers = (
+                    "human resources", "hr dept", "hr department", "administrative affairs",
+                    "\u0627\u0644\u0645\u0648\u0627\u0631\u062f \u0627\u0644\u0628\u0634\u0631\u064a\u0629",
+                    "\u0627\u0644\u0634\u0624\u0648\u0646 \u0627\u0644\u0625\u062f\u0627\u0631\u064a\u0629",
+                )
+                department_ids = {
+                    int(row.id)
+                    for row in Department.query.filter_by(is_active=True).all()
+                    if any(
+                        marker.casefold() in " ".join((getattr(row, "name_ar", "") or "", getattr(row, "name_en", "") or "", getattr(row, "code", "") or "")).casefold()
+                        for marker in department_markers
+                    )
+                }
+                changed = 0
+                normalized_role = func.upper(
+                    func.replace(func.replace(User.role, "-", "_"), " ", "_")
+                )
+                audience_filter = [normalized_role.in_(sorted(administrative_roles))]
+                if department_ids:
+                    audience_filter.append(User.department_id.in_(sorted(department_ids)))
+                audience_user_ids = {
+                    int(user_id)
+                    for (user_id,) in User.query.with_entities(User.id).filter(or_(*audience_filter)).all()
+                    if user_id
+                }
+                existing_user_ids = set()
+                if audience_user_ids:
+                    existing_user_ids = {
+                        int(user_id)
+                        for (user_id,) in UserPermission.query.with_entities(UserPermission.user_id).filter(
+                            UserPermission.key == permission_key,
+                            UserPermission.user_id.in_(sorted(audience_user_ids)),
+                        ).all()
+                        if user_id
+                    }
+                for user_id in sorted(audience_user_ids.difference(existing_user_ids)):
+                    db.session.add(UserPermission(user_id=user_id, key=permission_key, is_allowed=True))
+                    changed += 1
+                for role_code in sorted(administrative_roles):
+                    if not RolePermission.query.filter(
+                        func.lower(RolePermission.role) == role_code.lower(),
+                        RolePermission.permission == permission_key,
+                    ).first():
+                        db.session.add(RolePermission(role=role_code, permission=permission_key))
+                        changed += 1
+                if changed:
+                    db.session.commit()
+                    logger.info("Seeded %s for Administrative Affairs/HR audience", permission_key)
             except Exception:
                 try:
                     db.session.rollback()
