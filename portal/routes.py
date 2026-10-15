@@ -21706,13 +21706,24 @@ def _deduction_departure_details(
     details = []
     eligible_minutes = 0
     excluded_minutes = 0
-    records = _reconciled_departure_records([user_id], start_day, end_day)
+    # Include pending system requests in the audit rows so the preview can
+    # show exactly why they are blocked. They are explicitly excluded below
+    # from eligible/chargeable minutes until a manager decides them.
+    records = _reconciled_departure_records(
+        [user_id],
+        start_day,
+        end_day,
+        include_pending=True,
+    )
     for record in records:
         minutes = max(0, int(record.get("minutes") or 0))
         source = record.get("source") or ""
         fields = exception_fields.get(record.get("day") or "", set())
+        approval_status = str(record.get("approval_status") or "APPROVED").upper()
         reason = None
-        if record.get("kind") == "OFFICIAL":
+        if approval_status in {"SUBMITTED", "PENDING"}:
+            reason = "PENDING_APPROVAL"
+        elif record.get("kind") == "OFFICIAL":
             reason = "OFFICIAL_DEPARTURE"
         elif not record.get("deduct_from_allowance", True):
             reason = "EXEMPT_PERMISSION_TYPE"
@@ -21744,6 +21755,9 @@ def _deduction_departure_details(
             "source": source,
             "source_label": record.get("source_label") or _departure_source_label(source),
             "permission_name": record.get("permission_name") or "",
+            "permission_id": record.get("permission_id"),
+            "approval_status": approval_status,
+            "complete": bool(record.get("complete")),
             "from_time": _deduction_time_label(record.get("from_dt")),
             "to_time": _deduction_time_label(record.get("to_dt")),
             "minutes": minutes,
@@ -21830,7 +21844,7 @@ def _deduction_pending_approval_summary(
     user_ids,
     start_day: str,
     end_day: str,
-) -> dict[int, dict[str, int]]:
+) -> dict[int, dict]:
     """Return pending leave/permission counts for the draft warning banner."""
     ids = sorted({int(value) for value in (user_ids or []) if value})
     if not ids or not start_day or not end_day or end_day < start_day:
@@ -21841,6 +21855,7 @@ def _deduction_pending_approval_summary(
             "permission_minutes": 0,
             "leave_count": 0,
             "leave_days": 0,
+            "requests": [],
         }
         for user_id in ids
     }
@@ -21861,10 +21876,28 @@ def _deduction_pending_approval_summary(
                 "permission_minutes": 0,
                 "leave_count": 0,
                 "leave_days": 0,
+                "requests": [],
             },
         )
+        minutes = _permission_request_minutes(row)
+        status = (row.status or "").upper()
         bucket["permission_count"] += 1
-        bucket["permission_minutes"] += _permission_request_minutes(row)
+        bucket["permission_minutes"] += minutes
+        bucket["requests"].append({
+            "kind": "PERMISSION",
+            "id": int(row.id),
+            "day": row.day or "",
+            "from_time": row.from_time or "",
+            "to_time": row.to_time or "",
+            "minutes": minutes,
+            "type_name": (
+                getattr(row.permission_type, "name_ar", None)
+                or getattr(row.permission_type, "code", None)
+                or "مغادرة"
+            ),
+            "status": status,
+            "status_label": "بانتظار اعتماد المدير",
+        })
 
     try:
         leave_rows = (
@@ -21891,10 +21924,36 @@ def _deduction_pending_approval_summary(
                 "permission_minutes": 0,
                 "leave_count": 0,
                 "leave_days": 0,
+                "requests": [],
             },
         )
+        days = max(0, int(row.days or 0))
+        status = (row.status or "").upper()
         bucket["leave_count"] += 1
-        bucket["leave_days"] += max(0, int(row.days or 0))
+        bucket["leave_days"] += days
+        bucket["requests"].append({
+            "kind": "LEAVE",
+            "id": int(row.id),
+            "day": row.start_date or "",
+            "end_day": row.end_date or "",
+            "minutes": 0,
+            "days": days,
+            "type_name": (
+                getattr(row.leave_type, "name_ar", None)
+                or getattr(row.leave_type, "code", None)
+                or "إجازة"
+            ),
+            "status": status,
+            "status_label": "بانتظار اعتماد المدير",
+        })
+    for bucket in result.values():
+        bucket["requests"].sort(
+            key=lambda entry: (
+                str(entry.get("day") or ""),
+                str(entry.get("kind") or ""),
+                int(entry.get("id") or 0),
+            )
+        )
     return result
 
 

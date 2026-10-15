@@ -166,6 +166,44 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
         self.assertFalse(config.automatic_enabled)
         self.assertEqual(HRAttendanceDeductionRun.query.count(), 0)
 
+    def test_automatic_cycle_waits_for_pending_permission_decision(self):
+        config = HRAttendanceDeductionConfig(automatic_enabled=True)
+        permission_type = HRPermissionType(
+            code="AUTO_PENDING",
+            name_ar="مغادرة بانتظار الاعتماد",
+            counts_as_work=False,
+            deduct_from_allowance=True,
+        )
+        manual_run = HRAttendanceDeductionRun(
+            year=2026,
+            month=3,
+            status="FINAL",
+            execution_mode="MANUAL",
+        )
+        db.session.add_all((config, permission_type, manual_run))
+        db.session.flush()
+        db.session.add(HRPermissionRequest(
+            user_id=self.user.id,
+            permission_type_id=permission_type.id,
+            day="2026-03-10",
+            from_time="10:00",
+            to_time="11:00",
+            status="SUBMITTED",
+        ))
+        db.session.commit()
+
+        with patch("portal.routes.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = datetime(2026, 4, 16)
+            result = run_automatic_leave_deduction_cycle()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            HRAttendanceDeductionRun.query.filter_by(execution_mode="AUTO").count(),
+            0,
+        )
+        db.session.refresh(config)
+        self.assertFalse(config.automatic_last_period)
+
     def test_monthly_breakdown_applies_remote_mission_sick_and_special_exclusions(self):
         self._add_normal_office_summaries()
         sick_leave_type = HRLeaveType(
@@ -351,11 +389,81 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
         )
         self.assertEqual(pending[self.user.id]["permission_count"], 1)
         self.assertEqual(pending[self.user.id]["permission_minutes"], 90)
+        self.assertEqual(pending[self.user.id]["requests"][0]["minutes"], 90)
+        self.assertEqual(pending[self.user.id]["requests"][0]["status"], "SUBMITTED")
+        breakdown = _monthly_attendance_deduction_breakdown(
+            self.user.id,
+            2026,
+            3,
+            minutes_per_day=390,
+            allowance_minutes=0,
+        )
+        pending_departure = breakdown["details"]["departures"][0]
+        self.assertEqual(pending_departure["approval_status"], "SUBMITTED")
+        self.assertEqual(pending_departure["exclusion_code"], "PENDING_APPROVAL")
+        self.assertEqual(pending_departure["eligible_minutes"], 0)
+        self.assertEqual(breakdown["permission_minutes"], 0)
         self.assertNotIn(self.user.id, _deduction_live_departure_summary(
             [self.user.id],
             "2026-03-01",
             "2026-03-31",
         ))
+
+    def test_manual_approval_is_blocked_until_pending_permission_is_resolved(self):
+        permission_type = HRPermissionType(
+            code="PENDING_BLOCK",
+            name_ar="مغادرة معلقة",
+            counts_as_work=False,
+            deduct_from_allowance=True,
+        )
+        admin = User(
+            email="pending-block-admin@example.test",
+            name="Pending Block Admin",
+            password_hash="not-used",
+            role="SUPER_ADMIN",
+        )
+        run = HRAttendanceDeductionRun(
+            year=2026,
+            month=3,
+            status="DRAFT",
+            config_snapshot_json=json.dumps({
+                "policy_version": 2,
+                "hours_per_day": 6.5,
+                "selected_sources": ["DEPARTURES"],
+                "deduction_sequence": "LEAVE_ONLY",
+            }),
+        )
+        db.session.add_all((permission_type, admin, run))
+        db.session.flush()
+        db.session.add_all((
+            HRAttendanceDeductionItem(
+                run_id=run.id,
+                user_id=self.user.id,
+                chargeable_minutes=90,
+                details_json=json.dumps({}, ensure_ascii=False),
+            ),
+            HRPermissionRequest(
+                user_id=self.user.id,
+                permission_type_id=permission_type.id,
+                day="2026-03-10",
+                from_time="10:00",
+                to_time="11:30",
+                status="SUBMITTED",
+            ),
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context(
+            f"/portal/hr/deductions/{run.id}/approve",
+            method="POST",
+        ):
+            login_user(admin)
+            response = hr_deduction_approve(run.id)
+            logout_user()
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(run.status, "DRAFT")
+        self.assertEqual(HRAttendanceDeductionRun.query.filter_by(status="FINAL").count(), 0)
 
     def test_balance_correction_and_reversal_recalculate_remaining_balance(self):
         leave_type = HRLeaveType(
