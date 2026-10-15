@@ -15,7 +15,14 @@ from .routes import STORE_MANAGE, _perm_any
 
 @portal_bp.before_request
 def protect_asset_actions():
-    endpoints = {"asset_send_reports", "asset_document", "asset_movement", "fixed_asset_mobile_settings", "fixed_asset_cycle_scan"}
+    endpoints = {
+        "asset_send_reports",
+        "asset_document",
+        "asset_movement",
+        "fixed_asset_cycle_scan",
+        "fixed_asset_mobile_device_approve",
+        "fixed_asset_mobile_device_revoke",
+    }
     if (request.method == "POST" and (request.endpoint or "").split(".")[-1] in endpoints
             and current_user.is_authenticated and current_app.config.get("WTF_CSRF_ENABLED", True)):
         try:

@@ -8,7 +8,9 @@ from alembic.operations import Operations
 
 from extensions import db
 from models import (InvAssetDocument, InvAssetDocumentReservation, InvFixedAssetCycle,
-                    InvFixedAssetCycleMember, InvFixedAssetEntry, Notification, User)
+                    InvFixedAssetCycleMember, InvFixedAssetEntry, InvFixedAssetMobileDevice,
+                    Notification, User)
+from portal.fixed_assets import _mobile_device_invitation_token
 from services.asset_custody import (cancel_document, create_movement, issue_document,
                                     review_document, send_cycle_reports)
 from services.fixed_asset_inventory import close_inventory_cycle, populate_cycle_entries, record_asset_scan, reopen_inventory_cycle
@@ -213,14 +215,131 @@ class AssetCustodyTests(unittest.TestCase):
 
     def test_mobile_url_settings_and_csrf_protection(self):
         path = "/portal/inventory/fixed-assets/mobile-settings"
-        self.assertEqual(self.client.post(path, data={"base_url":"https://inventory.example.test"}).status_code, 200)
-        self.assertIn("https://inventory.example.test/portal/inventory/fixed-assets/mobile", self.client.get(path).get_data(as_text=True))
+        page = self.client.get(path)
+        self.assertEqual(page.status_code, 200)
+        self.assertNotIn("base_url", page.get_data(as_text=True))
+        self.assertNotIn(":5000", page.get_data(as_text=True))
         self.assertEqual(self.client.get("/portal/inventory/fixed-assets/mobile-entry.png").mimetype, "image/png")
         self.app.config["WTF_CSRF_ENABLED"] = True
         try:
-            self.assertEqual(self.client.post(path, data={"base_url":"https://bad.test"}).status_code, 400)
+            device = InvFixedAssetMobileDevice(
+                token_hash="csrf-device",
+                user_id=self.admin.id,
+                status="PENDING",
+            )
+            db.session.add(device)
+            db.session.commit()
+            self.assertEqual(
+                self.client.post(
+                    f"/portal/inventory/fixed-assets/mobile-devices/{device.id}/approve",
+                    data={},
+                ).status_code,
+                400,
+            )
         finally:
             self.app.config["WTF_CSRF_ENABLED"] = False
+
+    def test_phone_pairing_requires_approval_and_rejects_external_qr(self):
+        asset = self._create_asset()
+        asset.custodian_user_id = self.employee.id
+        cycle = InvFixedAssetCycle(
+            code="PHONE-QR",
+            name="جرد الهاتف",
+            inventory_date="2026-09-11",
+            status="ACTIVE",
+        )
+        db.session.add(cycle)
+        db.session.flush()
+        db.session.add(InvFixedAssetCycleMember(cycle_id=cycle.id, user_id=self.employee.id))
+        populate_cycle_entries(cycle)
+        db.session.commit()
+
+        invitation = _mobile_device_invitation_token()
+        phone = self.app.test_client()
+        with phone.session_transaction() as session:
+            session["_user_id"] = str(self.employee.id)
+            session["_fresh"] = True
+
+        pair = phone.get(
+            f"/portal/inventory/fixed-assets/mobile/device/pair/{invitation}"
+        )
+        self.assertEqual(pair.status_code, 302)
+        self.assertIn("/mobile/device/status", pair.location)
+        self.assertIsNotNone(phone.get_cookie("fixed_asset_mobile_device"), pair.headers.get("Set-Cookie"))
+        device = InvFixedAssetMobileDevice.query.one()
+        self.assertEqual(device.status, "PENDING")
+        self.assertEqual(phone.get("/portal/inventory/fixed-assets/mobile").status_code, 302)
+        self.assertEqual(phone.get("/portal/inventory/fixed-assets/mobile/device/status.json").json["status"], "PENDING")
+
+        self.login(self.admin)
+        self.assertEqual(
+            self.client.post(
+                f"/portal/inventory/fixed-assets/mobile-devices/{device.id}/approve",
+            ).status_code,
+            302,
+        )
+        self.assertEqual(InvFixedAssetMobileDevice.query.get(device.id).status, "APPROVED")
+        self.login(self.employee)
+        status_response = phone.get("/portal/inventory/fixed-assets/mobile/device/status.json")
+        self.assertEqual(status_response.status_code, 200, status_response.get_data(as_text=True))
+        self.assertEqual(phone.get("/portal/inventory/fixed-assets/mobile").status_code, 200)
+        self.assertEqual(
+            phone.get(f"/portal/inventory/fixed-assets/cycles/{cycle.id}/scan?mobile=1").status_code,
+            200,
+        )
+
+        rejected = phone.get(
+            f"/portal/inventory/fixed-assets/cycles/{cycle.id}/scan/lookup?mobile=1&code=https%3A%2F%2Fexample.org%2Fother"
+        )
+        self.assertEqual(rejected.status_code, 404)
+        self.assertFalse(rejected.json["ok"])
+        accepted = phone.get(
+            f"/portal/inventory/fixed-assets/cycles/{cycle.id}/scan/lookup?mobile=1&code={asset.qr_token}"
+        )
+        self.assertEqual(accepted.status_code, 200)
+        self.assertTrue(accepted.json["ok"])
+        recorded = phone.post(
+            f"/portal/inventory/fixed-assets/cycles/{cycle.id}/scan?mobile=1",
+            data={
+                "asset_code": asset.qr_token,
+                "observed_warehouse_id": str(self.warehouse.id),
+                "observed_custodian_user_id": str(self.employee.id),
+                "observed_condition": "GOOD",
+                "observed_lifecycle_status": "ACTIVE",
+                "scan_source": "PHONE_QR",
+            },
+        )
+        self.assertEqual(recorded.status_code, 302)
+        entry = InvFixedAssetEntry.query.filter_by(cycle_id=cycle.id, asset_id=asset.id).one()
+        self.assertEqual(entry.result_status, "MATCHED")
+        self.assertEqual(entry.scans[0].source, "PHONE_QR")
+
+    def test_multiple_phone_requests_have_independent_approval(self):
+        invitation = _mobile_device_invitation_token()
+        phones = [self.app.test_client(), self.app.test_client()]
+        for phone in phones:
+            with phone.session_transaction() as session:
+                session["_user_id"] = str(self.employee.id)
+                session["_fresh"] = True
+            self.assertEqual(
+                phone.get(
+                    f"/portal/inventory/fixed-assets/mobile/device/pair/{invitation}"
+                ).status_code,
+                302,
+            )
+        devices = InvFixedAssetMobileDevice.query.order_by(InvFixedAssetMobileDevice.id).all()
+        self.assertEqual(len(devices), 2)
+        self.assertTrue(all(device.status == "PENDING" for device in devices))
+
+        self.login(self.admin)
+        self.assertEqual(
+            self.client.post(
+                f"/portal/inventory/fixed-assets/mobile-devices/{devices[0].id}/approve",
+            ).status_code,
+            302,
+        )
+        self.assertEqual(InvFixedAssetMobileDevice.query.get(devices[0].id).status, "APPROVED")
+        self.assertEqual(InvFixedAssetMobileDevice.query.get(devices[1].id).status, "PENDING")
 
     def test_migration_is_repeatable_after_runtime_create_all(self):
         migration = importlib.import_module("migrations.versions.k2l3m4n5o6p7_asset_custody_documents")

@@ -3,6 +3,7 @@
 {% block inv_content %}
 <div class="d-flex flex-wrap gap-2 mb-3">
 {% if can_scan and cycle.status == 'ACTIVE' %}<a class="btn btn-primary" href="{{ url_for('portal.fixed_asset_cycle_scan', cycle_id=cycle.id) }}">القراءة بالهاتف</a>{% endif %}
+{% if can_manage and cycle.status == 'ACTIVE' %}<a class="btn btn-success" href="{{ url_for('portal.fixed_asset_mobile_settings') }}"><i class="bi bi-phone"></i> إدارة أجهزة الهاتف</a>{% endif %}
 {% if can_manage %}<a class="btn btn-outline-primary" href="{{ url_for('portal.asset_documents', cycle_id=cycle.id) }}">تقارير الموظفين والعهد الصادرة</a>
 {% if cycle.status == 'CLOSED' %}<form method="post" action="{{ url_for('portal.asset_send_reports', cycle_id=cycle.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-success">إرسال تقرير كل موظف للاعتماد</button></form>{% endif %}{% endif %}
 </div>
@@ -58,7 +59,7 @@
   </tr>{% else %}<tr><td colspan="7" class="text-center text-muted py-5">لا توجد أصول مطابقة للمرشح.</td></tr>{% endfor %}
 </tbody></table></div></div>
 
-<div class="card shadow-sm"><div class="card-header fw-bold">آخر عمليات القراءة</div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>الوقت</th><th>الأصل</th><th>النتيجة</th><th>بواسطة</th><th>المصدر</th></tr></thead><tbody>{% for scan in recent_scans %}<tr><td>{{ scan.scanned_at|local_datetime }}</td><td>{{ scan.asset.asset_tag }} · {{ scan.asset.name }}</td><td><span class="badge text-bg-{{ fixed_asset_result_colors.get(scan.result_status, 'secondary') }}">{{ fixed_asset_result_labels.get(scan.result_status, scan.result_status) }}</span></td><td>{{ scan.scanned_by.full_name if scan.scanned_by else '-' }}</td><td>{{ 'كاميرا' if scan.source == 'CAMERA' else ('رابط QR' if scan.source == 'QR' else 'يدوي') }}</td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted py-3">لا توجد قراءات.</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="card shadow-sm"><div class="card-header fw-bold">آخر عمليات القراءة</div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>الوقت</th><th>الأصل</th><th>النتيجة</th><th>بواسطة</th><th>المصدر</th></tr></thead><tbody>{% for scan in recent_scans %}<tr><td>{{ scan.scanned_at|local_datetime }}</td><td>{{ scan.asset.asset_tag }} · {{ scan.asset.name }}</td><td><span class="badge text-bg-{{ fixed_asset_result_colors.get(scan.result_status, 'secondary') }}">{{ fixed_asset_result_labels.get(scan.result_status, scan.result_status) }}</span></td><td>{{ scan.scanned_by.full_name if scan.scanned_by else '-' }}</td><td>{{ 'كاميرا الصفحة' if scan.source == 'CAMERA' else ('كاميرا الهاتف' if scan.source == 'PHONE_QR' else ('رابط QR' if scan.source == 'QR' else 'يدوي')) }}</td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted py-3">لا توجد قراءات.</td></tr>{% endfor %}</tbody></table></div></div>
 {% endblock %}
 
 {% block scripts %}

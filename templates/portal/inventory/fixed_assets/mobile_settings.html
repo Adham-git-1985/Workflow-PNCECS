@@ -1,8 +1,79 @@
 {% extends "portal/inventory/base.html" %}
 {% block inv_content %}
-<h4>ربط QR بالهاتف</h4>
-<form method="post" class="card card-body mb-3"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>عنوان النظام المتاح للهاتف<input class="form-control" type="url" dir="ltr" name="base_url" value="{{ base_url }}" placeholder="https://portal.example.org"></label><p class="form-text">استخدم عنوان الخادم الذي يفتحه الهاتف. localhost و127.0.0.1 يشيران إلى الهاتف نفسه. الكاميرا داخل المتصفح تحتاج HTTPS وشهادة موثوقة.</p><button class="btn btn-primary">حفظ عنوان الملصقات</button></form>
-<div class="card card-body text-center mb-3"><h5>افتح الجرد على الهاتف</h5><img class="mx-auto" width="240" height="240" src="{{ url_for('portal.fixed_asset_mobile_entry_qr') }}" alt="رمز فتح الجرد من الهاتف"><a class="text-break" href="{{ mobile_url }}">{{ mobile_url }}</a><p class="mt-2 mb-0">امسح هذا الرمز بكاميرا الهاتف، ثم سجل الدخول بحسابك.</p></div>
-{% if camera_available %}<div class="alert alert-success"><i class="bi bi-camera"></i> عنوان الهاتف يستخدم HTTPS؛ يمكن تشغيل الكاميرا المباشرة داخل صفحة الجرد.</div>{% else %}<div class="alert alert-warning"><i class="bi bi-shield-lock"></i> العنوان الحالي لا يستخدم HTTPS. تستطيع فتح الجرد وإدخال كود الأصل يدويًا، لكن المتصفح سيمنع الكاميرا المباشرة. فعّل HTTPS ثم ضع عنوانه هنا لتشغيل المسح بالكاميرا.</div>{% endif %}
-<div class="card card-body"><h5>طريقة الجرد من الهاتف</h5><ol class="mb-0"><li class="mb-2">أنشئ دورة جرد فعالة وأضف الموظف إلى لجنة الجرد.</li><li class="mb-2">افتح الرابط أعلاه من هاتف متصل بالشبكة أو الـVPN وسجل الدخول.</li><li class="mb-2">اختر دورة الجرد، ثم اضغط «تشغيل الكاميرا» واسمح للمتصفح باستخدامها.</li><li class="mb-2">وجّه الكاميرا إلى ملصق QR على الأصل. ويمكن إدخال كود الأصل يدويًا عند الحاجة.</li><li>راجع الموقع وصاحب العهدة والحالة الفعلية، ثم اضغط «اعتماد القراءة».</li></ol></div>
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div>
+    <h4 class="mb-1"><i class="bi bi-phone"></i> ربط أجهزة الهاتف للجرد</h4>
+    <div class="text-muted">كل هاتف يطلب الربط أولاً، ولا يعمل في الجرد إلا بعد موافقة الأدمن أو السوبر أدمن.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_assets_dashboard') }}">لوحة الجرد</a>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-5">
+    <div class="card shadow-sm text-center h-100">
+      <div class="card-header fw-bold">QR ربط هاتف جديد</div>
+      <div class="card-body">
+        <img class="mx-auto d-block border rounded p-2 bg-white" width="280" height="280"
+             src="{{ url_for('portal.fixed_asset_mobile_entry_qr', token=invite_token) }}"
+             alt="QR ربط هاتف جديد">
+        <div class="small text-muted mt-3">صلاحية رمز الربط {{ pairing_minutes }} دقيقة. لا حاجة لإدخال عنوان أو رقم بورت.</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">طريقة الاستخدام</div>
+      <div class="card-body">
+        <ol class="mb-0">
+          <li class="mb-2">اعرض QR الموجود بجانبك على الهاتف المطلوب ربطه.</li>
+          <li class="mb-2">يسجل الهاتف طلباً جديداً بحالة «بانتظار موافقة الأدمن».</li>
+          <li class="mb-2">اضغط «اعتماد» للهاتف المطلوب من قائمة الأجهزة أدناه.</li>
+          <li>بعد الاعتماد يفتح الهاتف ماسح الجرد، ويقبل رموز QR الصادرة من هذا النظام فقط.</li>
+        </ol>
+        <div class="alert alert-info mt-3 mb-0">المسح يتم من زر كاميرا الهاتف داخل صفحة النظام، ويعمل عبر HTTP دون HTTPS أو تطبيق إضافي.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span class="fw-bold">أجهزة الهاتف</span>
+    <span class="small text-muted">{{ devices|length }} جهاز</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead><tr><th>المستخدم</th><th>الجهاز</th><th>الحالة</th><th>تاريخ الطلب</th><th>الإجراء</th></tr></thead>
+      <tbody>
+      {% for device in devices %}
+        <tr>
+          <td>{{ device.user.full_name if device.user else ('مستخدم #' ~ device.user_id) }}</td>
+          <td><div>{{ device.device_label or 'هاتف' }}</div><small class="text-muted">#{{ device.id }}</small></td>
+          <td>
+            {% set status_color = 'warning' if device.status == 'PENDING' else ('success' if device.status == 'APPROVED' else 'secondary') %}
+            <span class="badge text-bg-{{ status_color }}">{{ device_status_labels.get(device.status, device.status) }}</span>
+          </td>
+          <td>{{ device.requested_at|local_datetime }}</td>
+          <td>
+            {% if device.status != 'APPROVED' %}
+            <form method="post" action="{{ url_for('portal.fixed_asset_mobile_device_approve', device_id=device.id) }}" class="d-inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-sm btn-success" type="submit">اعتماد</button>
+            </form>
+            {% endif %}
+            {% if device.status != 'REVOKED' %}
+            <form method="post" action="{{ url_for('portal.fixed_asset_mobile_device_revoke', device_id=device.id) }}" class="d-inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-sm btn-outline-danger" type="submit">إيقاف</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="text-center text-muted py-4">لا توجد أجهزة مرتبطة بعد.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
 {% endblock %}

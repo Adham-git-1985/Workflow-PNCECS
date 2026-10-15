@@ -5886,6 +5886,7 @@ class InvFixedAsset(db.Model):
     serial_number = db.Column(db.String(200), nullable=True, index=True)
     manufacturer = db.Column(db.String(150), nullable=True)
     model = db.Column(db.String(150), nullable=True)
+    image_filename = db.Column(db.String(255), nullable=True)
     description = db.Column(db.Text, nullable=True)
     acquisition_date = db.Column(db.String(10), nullable=True, index=True)
     purchase_cost = db.Column(db.Numeric(14, 2), nullable=True)
@@ -5932,6 +5933,31 @@ class InvFixedAsset(db.Model):
         if self.room:
             parts.append(self.room.label)
         return " / ".join(parts) or "غير محدد"
+
+
+class InvFixedAssetMobileDevice(db.Model):
+    """A browser on a phone that was explicitly approved for stocktaking."""
+
+    __tablename__ = "inv_fixed_asset_mobile_device"
+
+    id = db.Column(db.Integer, primary_key=True)
+    token_hash = db.Column(db.String(128), nullable=False, unique=True, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    device_label = db.Column(db.String(255), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default="PENDING", index=True)
+    requested_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    approved_at = db.Column(db.DateTime, nullable=True)
+    approved_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    last_seen_at = db.Column(db.DateTime, nullable=True)
+    last_ip = db.Column(db.String(64), nullable=True)
+    user_agent = db.Column(db.String(255), nullable=True)
+
+    user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
+    approved_by = db.relationship("User", foreign_keys=[approved_by_id], lazy="joined")
+
+    __table_args__ = (
+        db.Index("ix_inv_fixed_asset_mobile_device_status_requested", "status", "requested_at"),
+    )
 
 
 class InvFixedAssetCycle(db.Model):

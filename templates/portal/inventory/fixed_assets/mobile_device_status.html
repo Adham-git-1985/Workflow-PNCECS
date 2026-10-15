@@ -1,0 +1,48 @@
+{% extends "portal/inventory/base.html" %}
+{% block inv_content %}
+<div class="row justify-content-center">
+  <div class="col-lg-7">
+    <div class="card shadow-sm text-center">
+      <div class="card-body p-4">
+        <i class="bi bi-phone display-5 text-primary"></i>
+        {% if not device %}
+          <h4 class="mt-3">هذا الهاتف غير مربوط</h4>
+          <p class="text-muted">امسح QR ربط جهاز جديد الذي يعرضه الأدمن، ثم أعد فتح هذه الصفحة.</p>
+        {% elif device.status == 'PENDING' %}
+          <h4 class="mt-3">بانتظار موافقة الأدمن</h4>
+          <p class="text-muted">تم تسجيل الهاتف. ستفتح صفحة الجرد تلقائياً بعد الموافقة.</p>
+          <div class="spinner-border text-primary my-3" role="status"><span class="visually-hidden">انتظار</span></div>
+        {% elif device.status == 'APPROVED' %}
+          <h4 class="mt-3 text-success">تم اعتماد الهاتف</h4>
+          <p class="text-muted">يمكنك الآن الدخول إلى الجرد ومسح QR الأصول.</p>
+          <a class="btn btn-success" href="{{ url_for('portal.fixed_asset_mobile') }}">فتح ماسح الجرد</a>
+        {% else %}
+          <h4 class="mt-3 text-danger">تم إيقاف هذا الهاتف</h4>
+          <p class="text-muted">لا يمكنه قراءة رموز الجرد. اطلب من الأدمن ربط جهاز جديد.</p>
+        {% endif %}
+        {% if device %}<div class="small text-muted mt-3">{{ device.device_label or 'هاتف' }} · الجهاز #{{ device.id }}</div>{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if device and device.status == 'PENDING' %}
+<script>
+(() => {
+  const statusUrl = {{ url_for('portal.fixed_asset_mobile_device_status_json')|tojson }};
+  const mobileUrl = {{ url_for('portal.fixed_asset_mobile')|tojson }};
+  const check = async () => {
+    try {
+      const response = await fetch(statusUrl, {headers: {'Accept': 'application/json'}});
+      const data = await response.json();
+      if (data.ok && data.status === 'APPROVED') window.location.href = mobileUrl;
+      if (data.ok && data.status === 'REVOKED') window.location.reload();
+    } catch (_) {}
+  };
+  window.setInterval(check, 3000);
+})();
+</script>
+{% endif %}
+{% endblock %}

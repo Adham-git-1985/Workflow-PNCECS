@@ -7,6 +7,7 @@ from flask import Flask
 from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
 from openpyxl import Workbook
+from PIL import Image
 
 from extensions import db
 from models import (
@@ -136,6 +137,52 @@ class FixedAssetRouteTests(unittest.TestCase):
         )
         self.assertEqual(export_response.status_code, 200)
         self.assertIn("spreadsheetml", export_response.mimetype)
+
+    def test_optional_asset_image_is_served_and_returned_with_qr_lookup(self):
+        image_data = io.BytesIO()
+        Image.new("RGB", (4, 4), (32, 112, 160)).save(image_data, format="PNG")
+        image_data.seek(0)
+        response = self.client.post(
+            "/portal/inventory/fixed-assets/assets/new",
+            data={
+                "asset_tag": "FA-IMAGE-001",
+                "name": "حاسوب بصورة",
+                "warehouse_id": str(self.warehouse.id),
+                "asset_condition": "GOOD",
+                "lifecycle_status": "ACTIVE",
+                "is_active": "1",
+                "asset_image": (image_data, "asset-photo.png"),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(response.status_code, 302)
+        asset = InvFixedAsset.query.filter_by(asset_tag="FA-IMAGE-001").one()
+        self.assertTrue(asset.image_filename)
+
+        image_response = self.client.get(
+            f"/portal/inventory/fixed-assets/assets/{asset.id}/image"
+        )
+        self.assertEqual(image_response.status_code, 200)
+        self.assertEqual(image_response.mimetype, "image/png")
+        self.assertTrue(image_response.data.startswith(b"\x89PNG"))
+
+        cycle_response = self.client.post(
+            "/portal/inventory/fixed-assets/cycles/new",
+            data={
+                "code": "FA-INV-IMAGE",
+                "name": "جرد الصور",
+                "inventory_date": "2026-10-15",
+                "scope_warehouse_id": str(self.warehouse.id),
+                "chair_user_id": str(self.admin.id),
+            },
+        )
+        self.assertEqual(cycle_response.status_code, 302)
+        cycle = InvFixedAssetCycle.query.filter_by(code="FA-INV-IMAGE").one()
+        lookup = self.client.get(
+            f"/portal/inventory/fixed-assets/cycles/{cycle.id}/scan/lookup?code={asset.qr_token}"
+        )
+        self.assertEqual(lookup.status_code, 200)
+        self.assertTrue(lookup.get_json()["asset"]["image_url"].endswith(f"/assets/{asset.id}/image"))
 
     def test_cycle_lookup_scan_and_close(self):
         asset = self._create_asset()

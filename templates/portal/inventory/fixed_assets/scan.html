@@ -11,22 +11,21 @@
     <div class="card shadow-sm mb-3">
       <div class="card-header d-flex justify-content-between align-items-center"><span class="fw-bold">قراءة الملصق</span><span class="badge text-bg-secondary">متبقٍ {{ stats.get('PENDING', 0) }}</span></div>
       <div class="card-body">
-        <div id="scanMessage" class="alert alert-info py-2">وجّه الكاميرا إلى ملصق QR، أو أدخل رقم الأصل يدوياً.</div>
-        <div class="ratio ratio-4x3 bg-dark rounded overflow-hidden mb-3 d-none" id="videoWrap"><video id="scannerVideo" playsinline muted></video></div>
+        <div id="scanMessage" class="alert alert-info py-2">{% if mobile_mode %}اضغط الزر وافتح كاميرا الهاتف لتصوير QR الأصل.{% else %}اختر صورة QR أو أدخل رقم الأصل يدوياً.{% endif %}</div>
         <div class="d-flex flex-wrap gap-2 mb-3">
-          <button class="btn btn-primary" type="button" id="startCamera"><i class="bi bi-camera"></i> تشغيل الكاميرا</button>
-          <button class="btn btn-outline-secondary d-none" type="button" id="stopCamera"><i class="bi bi-stop-circle"></i> إيقاف</button>
-          <label class="btn btn-outline-primary mb-0"><i class="bi bi-image"></i> قراءة صورة<input class="d-none" type="file" id="scanImage" accept="image/*" capture="environment"></label>
+          <label class="btn btn-primary mb-0"><i class="bi bi-camera"></i> فتح كاميرا الهاتف ومسح QR<input class="d-none" type="file" id="scanImage" accept="image/*" capture="environment"></label>
         </div>
+        {% if not mobile_mode %}
         <form id="manualLookup" class="input-group">
           <input class="form-control form-control-lg font-monospace" id="manualCode" autocomplete="off" placeholder="رقم الأصل أو قيمة QR">
           <button class="btn btn-outline-primary" type="submit">بحث</button>
         </form>
-        <div class="form-text">تشغيل الكاميرا على الهاتف يحتاج اتصال HTTPS. عند عدم توفره استخدم قارئ QR خارجي أو الإدخال اليدوي.</div>
+        {% endif %}
+        <div class="form-text">تتم قراءة الصورة داخل الجهاز بملف JavaScript موجود في النظام. إذا لم يكن QR صادراً من النظام فسيتم رفضه ولن تُسجّل أي قراءة.</div>
       </div>
     </div>
 
-    <form method="post" class="card shadow-sm d-none" id="confirmCard">
+    <form method="post" action="{{ url_for('portal.fixed_asset_cycle_scan', cycle_id=cycle.id, mobile='1' if mobile_mode else None) }}" class="card shadow-sm d-none" id="confirmCard">
       <div class="card-header d-flex justify-content-between align-items-center"><span class="fw-bold">تأكيد نتيجة الجرد</span><span id="scopeBadge" class="badge text-bg-success"></span></div>
       <div class="card-body">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
@@ -35,6 +34,7 @@
         <div class="border rounded p-3 mb-3 bg-light">
           <div class="d-flex justify-content-between gap-2"><div><div class="fs-5 fw-bold" id="assetTitle"></div><div class="font-monospace fw-semibold" id="assetTag"></div></div><a id="assetView" class="btn btn-sm btn-outline-secondary align-self-start" target="_blank">بطاقة الأصل</a></div>
           <div class="small text-muted mt-2" id="assetMeta"></div>
+          <div id="assetImageWrap" class="d-none text-center mt-3"><img id="assetImage" class="img-fluid rounded border" alt="صورة الأصل" style="width:100%;max-height:220px;object-fit:contain"><div class="small text-muted mt-2">الصورة المسجلة لهذا الأصل في النظام</div></div>
           <hr class="my-2">
           <div class="row g-2 small"><div class="col-md-6"><span class="text-muted">المتوقع:</span> <span id="expectedLocation"></span></div><div class="col-md-6"><span class="text-muted">نتيجة اللجنة السابقة:</span> <span id="previousResult"></span></div></div>
           <div id="rescanWarning" class="alert alert-warning py-1 px-2 mt-2 mb-0 d-none"></div>
@@ -63,35 +63,13 @@
 <script src="{{ url_for('static', filename='vendor/jsqr/jsQR.js') }}"></script>
 <script>
 (() => {
-  const lookupUrl = {{ url_for('portal.fixed_asset_cycle_lookup', cycle_id=cycle.id)|tojson }};
+  const mobileMode = {{ mobile_mode|tojson }};
+  const lookupUrl = {{ url_for('portal.fixed_asset_cycle_lookup', cycle_id=cycle.id, mobile='1' if mobile_mode else None)|tojson }};
   const initialCode = {{ initial_code|tojson }};
   const message = document.getElementById('scanMessage');
   const confirmCard = document.getElementById('confirmCard');
-  const videoWrap = document.getElementById('videoWrap');
-  const video = document.getElementById('scannerVideo');
-  const startButton = document.getElementById('startCamera');
-  const stopButton = document.getElementById('stopCamera');
-  let mediaStream = null;
-  let detector = null;
-  let detecting = false;
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d', {willReadFrequently: true});
-
-  async function readCodes(source) {
-    if (detector) {
-      try { return await detector.detect(source); } catch (_) { detector = null; }
-    }
-    const width = source.videoWidth || source.width;
-    const height = source.videoHeight || source.height;
-    if (!width || !height || !window.jsQR) return [];
-    const scale = Math.min(1, 1400 / Math.max(width, height));
-    canvas.width = Math.round(width * scale);
-    canvas.height = Math.round(height * scale);
-    context.drawImage(source, 0, 0, canvas.width, canvas.height);
-    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-    const result = window.jsQR(pixels.data, pixels.width, pixels.height);
-    return result ? [{rawValue: result.data}] : [];
-  }
 
   function showMessage(text, kind='info') {
     message.className = `alert alert-${kind} py-2`;
@@ -106,14 +84,42 @@
     }
   }
 
+  async function readCode(source) {
+    const width = source.videoWidth || source.width;
+    const height = source.videoHeight || source.height;
+    if (!width || !height || !window.jsQR) return '';
+    const scale = Math.min(1, 1400 / Math.max(width, height));
+    canvas.width = Math.round(width * scale);
+    canvas.height = Math.round(height * scale);
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+    const result = window.jsQR(pixels.data, pixels.width, pixels.height);
+    return result ? result.data : '';
+  }
+
+  function imageFromFile(file) {
+    if (window.createImageBitmap) return window.createImageBitmap(file);
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = reject;
+      reader.onload = () => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = reject;
+        image.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
   async function lookup(code, source='MANUAL') {
-    stopCamera();
     confirmCard.classList.add('d-none');
     const cleanCode = String(code || '').trim();
     if (!cleanCode) { showMessage('أدخل رقم الأصل أو امسح رمز QR.', 'warning'); return; }
-    showMessage('جارٍ البحث عن الأصل...', 'info');
+    showMessage('جارٍ التحقق من QR داخل النظام...', 'info');
     try {
-      const response = await fetch(`${lookupUrl}?code=${encodeURIComponent(cleanCode)}`, {headers: {'Accept': 'application/json'}});
+      const separator = lookupUrl.includes('?') ? '&' : '?';
+      const response = await fetch(`${lookupUrl}${separator}code=${encodeURIComponent(cleanCode)}`, {headers: {'Accept': 'application/json'}});
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.message || 'تعذر قراءة الرمز.');
       document.getElementById('assetCode').value = data.asset.code;
@@ -121,6 +127,15 @@
       document.getElementById('assetTitle').textContent = data.asset.name;
       document.getElementById('assetTag').textContent = data.asset.asset_tag;
       document.getElementById('assetMeta').textContent = [data.asset.serial_number, data.asset.manufacturer, data.asset.model].filter(Boolean).join(' · ') || 'لا توجد بيانات إضافية';
+      const assetImageWrap = document.getElementById('assetImageWrap');
+      const assetImage = document.getElementById('assetImage');
+      if (data.asset.image_url) {
+        assetImage.src = data.asset.image_url;
+        assetImageWrap.classList.remove('d-none');
+      } else {
+        assetImage.removeAttribute('src');
+        assetImageWrap.classList.add('d-none');
+      }
       document.getElementById('assetView').href = data.asset.view_url;
       document.getElementById('expectedLocation').textContent = `${data.entry.expected_location} · ${data.entry.expected_condition || ''}`;
       document.getElementById('previousResult').textContent = data.entry.previous_result || '-';
@@ -129,7 +144,7 @@
       scopeBadge.className = `badge text-bg-${data.entry.expected ? 'success' : 'danger'}`;
       const warning = document.getElementById('rescanWarning');
       if (data.entry.already_scanned) {
-        warning.textContent = `سبق جرده ${data.entry.scan_count} مرة. الاعتماد سيضيف قراءة جديدة ويحدث النتيجة.`;
+        warning.textContent = `سبق جرده ${data.entry.scan_count} مرة. سيتم تسجيل قراءة جديدة.`;
         warning.classList.remove('d-none');
       } else {
         warning.classList.add('d-none');
@@ -141,89 +156,46 @@
       setValue('observedLifecycle', data.defaults.lifecycle_status || 'ACTIVE');
       setValue('scanNote', data.defaults.note || '');
       confirmCard.classList.remove('d-none');
+      if (mobileMode && source === 'PHONE_QR') {
+        showMessage(`تم قبول ${data.asset.asset_tag} وإدخاله في تقرير الجرد.`, 'success');
+        if (navigator.vibrate) navigator.vibrate(120);
+        window.setTimeout(() => confirmCard.submit(), 80);
+        return;
+      }
       confirmCard.scrollIntoView({behavior: 'smooth', block: 'start'});
-      showMessage(`تم التعرف على ${data.asset.asset_tag}. راجع البيانات الفعلية ثم اعتمد.`, 'success');
-      if (navigator.vibrate) navigator.vibrate(120);
-      stopCamera();
+      showMessage(`تم التعرف على ${data.asset.asset_tag}. راجع البيانات ثم اعتمد.`, 'success');
     } catch (error) {
-      showMessage(error.message || 'تعذر قراءة الرمز.', 'danger');
+      showMessage(error.message || 'هذا QR ليس تابعًا للنظام وتم رفضه.', 'danger');
       if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
     }
   }
 
-  async function detectionLoop() {
-    if (!detecting) return;
-    if (video.readyState < 2) { window.setTimeout(detectionLoop, 220); return; }
-    try {
-      const codes = await readCodes(video);
-      if (codes.length) {
-        detecting = false;
-        await lookup(codes[0].rawValue, 'CAMERA');
-        return;
-      }
-    } catch (_) {}
-    if (detecting) window.setTimeout(detectionLoop, 220);
-  }
-
-  async function startCamera() {
-    if (!window.isSecureContext && location.hostname !== 'localhost') {
-      showMessage('المتصفح يمنع الكاميرا دون HTTPS. استخدم الإدخال اليدوي أو افتح البوابة عبر اتصال آمن.', 'warning');
-      return;
-    }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      showMessage('هذا المتصفح لا يدعم قارئ QR المباشر. استخدم Chrome أو Edge حديثاً أو الإدخال اليدوي.', 'warning');
-      return;
-    }
-    try {
-      if ('BarcodeDetector' in window) {
-        try { detector = new BarcodeDetector({formats: ['qr_code']}); } catch (_) { detector = null; }
-      }
-      startButton.disabled = true;
-      mediaStream = await navigator.mediaDevices.getUserMedia({video: {facingMode: {ideal: 'environment'}}, audio: false});
-      video.srcObject = mediaStream;
-      await video.play();
-      videoWrap.classList.remove('d-none');
-      startButton.classList.add('d-none');
-      stopButton.classList.remove('d-none');
-      detecting = true;
-      showMessage('الكاميرا تعمل؛ ثبّت رمز QR داخل الإطار.', 'primary');
-      detectionLoop();
-    } catch (error) {
-      stopCamera();
-      showMessage('تعذر تشغيل الكاميرا. تحقق من الإذن أو استخدم الإدخال اليدوي.', 'danger');
-    } finally { startButton.disabled = false; }
-  }
-
-  function stopCamera() {
-    detecting = false;
-    if (mediaStream) mediaStream.getTracks().forEach(track => track.stop());
-    mediaStream = null;
-    video.srcObject = null;
-    videoWrap.classList.add('d-none');
-    startButton.classList.remove('d-none');
-    stopButton.classList.add('d-none');
-  }
-
-  document.getElementById('manualLookup').addEventListener('submit', event => { event.preventDefault(); lookup(document.getElementById('manualCode').value, 'MANUAL'); });
-  document.getElementById('cancelConfirm').addEventListener('click', () => { confirmCard.classList.add('d-none'); document.getElementById('manualCode').focus(); });
-  startButton.addEventListener('click', startCamera);
-  stopButton.addEventListener('click', stopCamera);
   document.getElementById('scanImage').addEventListener('change', async event => {
     const file = event.target.files?.[0];
     if (!file) return;
-    stopCamera();
     try {
-      const image = await createImageBitmap(file);
-      let codes;
-      try { codes = await readCodes(image); } finally { image.close(); }
-      if (!codes.length) throw new Error('لم يظهر رمز QR واضح في الصورة.');
-      await lookup(codes[0].rawValue, 'IMAGE');
+      const image = await imageFromFile(file);
+      try {
+        const code = await readCode(image);
+        if (!code) throw new Error('لم يظهر رمز QR واضح في الصورة.');
+        await lookup(code, mobileMode ? 'PHONE_QR' : 'IMAGE');
+      } finally { if (typeof image.close === 'function') image.close(); }
     } catch (error) { showMessage(error.message || 'تعذر قراءة الصورة.', 'danger'); }
     event.target.value = '';
   });
-  window.addEventListener('beforeunload', stopCamera);
-  document.addEventListener('visibilitychange', () => { if (document.hidden) stopCamera(); });
-  if (initialCode) lookup(initialCode, 'QR'); else document.getElementById('manualCode').focus();
+
+  {% if not mobile_mode %}
+  document.getElementById('manualLookup').addEventListener('submit', event => {
+    event.preventDefault();
+    lookup(document.getElementById('manualCode').value, 'MANUAL');
+  });
+  document.getElementById('cancelConfirm').addEventListener('click', () => {
+    confirmCard.classList.add('d-none');
+    document.getElementById('manualCode').focus();
+  });
+  document.getElementById('manualCode').focus();
+  {% endif %}
+  if (initialCode) lookup(initialCode, mobileMode ? 'PHONE_QR' : 'QR');
 })();
 </script>
 {% endblock %}

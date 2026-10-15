@@ -1752,6 +1752,11 @@ def _ensure_runtime_schema():
             if not _col_exists("inv_item", "variant"):
                 _add_column_retry("inv_item", "variant", "TEXT")
 
+            # Optional fixed-asset photos are stored under instance/uploads and
+            # linked to the same asset record that owns the system QR token.
+            if not _col_exists("inv_fixed_asset", "image_filename"):
+                _add_column_retry("inv_fixed_asset", "image_filename", "TEXT")
+
             # Materials requests can follow a dedicated technology or
             # furniture/maintenance path.  Keep existing SQLite deployments
             # compatible without requiring a manual migration first.

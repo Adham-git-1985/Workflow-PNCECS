@@ -6,7 +6,7 @@
   <a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_list') }}">سجل الأصول</a>
 </div>
 
-<form method="post" class="card shadow-sm">
+<form method="post" enctype="multipart/form-data" class="card shadow-sm">
   <div class="card-body">
     <div class="row g-3">
       <div class="col-md-4"><label class="form-label">رقم الأصل</label><input class="form-control" name="asset_tag" maxlength="80" value="{{ request.form.get('asset_tag', asset.asset_tag or '') }}" required><div class="form-text">رقم فريد يُطبع على الملصق.</div></div>
@@ -16,6 +16,7 @@
       <div class="col-md-4"><label class="form-label">الرقم التسلسلي</label><input class="form-control" name="serial_number" maxlength="200" value="{{ request.form.get('serial_number', asset.serial_number or '') }}"></div>
       <div class="col-md-4"><label class="form-label">الشركة المصنعة</label><input class="form-control" name="manufacturer" maxlength="150" value="{{ request.form.get('manufacturer', asset.manufacturer or '') }}"></div>
       <div class="col-md-4"><label class="form-label">الموديل</label><input class="form-control" name="model" maxlength="150" value="{{ request.form.get('model', asset.model or '') }}"></div>
+      <div class="col-md-6"><label class="form-label" for="assetImage">صورة الأصل/المواصفات <span class="text-muted small">(اختيارية)</span></label><input class="form-control" type="file" name="asset_image" id="assetImage" accept="image/*" capture="environment"><div class="form-text">من الهاتف يمكنك التقاط الصورة مباشرة، ومن الكمبيوتر اختيارها من الملفات. JPG أو PNG أو WEBP، وبحد أقصى 8 ميغابايت.</div>{% if asset.image_filename %}<div class="d-flex flex-wrap align-items-center gap-2 mt-2"><img src="{{ url_for('portal.fixed_asset_image', asset_id=asset.id) }}" alt="صورة الأصل الحالية" class="rounded border" style="width:92px;height:72px;object-fit:cover"><div class="form-check"><input class="form-check-input" type="checkbox" name="remove_image" value="1" id="removeAssetImage" {% if request.form.get('remove_image') %}checked{% endif %}><label class="form-check-label" for="removeAssetImage">حذف الصورة الحالية</label></div></div>{% endif %}<div id="assetImagePreview" class="mt-2 d-none"><img id="assetImagePreviewImg" alt="معاينة الصورة الجديدة" class="rounded border img-fluid" style="max-height:180px;object-fit:contain"></div></div>
       <div class="col-md-4"><label class="form-label">تاريخ الشراء</label><input class="form-control" type="date" name="acquisition_date" value="{{ request.form.get('acquisition_date', asset.acquisition_date or '') }}"></div>
       <div class="col-md-4"><label class="form-label">التكلفة</label><input class="form-control" type="number" step="0.01" min="0" name="purchase_cost" value="{{ request.form.get('purchase_cost', asset.purchase_cost if asset.purchase_cost is not none else '') }}"></div>
       <div class="col-md-4"><label class="form-label">حالة الأصل</label><select class="form-select" name="asset_condition">{% set selected_condition = request.form.get('asset_condition', asset.asset_condition or 'GOOD') %}{% for code, label in fixed_asset_condition_labels.items() %}<option value="{{ code }}" {% if selected_condition == code %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
@@ -30,4 +31,27 @@
   </div>
   <div class="card-footer d-flex justify-content-end gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_view', asset_id=asset.id) if asset.id else url_for('portal.fixed_asset_list') }}">إلغاء</a><button class="btn btn-primary" type="submit"><i class="bi bi-check2-circle"></i> حفظ وإنشاء QR</button></div>
 </form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  const input = document.getElementById('assetImage');
+  const preview = document.getElementById('assetImagePreview');
+  const previewImage = document.getElementById('assetImagePreviewImg');
+  if (!input || !preview || !previewImage) return;
+  let previewUrl = '';
+  input.addEventListener('change', () => {
+    const file = input.files && input.files[0];
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    if (!file) {
+      preview.classList.add('d-none');
+      return;
+    }
+    previewUrl = URL.createObjectURL(file);
+    previewImage.src = previewUrl;
+    preview.classList.remove('d-none');
+  });
+})();
+</script>
 {% endblock %}

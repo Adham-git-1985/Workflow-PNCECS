@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import re
+import secrets
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from urllib.parse import urlparse
 
 import qrcode
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from flask import (
     abort,
+    current_app,
     flash,
     jsonify,
     redirect,
@@ -25,6 +28,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
+from PIL import Image
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 
@@ -34,6 +38,7 @@ from models import (
     InvFixedAsset,
     InvFixedAssetCycle,
     InvFixedAssetCycleMember,
+    InvFixedAssetMobileDevice,
     InvFixedAssetEntry,
     InvFixedAssetScanLog,
     InvAssetDocument,
@@ -70,6 +75,26 @@ PREVIOUS_RESULT_LABELS = {
     "NOT_IN_SCOPE": "خارج نطاق الدورة",
     "MASTER": "السجل الأساسي",
     None: "لا توجد دورة سابقة",
+}
+
+
+MOBILE_PAIRING_TOKEN_MAX_AGE = 15 * 60
+MOBILE_PAIRING_TOKEN_SALT = "fixed-asset-mobile-pair-v1"
+MOBILE_DEVICE_INVITE_MAX_AGE = 60 * 60
+MOBILE_DEVICE_INVITE_SALT = "fixed-asset-mobile-device-invite-v1"
+MOBILE_DEVICE_COOKIE = "fixed_asset_mobile_device"
+MOBILE_DEVICE_COOKIE_MAX_AGE = 365 * 24 * 60 * 60
+MOBILE_DEVICE_STATUS_LABELS = {
+    "PENDING": "بانتظار موافقة الأدمن",
+    "APPROVED": "معتمد وقادر على المسح",
+    "REVOKED": "موقوف",
+}
+FIXED_ASSET_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+FIXED_ASSET_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+FIXED_ASSET_IMAGE_FORMAT_EXTENSIONS = {
+    "JPEG": ".jpg",
+    "PNG": ".png",
+    "WEBP": ".webp",
 }
 
 IMPORT_HEADERS = [
@@ -172,6 +197,64 @@ def _entity_or_none(model, entity_id: int | None, label: str):
     return entity
 
 
+def _fixed_asset_image_directory() -> Path:
+    directory = Path(current_app.instance_path) / "uploads" / "fixed_assets"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _fixed_asset_image_path(filename: str | None) -> Path | None:
+    safe_name = str(filename or "").strip()
+    if not safe_name or Path(safe_name).name != safe_name:
+        return None
+    if Path(safe_name).suffix.lower() not in FIXED_ASSET_IMAGE_EXTENSIONS:
+        return None
+    return _fixed_asset_image_directory() / safe_name
+
+
+def _save_fixed_asset_image(upload) -> str | None:
+    if upload is None or not (getattr(upload, "filename", None) or "").strip():
+        return None
+
+    try:
+        data = upload.read(FIXED_ASSET_IMAGE_MAX_BYTES + 1)
+    except (OSError, ValueError) as exc:
+        raise ValueError("تعذر قراءة صورة الأصل.") from exc
+    if len(data) > FIXED_ASSET_IMAGE_MAX_BYTES:
+        raise ValueError("حجم صورة الأصل يجب ألا يتجاوز 8 ميغابايت.")
+
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            image_format = (image.format or "").upper()
+            image.verify()
+    except Exception as exc:
+        raise ValueError("الملف المرفوع ليس صورة صالحة.") from exc
+
+    extension = FIXED_ASSET_IMAGE_FORMAT_EXTENSIONS.get(image_format)
+    if extension is None:
+        raise ValueError("صيغة الصورة المدعومة هي JPG أو PNG أو WEBP.")
+
+    filename = f"{secrets.token_hex(20)}{extension}"
+    path = _fixed_asset_image_path(filename)
+    if path is None:
+        raise ValueError("تعذر تجهيز صورة الأصل.")
+    try:
+        path.write_bytes(data)
+    except OSError as exc:
+        raise ValueError("تعذر حفظ صورة الأصل.") from exc
+    return filename
+
+
+def _delete_fixed_asset_image(filename: str | None):
+    path = _fixed_asset_image_path(filename)
+    if path is None:
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        current_app.logger.warning("Unable to remove fixed asset image %s", path)
+
+
 def _audit(action: str, note: str, target_type: str, target_id: int | None):
     db.session.add(AuditLog(
         user_id=getattr(current_user, "id", None),
@@ -198,6 +281,135 @@ def _system_setting(key: str, default: str) -> str:
     return (row.value or default).strip() if row and row.value is not None else default
 
 
+def _mobile_base_url() -> str:
+    return _system_setting("INV_FIXED_ASSET_QR_BASE_URL", "").rstrip("/") or request.url_root.rstrip("/")
+
+
+def _mobile_pairing_serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt=MOBILE_PAIRING_TOKEN_SALT)
+
+
+def _mobile_device_invitation_serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(
+        current_app.config["SECRET_KEY"],
+        salt=MOBILE_DEVICE_INVITE_SALT,
+    )
+
+
+def _mobile_pairing_token(cycle: InvFixedAssetCycle) -> str:
+    return _mobile_pairing_serializer().dumps({
+        "purpose": "FIXED_ASSET_MOBILE_PAIR",
+        "cycle_id": cycle.id,
+    })
+
+
+def _mobile_pairing_target(cycle: InvFixedAssetCycle) -> str:
+    return f"{request.url_root.rstrip('/')}{url_for('portal.fixed_asset_mobile_pair', token=_mobile_pairing_token(cycle))}"
+
+
+def _decode_mobile_pairing_token(token: str) -> dict | None:
+    try:
+        payload = _mobile_pairing_serializer().loads(token, max_age=MOBILE_PAIRING_TOKEN_MAX_AGE)
+    except (BadSignature, SignatureExpired):
+        return None
+    if not isinstance(payload, dict) or payload.get("purpose") != "FIXED_ASSET_MOBILE_PAIR":
+        return None
+    return payload
+
+
+def _mobile_device_invitation_token() -> str:
+    return _mobile_device_invitation_serializer().dumps({
+        "purpose": "FIXED_ASSET_MOBILE_DEVICE_INVITE",
+        "nonce": secrets.token_urlsafe(12),
+    })
+
+
+def _decode_mobile_device_invitation(token: str) -> dict | None:
+    try:
+        payload = _mobile_device_invitation_serializer().loads(
+            token,
+            max_age=MOBILE_DEVICE_INVITE_MAX_AGE,
+        )
+    except (BadSignature, SignatureExpired):
+        return None
+    if not isinstance(payload, dict) or payload.get("purpose") != "FIXED_ASSET_MOBILE_DEVICE_INVITE":
+        return None
+    return payload
+
+
+def _mobile_device_pairing_target(token: str) -> str:
+    return f"{request.url_root.rstrip('/')}{url_for('portal.fixed_asset_mobile_device_pair', token=token)}"
+
+
+def _mobile_device_token_hash(raw_token: str) -> str:
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+def _mobile_device_label() -> str:
+    parts = [
+        value
+        for value in (request.user_agent.platform, request.user_agent.browser)
+        if value
+    ]
+    return "هاتف" + (f" ({' / '.join(parts)})" if parts else "")
+
+
+def _mobile_device_from_request() -> InvFixedAssetMobileDevice | None:
+    raw_token = (request.cookies.get(MOBILE_DEVICE_COOKIE) or "").strip()
+    if not raw_token or not current_user.is_authenticated:
+        return None
+    device = InvFixedAssetMobileDevice.query.filter_by(
+        token_hash=_mobile_device_token_hash(raw_token),
+    ).first()
+    if device is None or device.user_id != current_user.id:
+        return None
+    return device
+
+
+def _require_approved_mobile_device() -> InvFixedAssetMobileDevice:
+    device = _mobile_device_from_request()
+    if device is None:
+        abort(403, description="هذا الهاتف غير مسجل في النظام. امسح QR ربط جهاز جديد أولاً.")
+    if device.status != "APPROVED":
+        abort(403, description="لم تتم الموافقة على هذا الهاتف بعد.")
+    return device
+
+
+def _register_mobile_device():
+    raw_token = (request.cookies.get(MOBILE_DEVICE_COOKIE) or "").strip()
+    device = _mobile_device_from_request()
+    if device is None or device.status == "REVOKED":
+        raw_token = secrets.token_urlsafe(32)
+        device = InvFixedAssetMobileDevice(
+            token_hash=_mobile_device_token_hash(raw_token),
+            user_id=current_user.id,
+            device_label=_mobile_device_label(),
+            status="PENDING",
+            requested_at=datetime.utcnow(),
+            last_ip=request.remote_addr,
+            user_agent=request.user_agent.string[:255],
+        )
+        db.session.add(device)
+        db.session.flush()
+    else:
+        device.last_seen_at = datetime.utcnow()
+        device.last_ip = request.remote_addr
+        device.user_agent = request.user_agent.string[:255]
+    session["fixed_asset_mobile_device_id"] = device.id
+    session.modified = True
+    db.session.commit()
+    response = redirect(url_for("portal.fixed_asset_mobile_device_status"))
+    response.set_cookie(
+        MOBILE_DEVICE_COOKIE,
+        raw_token,
+        max_age=MOBILE_DEVICE_COOKIE_MAX_AGE,
+        httponly=True,
+        samesite="Lax",
+        secure=False,
+    )
+    return response
+
+
 def _asset_qr_target(asset: InvFixedAsset) -> str:
     path = url_for("portal.fixed_asset_qr_resolve", token=asset.qr_token)
     configured_base = _system_setting("INV_FIXED_ASSET_QR_BASE_URL", "").rstrip("/")
@@ -210,6 +422,16 @@ def _can_scan_cycle(cycle):
     return current_user.has_perm(STORE_MANAGE) or any(member.user_id == current_user.id for member in cycle.members)
 
 
+def _find_asset_by_system_qr(raw_value: str | None) -> InvFixedAsset | None:
+    """Resolve only the random QR token issued by this system, never an asset tag."""
+    identifier = normalize_asset_identifier(raw_value)
+    if not identifier:
+        return None
+    # ``qr_token`` is generated by the system and is case-sensitive.  Query it
+    # directly so the unique index is used even when the asset table is large.
+    return InvFixedAsset.query.filter(InvFixedAsset.qr_token == identifier).first()
+
+
 def _require_asset_access(asset):
     if current_user.has_perm(STORE_READ) or current_user.has_perm(STORE_MANAGE) or asset.custodian_user_id == current_user.id:
         return
@@ -219,39 +441,143 @@ def _require_asset_access(asset):
     abort(403)
 
 
+def _mobile_scan_defaults(cycle: InvFixedAssetCycle, asset: InvFixedAsset) -> dict:
+    entry = InvFixedAssetEntry.query.filter_by(cycle_id=cycle.id, asset_id=asset.id).first()
+
+    def value(observed_name: str, expected_name: str, fallback):
+        if entry is not None and entry.scanned_at:
+            observed = getattr(entry, observed_name)
+            if observed is not None:
+                return observed
+        if entry is not None:
+            expected = getattr(entry, expected_name)
+            if expected is not None:
+                return expected
+        return fallback
+
+    return {
+        "warehouse_id": value("observed_warehouse_id", "expected_warehouse_id", asset.warehouse_id),
+        "room_id": value("observed_room_id", "expected_room_id", asset.room_id),
+        "custodian_user_id": value(
+            "observed_custodian_user_id",
+            "expected_custodian_user_id",
+            asset.custodian_user_id,
+        ),
+        "condition": value("observed_condition", "expected_condition", asset.asset_condition or "GOOD"),
+        "lifecycle_status": value(
+            "observed_lifecycle_status",
+            "expected_lifecycle_status",
+            asset.lifecycle_status or "ACTIVE",
+        ),
+    }
+
+
+def _record_mobile_qr_scan(cycle: InvFixedAssetCycle, asset: InvFixedAsset):
+    defaults = _mobile_scan_defaults(cycle, asset)
+    entry = record_asset_scan(
+        cycle,
+        asset,
+        scanned_by_id=current_user.id,
+        observed_warehouse_id=defaults["warehouse_id"],
+        observed_room_id=defaults["room_id"],
+        observed_custodian_user_id=defaults["custodian_user_id"],
+        observed_condition=defaults["condition"] or "GOOD",
+        observed_lifecycle_status=defaults["lifecycle_status"] or "ACTIVE",
+        source="PHONE_QR",
+        device_info=request.user_agent.string,
+    )
+    _audit(
+        "INV_FIXED_ASSET_PHONE_QR_SCAN",
+        f"قراءة هاتفية للأصل {asset.asset_tag}: {INVENTORY_RESULT_LABELS.get(entry.result_status, entry.result_status)}",
+        "INV_FIXED_ASSET_CYCLE",
+        cycle.id,
+    )
+    db.session.commit()
+    return entry
+
+
+@portal_bp.route("/inventory/fixed-assets/mobile/device/pair/<token>")
+@login_required
+def fixed_asset_mobile_device_pair(token: str):
+    if _decode_mobile_device_invitation(token) is None:
+        abort(404)
+    return _register_mobile_device()
+
+
+@portal_bp.route("/inventory/fixed-assets/mobile/pair/<token>")
+@login_required
+def fixed_asset_mobile_pair(token: str):
+    """Keep old printed pairing labels useful, but route them through approval."""
+    payload = _decode_mobile_pairing_token(token)
+    cycle_id = _optional_int(payload.get("cycle_id")) if payload else None
+    cycle = db.session.get(InvFixedAssetCycle, cycle_id) if cycle_id is not None else None
+    if cycle is None or cycle.status != "ACTIVE" or not _can_scan_cycle(cycle):
+        abort(404)
+    session["fixed_asset_requested_cycle_id"] = cycle.id
+    session.modified = True
+    return _register_mobile_device()
+
+
+@portal_bp.route("/inventory/fixed-assets/mobile/device/status")
+@login_required
+def fixed_asset_mobile_device_status():
+    device = _mobile_device_from_request()
+    return render_template(
+        "portal/inventory/fixed_assets/mobile_device_status.html",
+        device=device,
+        status_labels=MOBILE_DEVICE_STATUS_LABELS,
+    )
+
+
+@portal_bp.route("/inventory/fixed-assets/mobile/device/status.json")
+@login_required
+def fixed_asset_mobile_device_status_json():
+    device = _mobile_device_from_request()
+    if device is None:
+        return jsonify({"ok": False, "message": "الهاتف غير مسجل."}), 404
+    return jsonify({
+        "ok": True,
+        "status": device.status,
+        "label": MOBILE_DEVICE_STATUS_LABELS.get(device.status, device.status),
+        "mobile_url": url_for("portal.fixed_asset_mobile"),
+    })
+
+
 @portal_bp.route("/inventory/fixed-assets/mobile")
 @login_required
 def fixed_asset_mobile():
+    device = _mobile_device_from_request()
+    if device is None or device.status != "APPROVED":
+        return redirect(url_for("portal.fixed_asset_mobile_device_status"))
+    session["fixed_asset_mobile_mode"] = True
+    session["fixed_asset_mobile_device_id"] = device.id
+    session.modified = True
     query = InvFixedAssetCycle.query.filter_by(status="ACTIVE")
     if not current_user.has_perm(STORE_MANAGE):
         query = query.filter(InvFixedAssetCycle.members.any(user_id=current_user.id))
-    return render_template("portal/inventory/fixed_assets/mobile.html", cycles=query.order_by(InvFixedAssetCycle.id.desc()).all(), code=request.args.get("code", ""))
+    return render_template(
+        "portal/inventory/fixed_assets/mobile.html",
+        cycles=query.order_by(InvFixedAssetCycle.id.desc()).all(),
+        code=request.args.get("code", ""),
+    )
 
 
-@portal_bp.route("/inventory/fixed-assets/mobile-settings", methods=["GET", "POST"])
+@portal_bp.route("/inventory/fixed-assets/mobile-settings")
 @login_required
 @_perm_any(STORE_MANAGE)
 def fixed_asset_mobile_settings():
-    if request.method == "POST":
-        base = (request.form.get("base_url") or "").strip().rstrip("/")
-        parsed = urlparse(base)
-        if base and (len(base) > 240 or parsed.scheme not in {"https", "http"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {"", "/"}):
-            flash("أدخل عنوان الخادم مثل https://portal.example.org دون مسار أو معلومات دخول.", "danger")
-        else:
-            row = SystemSetting.query.filter_by(key="INV_FIXED_ASSET_QR_BASE_URL").first()
-            if row is None:
-                row = SystemSetting(key="INV_FIXED_ASSET_QR_BASE_URL")
-                db.session.add(row)
-            row.value = base
-            _audit("INV_FIXED_ASSET_QR_SETTINGS", "تحديث عنوان QR للهاتف", "SYSTEM_SETTING", None)
-            db.session.commit()
-            flash("تم حفظ عنوان QR. أعد طباعة الملصقات إذا تغير عنوان الخادم.", "success")
-    base = _system_setting("INV_FIXED_ASSET_QR_BASE_URL", "") or request.url_root.rstrip("/")
+    invite_token = _mobile_device_invitation_token()
+    devices = InvFixedAssetMobileDevice.query.order_by(
+        InvFixedAssetMobileDevice.requested_at.desc(),
+        InvFixedAssetMobileDevice.id.desc(),
+    ).all()
     return render_template(
         "portal/inventory/fixed_assets/mobile_settings.html",
-        base_url=base,
-        mobile_url=base + url_for("portal.fixed_asset_mobile"),
-        camera_available=base.lower().startswith("https://"),
+        invite_token=invite_token,
+        pair_url=_mobile_device_pairing_target(invite_token),
+        pairing_minutes=MOBILE_DEVICE_INVITE_MAX_AGE // 60,
+        devices=devices,
+        device_status_labels=MOBILE_DEVICE_STATUS_LABELS,
     )
 
 
@@ -259,13 +585,53 @@ def fixed_asset_mobile_settings():
 @login_required
 @_perm_any(STORE_MANAGE)
 def fixed_asset_mobile_entry_qr():
-    base = _system_setting("INV_FIXED_ASSET_QR_BASE_URL", "") or request.url_root.rstrip("/")
+    invite_token = (request.args.get("token") or "").strip()
+    if invite_token and _decode_mobile_device_invitation(invite_token) is None:
+        abort(404)
+    invite_token = invite_token or _mobile_device_invitation_token()
+    target = _mobile_device_pairing_target(invite_token)
     output = io.BytesIO()
-    qrcode.make(base + url_for("portal.fixed_asset_mobile")).save(output, format="PNG")
+    qrcode.make(target).save(output, format="PNG")
     output.seek(0)
     response = send_file(output, mimetype="image/png")
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@portal_bp.route("/inventory/fixed-assets/mobile-devices/<int:device_id>/approve", methods=["POST"])
+@login_required
+@_perm_any(STORE_MANAGE)
+def fixed_asset_mobile_device_approve(device_id: int):
+    device = InvFixedAssetMobileDevice.query.get_or_404(device_id)
+    device.status = "APPROVED"
+    device.approved_at = datetime.utcnow()
+    device.approved_by_id = current_user.id
+    _audit(
+        "INV_FIXED_ASSET_MOBILE_DEVICE_APPROVE",
+        f"اعتماد هاتف الجرد #{device.id}",
+        "INV_FIXED_ASSET_MOBILE_DEVICE",
+        device.id,
+    )
+    db.session.commit()
+    flash("تم اعتماد الهاتف، ويمكنه الآن مسح QR أصول النظام.", "success")
+    return redirect(url_for("portal.fixed_asset_mobile_settings"))
+
+
+@portal_bp.route("/inventory/fixed-assets/mobile-devices/<int:device_id>/revoke", methods=["POST"])
+@login_required
+@_perm_any(STORE_MANAGE)
+def fixed_asset_mobile_device_revoke(device_id: int):
+    device = InvFixedAssetMobileDevice.query.get_or_404(device_id)
+    device.status = "REVOKED"
+    _audit(
+        "INV_FIXED_ASSET_MOBILE_DEVICE_REVOKE",
+        f"إيقاف هاتف الجرد #{device.id}",
+        "INV_FIXED_ASSET_MOBILE_DEVICE",
+        device.id,
+    )
+    db.session.commit()
+    flash("تم إيقاف الهاتف.", "success")
+    return redirect(url_for("portal.fixed_asset_mobile_settings"))
 
 
 def _next_asset_tag() -> str:
@@ -522,10 +888,14 @@ def fixed_asset_new():
         lifecycle_status="ACTIVE",
         is_active=True,
     )
+    new_image_filename = None
     if request.method == "POST":
         try:
             values = _asset_values(request.form)
             _apply_asset_values(asset, values)
+            new_image_filename = _save_fixed_asset_image(request.files.get("asset_image"))
+            if new_image_filename:
+                asset.image_filename = new_image_filename
             asset.created_by_id = current_user.id
             asset.created_at = datetime.utcnow()
             db.session.add(asset)
@@ -536,6 +906,8 @@ def fixed_asset_new():
             return redirect(url_for("portal.fixed_asset_view", asset_id=asset.id))
         except (ValueError, IntegrityError) as exc:
             db.session.rollback()
+            if new_image_filename:
+                _delete_fixed_asset_image(new_image_filename)
             message = str(exc) if isinstance(exc, ValueError) else "تعذر الحفظ بسبب رقم أصل مكرر."
             flash(message, "danger")
             asset = InvFixedAsset(**{
@@ -577,15 +949,35 @@ def fixed_asset_view(asset_id: int):
     )
 
 
+@portal_bp.route("/inventory/fixed-assets/assets/<int:asset_id>/image")
+@login_required
+def fixed_asset_image(asset_id: int):
+    asset = InvFixedAsset.query.get_or_404(asset_id)
+    _require_asset_access(asset)
+    path = _fixed_asset_image_path(asset.image_filename)
+    if path is None or not path.is_file():
+        abort(404)
+    response = send_file(path, conditional=True)
+    response.headers["Cache-Control"] = "private, max-age=86400"
+    return response
+
+
 @portal_bp.route("/inventory/fixed-assets/assets/<int:asset_id>/edit", methods=["GET", "POST"])
 @login_required
 @_perm_any(STORE_MANAGE)
 def fixed_asset_edit(asset_id: int):
     asset = InvFixedAsset.query.get_or_404(asset_id)
+    old_image_filename = asset.image_filename
+    new_image_filename = None
     if request.method == "POST":
         try:
             old_tag = asset.asset_tag
             _apply_asset_values(asset, _asset_values(request.form))
+            new_image_filename = _save_fixed_asset_image(request.files.get("asset_image"))
+            if new_image_filename:
+                asset.image_filename = new_image_filename
+            elif request.form.get("remove_image"):
+                asset.image_filename = None
             _audit(
                 "INV_FIXED_ASSET_UPDATE",
                 f"تعديل الأصل {old_tag} إلى {asset.asset_tag}",
@@ -593,10 +985,14 @@ def fixed_asset_edit(asset_id: int):
                 asset.id,
             )
             db.session.commit()
+            if old_image_filename and old_image_filename != asset.image_filename:
+                _delete_fixed_asset_image(old_image_filename)
             flash("تم تحديث بيانات الأصل.", "success")
             return redirect(url_for("portal.fixed_asset_view", asset_id=asset.id))
         except (ValueError, IntegrityError) as exc:
             db.session.rollback()
+            if new_image_filename:
+                _delete_fixed_asset_image(new_image_filename)
             flash(str(exc) if isinstance(exc, ValueError) else "رقم الأصل مستخدم مسبقاً.", "danger")
     return render_template(
         "portal/inventory/fixed_assets/asset_form.html",
@@ -654,13 +1050,21 @@ def fixed_asset_qr_png(asset_id: int):
 @portal_bp.route("/inventory/fixed-assets/qr/<token>")
 @login_required
 def fixed_asset_qr_resolve(token: str):
-    asset = find_asset_by_identifier(token)
+    asset = _find_asset_by_system_qr(token)
     if asset is None:
         abort(404)
     _require_asset_access(asset)
     cycle_id = _optional_int(session.get("fixed_asset_active_cycle_id"))
     cycle = db.session.get(InvFixedAssetCycle, cycle_id) if cycle_id else None
     if cycle and cycle.status == "ACTIVE" and _can_scan_cycle(cycle):
+        if session.get("fixed_asset_mobile_mode"):
+            _require_approved_mobile_device()
+            return redirect(url_for(
+                "portal.fixed_asset_cycle_scan",
+                cycle_id=cycle.id,
+                code=asset.qr_token,
+                mobile="1",
+            ))
         return redirect(url_for("portal.fixed_asset_cycle_scan", cycle_id=cycle.id, code=asset.qr_token))
     if current_user.has_perm(STORE_MANAGE) or InvFixedAssetCycleMember.query.filter_by(user_id=current_user.id).first():
         return redirect(url_for("portal.fixed_asset_mobile", code=asset.qr_token))
@@ -1298,18 +1702,33 @@ def fixed_asset_cycle_refresh(cycle_id: int):
 @login_required
 def fixed_asset_cycle_scan(cycle_id: int):
     cycle = InvFixedAssetCycle.query.get_or_404(cycle_id)
+    mobile_mode = request.args.get("mobile") == "1" or bool(session.get("fixed_asset_mobile_mode"))
+    if mobile_mode:
+        device = _require_approved_mobile_device()
+        session["fixed_asset_mobile_device_id"] = device.id
     if not _can_scan_cycle(cycle):
         abort(403)
     if cycle.status != "ACTIVE":
         flash("هذه الدورة مغلقة ولا تقبل عمليات جرد جديدة.", "warning")
         return redirect(url_for("portal.fixed_asset_cycle_view", cycle_id=cycle.id))
     session["fixed_asset_active_cycle_id"] = cycle.id
+    if request.args.get("paired") == "1" or request.args.get("mobile") == "1":
+        session["fixed_asset_mobile_mode"] = True
+        session.modified = True
 
     if request.method == "POST":
-        asset = find_asset_by_identifier(request.form.get("asset_code"))
+        asset = (
+            _find_asset_by_system_qr(request.form.get("asset_code"))
+            if mobile_mode
+            else find_asset_by_identifier(request.form.get("asset_code"))
+        )
         if asset is None:
-            flash("لم يتم العثور على أصل بهذا الرمز.", "danger")
-            return redirect(url_for("portal.fixed_asset_cycle_scan", cycle_id=cycle.id))
+            flash("هذا QR ليس تابعًا للنظام وتم رفضه.", "danger")
+            return redirect(url_for(
+                "portal.fixed_asset_cycle_scan",
+                cycle_id=cycle.id,
+                mobile="1" if mobile_mode else None,
+            ))
         try:
             warehouse_id = _optional_int(request.form.get("observed_warehouse_id"))
             room_id = _optional_int(request.form.get("observed_room_id"))
@@ -1345,7 +1764,12 @@ def fixed_asset_cycle_scan(cycle_id: int):
                 f"تم تسجيل {asset.asset_tag}: {INVENTORY_RESULT_LABELS.get(entry.result_status, entry.result_status)}.",
                 "success",
             )
-            return redirect(url_for("portal.fixed_asset_cycle_scan", cycle_id=cycle.id, last=asset.id))
+            return redirect(url_for(
+                "portal.fixed_asset_cycle_scan",
+                cycle_id=cycle.id,
+                last=asset.id,
+                mobile="1" if mobile_mode else None,
+            ))
         except ValueError as exc:
             db.session.rollback()
             flash(str(exc), "danger")
@@ -1363,6 +1787,7 @@ def fixed_asset_cycle_scan(cycle_id: int):
         stats=cycle_result_counts(cycle.id),
         recent_scans=recent_scans,
         initial_code=normalize_asset_identifier(request.args.get("code")),
+        mobile_mode=mobile_mode,
         **_choices(),
     )
 
@@ -1371,13 +1796,20 @@ def fixed_asset_cycle_scan(cycle_id: int):
 @login_required
 def fixed_asset_cycle_lookup(cycle_id: int):
     cycle = InvFixedAssetCycle.query.get_or_404(cycle_id)
+    mobile_mode = request.args.get("mobile") == "1" or bool(session.get("fixed_asset_mobile_mode"))
+    if mobile_mode:
+        _require_approved_mobile_device()
     if not _can_scan_cycle(cycle):
         abort(403)
     if cycle.status != "ACTIVE":
         return jsonify({"ok": False, "message": "دورة الجرد مغلقة."}), 409
-    asset = find_asset_by_identifier(request.args.get("code"))
+    asset = (
+        _find_asset_by_system_qr(request.args.get("code"))
+        if mobile_mode
+        else find_asset_by_identifier(request.args.get("code"))
+    )
     if asset is None:
-        return jsonify({"ok": False, "message": "الرمز غير مرتبط بأي أصل مسجل."}), 404
+        return jsonify({"ok": False, "message": "هذا QR ليس تابعًا للنظام وتم رفضه."}), 404
     entry = InvFixedAssetEntry.query.filter_by(cycle_id=cycle.id, asset_id=asset.id).first()
     defaults = {
         "warehouse_id": (entry.observed_warehouse_id if entry and entry.scanned_at else (entry.expected_warehouse_id if entry else asset.warehouse_id)),
@@ -1398,6 +1830,11 @@ def fixed_asset_cycle_lookup(cycle_id: int):
             "manufacturer": asset.manufacturer or "",
             "model": asset.model or "",
             "location": asset.location_label,
+            "image_url": (
+                url_for("portal.fixed_asset_image", asset_id=asset.id)
+                if asset.image_filename
+                else None
+            ),
             "view_url": url_for("portal.fixed_asset_view", asset_id=asset.id),
         },
         "entry": {

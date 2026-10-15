@@ -9,6 +9,7 @@
   <div class="d-flex flex-wrap gap-2">
     <a class="btn btn-outline-primary" href="{{ url_for('portal.fixed_asset_list') }}"><i class="bi bi-list-ul"></i> سجل الأصول</a>
     <a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_cycles') }}"><i class="bi bi-clipboard-data"></i> دورات الجرد</a>
+    {% if can_manage %}<a class="btn btn-success" href="{{ url_for('portal.fixed_asset_mobile_settings') }}"><i class="bi bi-phone"></i> ربط أجهزة الهاتف</a>{% endif %}
     {% if can_manage %}
       <a class="btn btn-primary" href="{{ url_for('portal.fixed_asset_new') }}"><i class="bi bi-plus-circle"></i> أصل جديد</a>
       <a class="btn btn-success" href="{{ url_for('portal.fixed_asset_cycle_new') }}"><i class="bi bi-play-circle"></i> بدء جرد</a>
@@ -47,7 +48,7 @@
               <span class="badge text-bg-secondary">متبقٍ {{ stats.get('PENDING', 0) }}</span>
             </div>
             <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.id) }}">التفاصيل</a>
-            {% if can_manage %}<a class="btn btn-sm btn-primary" href="{{ url_for('portal.fixed_asset_cycle_scan', cycle_id=cycle.id) }}"><i class="bi bi-camera"></i> فتح الماسح</a>{% endif %}
+            {% if can_manage %}<a class="btn btn-sm btn-primary" href="{{ url_for('portal.fixed_asset_cycle_scan', cycle_id=cycle.id) }}"><i class="bi bi-camera"></i> فتح الماسح</a><a class="btn btn-sm btn-success" href="{{ url_for('portal.fixed_asset_mobile_settings') }}"><i class="bi bi-phone"></i> إدارة أجهزة الهاتف</a>{% endif %}
           </div>
         </div>
       {% else %}
