@@ -29,6 +29,7 @@ from models import (
     AttendanceEvent,
     EmployeeFile,
     HRAttendanceEmailReportDelivery,
+    HRLookupItem,
     HRLeaveRequest,
     HROfficialOccasion,
     HROfficialOccasionRange,
@@ -390,6 +391,60 @@ def _time_text(value: datetime | None) -> str:
     return value.strftime("%H:%M") if value else ""
 
 
+def _work_location_labels(employee_files: list[EmployeeFile]) -> dict[int, str]:
+    """Return the configured work-location label for each lookup id.
+
+    EmployeeFile stores the lookup id, while the human-readable location is
+    kept in ``hr_lookup_item``.  Load the labels once per report so every
+    email row can show the same location without issuing an N+1 query.
+    """
+    lookup_ids = set()
+    for employee_file in employee_files:
+        location_id = getattr(employee_file, "work_location_lookup_id", None)
+        try:
+            if location_id is not None:
+                lookup_ids.add(int(location_id))
+        except (TypeError, ValueError):
+            continue
+    if not lookup_ids:
+        return {}
+
+    try:
+        locations = (
+            HRLookupItem.query
+            .filter(
+                HRLookupItem.category == "WORK_LOCATION",
+                HRLookupItem.id.in_(sorted(lookup_ids)),
+            )
+            .all()
+        )
+    except Exception:
+        # Keep the email report available on older installations while the
+        # lookup schema is being upgraded.
+        db.session.rollback()
+        return {}
+
+    return {
+        int(location.id): (
+            getattr(location, "label", None)
+            or getattr(location, "name_ar", None)
+            or getattr(location, "name_en", None)
+            or getattr(location, "code", None)
+            or ""
+        ).strip()
+        for location in locations
+    }
+
+
+def _work_location_label(employee_file: EmployeeFile | None, labels: dict[int, str]) -> str:
+    """Resolve one employee's work-location label safely."""
+    location_id = getattr(employee_file, "work_location_lookup_id", None) if employee_file else None
+    try:
+        return labels.get(int(location_id), "") if location_id is not None else ""
+    except (TypeError, ValueError):
+        return ""
+
+
 def _attendance_exempt_user_ids() -> set[int]:
     """Return users excluded from attendance reports when that module exists.
 
@@ -475,6 +530,9 @@ def _load_attendance_rows(report_day: date) -> tuple[list[dict], list[dict], lis
     user_ids = [int(user.id) for user in users]
     if not user_ids:
         return [], [], []
+    work_location_labels = _work_location_labels(
+        [getattr(user, "employee_file", None) for user in users]
+    )
 
     summaries = (
         AttendanceDailySummary.query
@@ -623,6 +681,7 @@ def _load_attendance_rows(report_day: date) -> tuple[list[dict], list[dict], lis
             "date": day_text,
             "employee_no": getattr(employee_file, "employee_no", "") or "",
             "name": _employee_label(user),
+            "work_location": _work_location_label(employee_file, work_location_labels),
             "email": resolve_user_delivery_email(user),
             "status": status,
             "first_in": _time_text(first_in),
@@ -686,6 +745,9 @@ def _load_departure_rows(report_day: date, overall_rows: list[dict]) -> list[dic
             int(user.id): user
             for user in User.query.filter(User.id.in_(sorted(all_user_ids))).all()
         }
+        work_location_labels = _work_location_labels(
+            [getattr(user, "employee_file", None) for user in users.values()]
+        )
         rows = []
         for record in records:
             user = users.get(int(record.get("user_id") or 0))
@@ -715,6 +777,7 @@ def _load_departure_rows(report_day: date, overall_rows: list[dict]) -> list[dic
                 "date": record.get("day") or day_text,
                 "employee_no": getattr(employee_file, "employee_no", "") or "",
                 "name": _employee_label(user) if user else f"المستخدم #{record.get('user_id')}",
+                "work_location": _work_location_label(employee_file, work_location_labels),
                 "departure_type": record.get("label") or (
                     "مغادرة رسمية" if record.get("kind") == "OFFICIAL" else "مغادرة شخصية"
                 ),
@@ -803,13 +866,14 @@ def _xlsx_bytes(
 
 def _attachments(data: dict[str, Any]) -> list[tuple[str, str, bytes]]:
     report_day = data["report_day"].isoformat()
-    overall_headers = ["التاريخ", "الرقم الوظيفي", "الموظف", "الحالة", "أول دخول", "آخر خروج", "دقائق التأخير", "ساعات العمل", "ملاحظة"]
-    delay_headers = ["التاريخ", "الرقم الوظيفي", "الموظف", "وقت الدخول", "مدة التأخير (دقيقة)", "مدة التأخير (ساعات)"]
-    absence_headers = ["التاريخ", "الرقم الوظيفي", "الموظف", "الحالة", "أول دخول", "آخر خروج"]
+    overall_headers = ["التاريخ", "الرقم الوظيفي", "الموظف", "مقر العمل", "الحالة", "أول دخول", "آخر خروج", "دقائق التأخير", "ساعات العمل", "ملاحظة"]
+    delay_headers = ["التاريخ", "الرقم الوظيفي", "الموظف", "مقر العمل", "وقت الدخول", "مدة التأخير (دقيقة)", "مدة التأخير (ساعات)"]
+    absence_headers = ["التاريخ", "الرقم الوظيفي", "الموظف", "مقر العمل", "الحالة", "أول دخول", "آخر خروج"]
     departure_headers = [
         "التاريخ",
         "الرقم الوظيفي",
         "الموظف",
+        "مقر العمل",
         "نوع المغادرة",
         "نوع الطلب",
         "المصدر",
@@ -818,15 +882,15 @@ def _attachments(data: dict[str, Any]) -> list[tuple[str, str, bytes]]:
         "الحالة",
     ]
     overall_rows = [
-        [row["date"], row["employee_no"], row["name"], row["status"], row["first_in"], row["last_out"], row["late_minutes"], round(row["work_minutes"] / 60, 2), row["note"]]
+        [row["date"], row["employee_no"], row["name"], row.get("work_location", ""), row["status"], row["first_in"], row["last_out"], row["late_minutes"], round(row["work_minutes"] / 60, 2), row["note"]]
         for row in data["overall"]
     ]
     delay_rows = [
-        [row["date"], row["employee_no"], row["name"], row["first_in"], row["late_minutes"], round(row["late_minutes"] / 60, 2)]
+        [row["date"], row["employee_no"], row["name"], row.get("work_location", ""), row["first_in"], row["late_minutes"], round(row["late_minutes"] / 60, 2)]
         for row in data["late"]
     ]
     absence_rows = [
-        [row["date"], row["employee_no"], row["name"], row["status"], row["first_in"], row["last_out"]]
+        [row["date"], row["employee_no"], row["name"], row.get("work_location", ""), row["status"], row["first_in"], row["last_out"]]
         for row in data["absence"]
     ]
     departure_rows = [
@@ -834,6 +898,7 @@ def _attachments(data: dict[str, Any]) -> list[tuple[str, str, bytes]]:
             row["date"],
             row["employee_no"],
             row["name"],
+            row.get("work_location", ""),
             row["departure_type"],
             row["permission_name"],
             row["source"],
@@ -872,10 +937,10 @@ def build_email_content(data: dict[str, Any]) -> tuple[str, str, str]:
     if scheduled_time:
         subject += f" — {scheduled_time}"
     sections = [
-        ("تقرير الدوام اليومي العام", "#2F5597", data["overall"], [("employee_no", "الرقم الوظيفي"), ("name", "الموظف"), ("status", "الحالة"), ("first_in", "أول دخول"), ("last_out", "آخر خروج"), ("late_minutes", "التأخير (دقيقة)")]),
-        ("تقرير التأخير الصباحي", "#BF7E00", data["late"], [("employee_no", "الرقم الوظيفي"), ("name", "الموظف"), ("first_in", "وقت الدخول"), ("late_minutes", "مدة التأخير (دقيقة)")]),
-        ("تقرير الغياب دون إجازة عبر مسار", "#B42318", data["absence"], [("employee_no", "الرقم الوظيفي"), ("name", "الموظف"), ("status", "الحالة")]),
-        ("قائمة المغادرات", "#2F7D6D", data.get("departures", []), [("employee_no", "الرقم الوظيفي"), ("name", "الموظف"), ("departure_type", "نوع المغادرة"), ("permission_name", "نوع الطلب"), ("source", "المصدر"), ("time_range", "مصدر وأوقات المغادرة"), ("minutes", "المدة (دقيقة)"), ("status", "الحالة")]),
+        ("تقرير الدوام اليومي العام", "#2F5597", data["overall"], [("employee_no", "الرقم الوظيفي"), ("name", "الموظف"), ("work_location", "مقر العمل"), ("status", "الحالة"), ("first_in", "أول دخول"), ("last_out", "آخر خروج"), ("late_minutes", "التأخير (دقيقة)")]),
+        ("تقرير التأخير الصباحي", "#BF7E00", data["late"], [("employee_no", "الرقم الوظيفي"), ("name", "الموظف"), ("work_location", "مقر العمل"), ("first_in", "وقت الدخول"), ("late_minutes", "مدة التأخير (دقيقة)")]),
+        ("تقرير الغياب دون إجازة عبر مسار", "#B42318", data["absence"], [("employee_no", "الرقم الوظيفي"), ("name", "الموظف"), ("work_location", "مقر العمل"), ("status", "الحالة")]),
+        ("قائمة المغادرات", "#2F7D6D", data.get("departures", []), [("employee_no", "الرقم الوظيفي"), ("name", "الموظف"), ("work_location", "مقر العمل"), ("departure_type", "نوع المغادرة"), ("permission_name", "نوع الطلب"), ("source", "المصدر"), ("time_range", "مصدر وأوقات المغادرة"), ("minutes", "المدة (دقيقة)"), ("status", "الحالة")]),
     ]
     html_sections = []
     text_sections = []

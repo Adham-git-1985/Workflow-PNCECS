@@ -1,7 +1,9 @@
 import unittest
 from datetime import datetime, time
+from io import BytesIO
 from unittest.mock import patch
 
+from openpyxl import load_workbook
 from sqlalchemy import create_engine, select
 
 from models import HRAttendanceEmailReportDelivery
@@ -113,6 +115,7 @@ class AttendanceReportEmailTests(unittest.TestCase):
             "departures": [{
                 "employee_no": "1001",
                 "name": "موظف الاختبار",
+                "work_location": "المقر الرئيسي",
                 "departure_type": "مغادرة شخصية",
                 "permission_name": "مغادرة عادية",
                 "source": "ساعة الدوام",
@@ -125,6 +128,43 @@ class AttendanceReportEmailTests(unittest.TestCase):
         self.assertIn("15:30", subject)
         self.assertIn("قائمة المغادرات", text_body)
         self.assertIn("موظف الاختبار", html_body)
+        self.assertIn("مقر العمل", html_body)
+        self.assertIn("المقر الرئيسي", html_body)
+
+    def test_work_location_is_included_in_every_email_attachment(self):
+        row = {
+            "date": "2026-09-23",
+            "employee_no": "1001",
+            "name": "موظف الاختبار",
+            "work_location": "مقر خارج الرئيسي",
+            "status": "حاضر",
+            "first_in": "08:00",
+            "last_out": "15:00",
+            "late_minutes": 0,
+            "work_minutes": 420,
+            "note": "",
+            "departure_type": "مغادرة شخصية",
+            "permission_name": "مغادرة عادية",
+            "source": "ساعة الدوام",
+            "time_range": "من 10:00 إلى 10:30",
+            "minutes": 30,
+        }
+        data = {
+            "report_day": datetime(2026, 9, 23).date(),
+            "overall": [row],
+            "late": [row],
+            "absence": [row],
+            "departures": [row],
+        }
+
+        for _filename, _mime_type, payload in attendance_email._attachments(data):
+            workbook = load_workbook(BytesIO(payload), read_only=True)
+            sheet = workbook.active
+            headers = [cell.value for cell in sheet[3]]
+            values = [cell.value for cell in sheet[4]]
+            self.assertIn("مقر العمل", headers)
+            self.assertIn("مقر خارج الرئيسي", values)
+            workbook.close()
 
     def test_delivery_marker_allows_two_slots_on_the_same_day(self):
         engine = create_engine("sqlite:///:memory:")
