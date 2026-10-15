@@ -266,7 +266,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(step.escalated_from_user_id, self.manager.id)
         self.assertEqual(step.due_at, first_due_at + timedelta(hours=2))
         self.assertTrue(can_user_act(first_approver, step))
-        self.assertFalse(can_user_act(self.manager, step))
+        self.assertTrue(can_user_act(self.manager, step))
 
         second_due_at = step.due_at
         second_result = process_pending_approvals(
@@ -280,6 +280,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertIsNone(step.due_at)
         self.assertTrue(can_user_act(second_approver, step))
         self.assertFalse(can_user_act(first_approver, step))
+        self.assertTrue(can_user_act(self.manager, step))
         # Escalation removes the former manager from the active inbox. Both
         # earlier reviewers retain read-only access through the history tabs.
         self.assertTrue(can_view_request(self.manager, request_kind, row.id))
@@ -299,7 +300,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         with patch("portal.routes.render_template", return_value="ok") as render:
             detail = client.get(detail_url)
         self.assertEqual(detail.status_code, 200)
-        self.assertFalse(render.call_args.kwargs["can_act"])
+        self.assertTrue(render.call_args.kwargs["can_act"])
 
         with patch("portal.routes.render_template", return_value="ok") as render:
             inbox = client.get("/portal/hr/approvals")
@@ -309,7 +310,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             if request_kind == KIND_LEAVE
             else render.call_args.kwargs["perm_reqs"]
         )
-        self.assertNotIn(row.id, [visible_row.id for visible_row in visible_rows])
+        self.assertIn(row.id, [visible_row.id for visible_row in visible_rows])
 
         final_result = process_pending_approvals(
             now=second_due_at + timedelta(days=3),
@@ -466,8 +467,8 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         )
         self.assertTrue(can_view_request(self.manager, KIND_LEAVE, row.id))
         self.assertTrue(can_view_request(second_manager, KIND_LEAVE, row.id))
-        self.assertFalse(can_user_act(self.manager, step))
-        self.assertFalse(can_user_act(second_manager, step))
+        self.assertTrue(can_user_act(self.manager, step))
+        self.assertTrue(can_user_act(second_manager, step))
 
     def test_explicit_hr_notification_exemption_keeps_direct_tasks_only(self):
         """An HR member can opt out of broad HR routing without losing a direct task."""

@@ -75,6 +75,8 @@
           {% set summary = details.get('summary') or {} %}
           {% set source_summary = details.get('source_summary') or {} %}
           {% set departure_source = source_summary.get('DEPARTURES') or {} %}
+          {% set live_departure = live_departures_by_user.get(item.user_id) or {} %}
+          {% set pending = pending_approval_by_user.get(item.user_id) or {} %}
           {% set total_source_minutes = summary.get('selected_source_minutes') %}
           {% if total_source_minutes is none %}{% set total_source_minutes = (summary.get('attendance_chargeable_minutes') or 0) + (summary.get('permission_chargeable_minutes') or 0) %}{% endif %}
           {% if total_source_minutes == 0 and not summary and not source_summary %}{% set total_source_minutes = item.chargeable_minutes or 0 %}{% endif %}
@@ -83,7 +85,7 @@
             <td>{{ item.late_minutes }} د</td>
             <td>{{ item.early_leave_minutes }} د</td>
             <td>{{ item.absent_days }} يوم</td>
-            <td><div>{{ item.departure_minutes or item.approved_permission_minutes or 0 }} د / {{ "%.2f"|format((item.departure_minutes or item.approved_permission_minutes or 0) / 60) }} س</div>{% if departure_source %}<div class="small text-danger fw-semibold">داخل الخصم: {{ departure_source.get('current_consumed_minutes', departure_source.get('consumed_minutes', 0)) }} د</div>{% endif %}</td>
+            <td><div>{{ item.departure_minutes or item.approved_permission_minutes or 0 }} د / {{ "%.2f"|format((item.departure_minutes or item.approved_permission_minutes or 0) / 60) }} س</div>{% if live_departure %}<div class="small text-success fw-semibold">المسجل حالياً: {{ live_departure.get('count', 0) }} مغادرة / {{ live_departure.get('minutes', 0) }} د</div>{% endif %}{% if departure_source %}<div class="small text-danger fw-semibold">داخل الخصم: {{ departure_source.get('current_consumed_minutes', departure_source.get('consumed_minutes', 0)) }} د</div>{% endif %}</td>
             <td>{{ "%.2f"|format(details.get('hours_per_day') or (((details.get('minutes_per_day', 390) or 390) / 60) or 6.5)) }} س</td>
             <td>{{ "%.2f"|format((item.excluded_minutes or 0) / 60) }} س</td>
             <td class="text-danger fw-bold fs-5">{{ "%.2f"|format((item.chargeable_minutes or 0) / 60) }} س</td>
@@ -108,9 +110,29 @@
                 {% else %}
                   <span class="text-muted small">هذه مسودة قديمة بلا تفاصيل مصادر؛ اضغط «تحديث المعاينة الحالية» لإظهار المغادرات والتأخير والخروج المبكر بدقة.</span>
                 {% endif %}
+                {% if live_departure %}
+                  <span class="border border-success rounded px-2 py-1 text-success fw-semibold">المغادرات المسجلة حالياً: {{ live_departure.get('count', 0) }} · {{ live_departure.get('minutes', 0) }} دقيقة</span>
+                {% endif %}
               </div>
             </td>
           </tr>
+          {% if pending.get('permission_count', 0) or pending.get('leave_count', 0) %}
+            <tr>
+              <td colspan="14">
+                <div class="alert alert-warning mb-0 py-2">
+                  <strong>تنبيه قبل الاعتماد:</strong>
+                  {% if pending.get('permission_count', 0) %}
+                    لدى الموظف {{ pending.get('permission_count', 0) }} مغادرة غير معتمدة من المدير بإجمالي {{ pending.get('permission_minutes', 0) }} دقيقة.
+                  {% endif %}
+                  {% if pending.get('leave_count', 0) %}
+                    {% if pending.get('permission_count', 0) %}كما يوجد{% else %}يوجد{% endif %} {{ pending.get('leave_count', 0) }} طلب إجازة غير معتمد{% if pending.get('leave_count', 0) != 1 %}ة{% endif %}.
+                  {% endif %}
+                  لن تدخل الطلبات غير المعتمدة في الخصم حتى يعتمدها المدير.
+                  <a class="alert-link" href="{{ url_for('portal.hr_approvals', status='SUBMITTED') }}">فتح شاشة الاعتمادات</a>
+                </div>
+              </td>
+            </tr>
+          {% endif %}
           <tr>
             <td colspan="14" class="bg-body-tertiary">
               <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#deductionDetails{{ item.id }}"><i class="bi bi-list-ul"></i> تفاصيل الأيام والمغادرات والاستثناءات</button>

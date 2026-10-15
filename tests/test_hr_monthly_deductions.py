@@ -45,6 +45,8 @@ from portal.routes import (
     _leave_rollover_rows,
     _save_leave_rollover_decision,
     _leave_used_days_as_of,
+    _deduction_live_departure_summary,
+    _deduction_pending_approval_summary,
     _monthly_attendance_deduction_breakdown,
     _has_manual_deduction_operation,
     run_automatic_leave_deduction_cycle,
@@ -315,6 +317,45 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
         self.assertEqual(remote_day["chargeable_minutes"], 50)
         self.assertEqual(remote_departure["exclusion_code"], "")
         self.assertEqual(remote_departure["chargeable_minutes"], 60)
+        live = _deduction_live_departure_summary(
+            [self.user.id],
+            "2026-03-01",
+            "2026-03-31",
+        )
+        self.assertEqual(live[self.user.id]["count"], 1)
+        self.assertEqual(live[self.user.id]["minutes"], 60)
+
+    def test_preview_reports_pending_permissions_separately_from_approved_sources(self):
+        permission_type = HRPermissionType(
+            code="PENDING_PREVIEW",
+            name_ar="مغادرة قيد الاعتماد",
+            counts_as_work=False,
+            deduct_from_allowance=True,
+        )
+        db.session.add(permission_type)
+        db.session.flush()
+        db.session.add(HRPermissionRequest(
+            user_id=self.user.id,
+            permission_type_id=permission_type.id,
+            day="2026-03-10",
+            from_time="10:00",
+            to_time="11:30",
+            status="SUBMITTED",
+        ))
+        db.session.commit()
+
+        pending = _deduction_pending_approval_summary(
+            [self.user.id],
+            "2026-03-01",
+            "2026-03-31",
+        )
+        self.assertEqual(pending[self.user.id]["permission_count"], 1)
+        self.assertEqual(pending[self.user.id]["permission_minutes"], 90)
+        self.assertNotIn(self.user.id, _deduction_live_departure_summary(
+            [self.user.id],
+            "2026-03-01",
+            "2026-03-31",
+        ))
 
     def test_balance_correction_and_reversal_recalculate_remaining_balance(self):
         leave_type = HRLeaveType(

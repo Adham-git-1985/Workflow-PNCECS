@@ -1721,6 +1721,18 @@ def can_user_act(user: User, step: HRRequestApprovalStep | None, *, now: datetim
         delegation = _active_delegation_for(approver_user_id, now)
         if delegation and delegation.to_user_id == user.id:
             return True
+
+    # A timed escalation changes the active recipient, but it must not remove
+    # the original direct manager's ability to finish the request.  This is
+    # intentionally limited to the direct-manager stage and to the immutable
+    # initial candidates; later escalation targets are not treated as direct
+    # managers and remain governed by the current approver list.
+    if (
+        (getattr(step, "stage_code", None) or "").upper() == STAGE_DIRECT_MANAGER
+        and _configured_escalation_count(step) > 0
+        and int(user.id) in set(_initial_step_approver_ids(step))
+    ):
+        return True
     if approver_ids:
         return False
 
@@ -2325,6 +2337,10 @@ def request_ids_user_can_act_on(user: User, kind: str) -> list[int]:
             HRRequestApprovalStep.approver_scope,
             HRRequestApprovalStep.approver_user_id,
             HRRequestApprovalStep.approver_user_ids,
+            HRRequestApprovalStep.stage_code,
+            HRRequestApprovalStep.initial_approver_user_ids,
+            HRRequestApprovalStep.escalation_count,
+            HRRequestApprovalStep.escalation_reason,
         )
         .filter(
             HRRequestApprovalStep.request_kind == kind,
@@ -2456,6 +2472,19 @@ def request_ids_user_can_act_on(user: User, kind: str) -> list[int]:
                 for approver_id in step_approver_ids
             ):
                 ids.add(request_id)
+            if request_id in ids:
+                continue
+
+        # Keep escalated requests visible in the original manager's actionable
+        # inbox as well as in the escalation target's inbox.  The full
+        # ``can_user_act`` check remains the final authorization at decision
+        # time, including the compensatory-leave observer restriction.
+        if (
+            (getattr(step, "stage_code", None) or "").upper() == STAGE_DIRECT_MANAGER
+            and _configured_escalation_count(step) > 0
+            and int(user.id) in set(_initial_step_approver_ids(step))
+        ):
+            ids.add(request_id)
             continue
         scope = (step.approver_scope or SCOPE_USER).upper()
         if user_matches_scope(scope):

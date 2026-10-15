@@ -16989,6 +16989,22 @@ def hr_deductions_view(run_id: int):
             details_by_item[item.id] = json.loads(item.details_json or '{}')
         except (TypeError, ValueError, json.JSONDecodeError):
             details_by_item[item.id] = {}
+    live_departures_by_user = {}
+    pending_approval_by_user = {}
+    if (run.status or '').upper() == 'DRAFT' and visible_items:
+        month_start = f'{run.year:04d}-{run.month:02d}-01'
+        month_end = _end_of_month_str(run.year, run.month)
+        preview_user_ids = [item.user_id for item in visible_items]
+        live_departures_by_user = _deduction_live_departure_summary(
+            preview_user_ids,
+            month_start,
+            month_end,
+        )
+        pending_approval_by_user = _deduction_pending_approval_summary(
+            preview_user_ids,
+            month_start,
+            month_end,
+        )
     return render_template(
         'portal/hr/deductions_view.html',
         run=run,
@@ -16998,6 +17014,8 @@ def hr_deductions_view(run_id: int):
         can_adjust=bool(can_approve and (run.status or '').upper() == 'DRAFT'),
         can_reverse=bool(can_approve and (run.status or '').upper() == 'FINAL'),
         details_by_item=details_by_item,
+        live_departures_by_user=live_departures_by_user,
+        pending_approval_by_user=pending_approval_by_user,
     )
 
 
@@ -21758,6 +21776,128 @@ def _deduction_departure_details(
     }
 
 
+def _deduction_live_departure_summary(
+    user_ids,
+    start_day: str,
+    end_day: str,
+) -> dict[int, dict[str, int]]:
+    """Summarize currently recorded approved/clock departures in one query.
+
+    This is used only by the draft preview so an old draft can show the
+    current source data without changing its stored calculation or balance.
+    Clock C/D/E/F movements are included as recorded attendance departures;
+    system rows are already limited to approved requests by the reconciler.
+    """
+    ids = sorted({int(value) for value in (user_ids or []) if value})
+    if not ids or not start_day or not end_day or end_day < start_day:
+        return {}
+    try:
+        records = _reconciled_departure_records(ids, start_day, end_day)
+    except Exception:
+        current_app.logger.exception(
+            "Failed to summarize draft departure sources for %s..%s",
+            start_day,
+            end_day,
+        )
+        return {}
+
+    result: dict[int, dict[str, int]] = {}
+    for record in records:
+        user_id = int(record.get("user_id") or 0)
+        minutes = max(0, int(record.get("minutes") or 0))
+        if not user_id or not minutes:
+            continue
+        bucket = result.setdefault(
+            user_id,
+            {
+                "count": 0,
+                "minutes": 0,
+                "chargeable_minutes": 0,
+            },
+        )
+        bucket["count"] += 1
+        bucket["minutes"] += minutes
+        if (
+            record.get("kind") == "PRIVATE"
+            and record.get("countable")
+            and record.get("deduct_from_allowance", True)
+        ):
+            bucket["chargeable_minutes"] += minutes
+    return result
+
+
+def _deduction_pending_approval_summary(
+    user_ids,
+    start_day: str,
+    end_day: str,
+) -> dict[int, dict[str, int]]:
+    """Return pending leave/permission counts for the draft warning banner."""
+    ids = sorted({int(value) for value in (user_ids or []) if value})
+    if not ids or not start_day or not end_day or end_day < start_day:
+        return {}
+    result = {
+        user_id: {
+            "permission_count": 0,
+            "permission_minutes": 0,
+            "leave_count": 0,
+            "leave_days": 0,
+        }
+        for user_id in ids
+    }
+
+    permission_rows = (
+        HRPermissionRequest.query
+        .filter(HRPermissionRequest.user_id.in_(ids))
+        .filter(HRPermissionRequest.status.in_(("SUBMITTED", "PENDING")))
+        .filter(HRPermissionRequest.day >= start_day)
+        .filter(HRPermissionRequest.day <= end_day)
+        .all()
+    )
+    for row in permission_rows:
+        bucket = result.setdefault(
+            int(row.user_id),
+            {
+                "permission_count": 0,
+                "permission_minutes": 0,
+                "leave_count": 0,
+                "leave_days": 0,
+            },
+        )
+        bucket["permission_count"] += 1
+        bucket["permission_minutes"] += _permission_request_minutes(row)
+
+    try:
+        leave_rows = (
+            HRLeaveRequest.query
+            .filter(HRLeaveRequest.user_id.in_(ids))
+            .filter(HRLeaveRequest.status.in_(("SUBMITTED", "PENDING")))
+            .filter(HRLeaveRequest.start_date <= end_day)
+            .filter(HRLeaveRequest.end_date >= start_day)
+            .all()
+        )
+    except Exception:
+        # Some old installations upgrade the leave table during application
+        # startup. A stale read must not make the deduction preview fail.
+        db.session.rollback()
+        current_app.logger.exception(
+            "Failed to load pending leave requests for deduction preview"
+        )
+        leave_rows = []
+    for row in leave_rows:
+        bucket = result.setdefault(
+            int(row.user_id),
+            {
+                "permission_count": 0,
+                "permission_minutes": 0,
+                "leave_count": 0,
+                "leave_days": 0,
+            },
+        )
+        bucket["leave_count"] += 1
+        bucket["leave_days"] += max(0, int(row.days or 0))
+    return result
+
+
 def _monthly_attendance_deduction_breakdown(
     user_id: int,
     year: int,
@@ -21922,6 +22062,11 @@ def _monthly_attendance_deduction_breakdown(
                 "permission_chargeable_minutes": departure_result["chargeable_minutes"],
                 "permission_eligible_minutes": departure_result["eligible_minutes"],
                 "permission_allowance_used_minutes": departure_result["allowance_used_minutes"],
+                "approved_departure_count": sum(
+                    1
+                    for departure in departure_result["details"]
+                    if int(departure.get("minutes") or 0) > 0
+                ),
                 "excluded_minutes": excluded_minutes,
                 "remote_days": sum(1 for row in rows_by_day.values() if _deduction_day_reason(row) == "HYBRID_REMOTE"),
                 "mission_days": sum(1 for row in rows_by_day.values() if _deduction_day_reason(row) == "OFFICIAL_MISSION"),
