@@ -632,7 +632,8 @@
     {% set route_name = s.routing_label or (route_user.full_name if route_user else None) or (route_user.email if route_user else None) or ('#' ~ s.approver_user_id) %}
     {% set route_title = s.routing_job_title or (route_user.job_title if route_user else None) %}
     <div class="border-start border-4 border-primary ps-2 mt-1">
-      {% if s.approver_role == "ATTENDANCE_DELAY_DIRECT_MANAGERS" and attendance_delay_direct_managers %}
+      {# Show every current responsible manager for both legacy and new delay requests. #}
+      {% if attendance_delay_case and (s.step_order|int) == 2 and attendance_delay_direct_managers %}
         <div><span class="badge bg-secondary me-1">المديرون المباشرون</span></div>
         <div class="d-flex flex-column gap-1 mt-1">
           {% for direct_manager in attendance_delay_direct_managers %}
