@@ -31,10 +31,12 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from PIL import Image
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import noload
 
 from extensions import db
 from models import (
     AuditLog,
+    Committee,
     InvFixedAsset,
     InvFixedAssetCycle,
     InvFixedAssetCycleMember,
@@ -58,6 +60,7 @@ from services.fixed_asset_inventory import (
     INVENTORY_RESULT_LABELS,
     close_inventory_cycle,
     cycle_result_counts,
+    cycle_result_counts_for_cycles,
     find_asset_by_identifier,
     normalize_asset_identifier,
     populate_cycle_entries,
@@ -825,13 +828,16 @@ def fixed_assets_dashboard():
     }
     active_cycles = (
         InvFixedAssetCycle.query
+        .options(noload(InvFixedAssetCycle.entries), noload(InvFixedAssetCycle.manual_previous_lines))
         .filter(InvFixedAssetCycle.status == "ACTIVE")
         .order_by(InvFixedAssetCycle.inventory_date.desc(), InvFixedAssetCycle.id.desc())
         .all()
     )
-    cycle_cards = [(cycle, cycle_result_counts(cycle.id)) for cycle in active_cycles]
+    active_cycle_counts = cycle_result_counts_for_cycles(cycle.id for cycle in active_cycles)
+    cycle_cards = [(cycle, active_cycle_counts[cycle.id]) for cycle in active_cycles]
     recent_cycles = (
         InvFixedAssetCycle.query
+        .options(noload(InvFixedAssetCycle.entries), noload(InvFixedAssetCycle.manual_previous_lines))
         .order_by(InvFixedAssetCycle.inventory_date.desc(), InvFixedAssetCycle.id.desc())
         .limit(8)
         .all()
@@ -1431,8 +1437,14 @@ def fixed_asset_cycles():
             InvFixedAssetCycle.name.ilike(like),
             InvFixedAssetCycle.committee_name.ilike(like),
         ))
-    cycles = query.order_by(InvFixedAssetCycle.inventory_date.desc(), InvFixedAssetCycle.id.desc()).limit(250).all()
-    rows = [(cycle, cycle_result_counts(cycle.id)) for cycle in cycles]
+    cycles = query.options(
+        noload(InvFixedAssetCycle.entries),
+        noload(InvFixedAssetCycle.manual_previous_lines),
+    ).order_by(
+        InvFixedAssetCycle.inventory_date.desc(), InvFixedAssetCycle.id.desc()
+    ).limit(250).all()
+    cycle_counts = cycle_result_counts_for_cycles(cycle.id for cycle in cycles)
+    rows = [(cycle, cycle_counts[cycle.id]) for cycle in cycles]
     return render_template(
         "portal/inventory/fixed_assets/cycle_list.html",
         rows=rows,
@@ -1449,6 +1461,7 @@ def fixed_asset_cycle_new():
         "code": _next_cycle_code(),
         "name": f"الجرد السنوي للأصول الثابتة {date.today().year}",
         "inventory_date": date.today().isoformat(),
+        "committee_id": None,
         "committee_name": "لجنة الجرد",
         "previous_cycle_id": None,
         "scope_warehouse_id": None,
@@ -1459,6 +1472,7 @@ def fixed_asset_cycle_new():
     }
     previous_cycles = (
         InvFixedAssetCycle.query
+        .options(noload(InvFixedAssetCycle.entries), noload(InvFixedAssetCycle.manual_previous_lines))
         .filter(InvFixedAssetCycle.status == "CLOSED")
         .order_by(InvFixedAssetCycle.inventory_date.desc(), InvFixedAssetCycle.id.desc())
         .all()
@@ -1471,6 +1485,7 @@ def fixed_asset_cycle_new():
             "code": _clean_text(request.form.get("code"), 80) or _next_cycle_code(),
             "name": _clean_text(request.form.get("name"), 255),
             "inventory_date": request.form.get("inventory_date") or "",
+            "committee_id": _optional_int(request.form.get("committee_id")),
             "committee_name": _clean_text(request.form.get("committee_name"), 255),
             "previous_cycle_id": _optional_int(request.form.get("previous_cycle_id")),
             "scope_warehouse_id": _optional_int(request.form.get("scope_warehouse_id")),
@@ -1486,6 +1501,7 @@ def fixed_asset_cycle_new():
             _entity_or_none(InvWarehouse, form_values["scope_warehouse_id"], "المستودع")
             _entity_or_none(InvRoom, form_values["scope_room_id"], "الغرفة")
             previous_cycle = _entity_or_none(InvFixedAssetCycle, form_values["previous_cycle_id"], "الدورة السابقة")
+            committee = _entity_or_none(Committee, form_values["committee_id"], "لجنة الجرد")
             _entity_or_none(User, form_values["chair_user_id"], "رئيس اللجنة")
 
             duplicate = InvFixedAssetCycle.query.filter(
@@ -1498,6 +1514,7 @@ def fixed_asset_cycle_new():
                 code=form_values["code"].upper(),
                 name=form_values["name"],
                 inventory_date=inventory_date,
+                committee_id=committee.id if committee else None,
                 committee_name=form_values["committee_name"],
                 previous_cycle_id=previous_cycle.id if previous_cycle else None,
                 scope_warehouse_id=form_values["scope_warehouse_id"],
@@ -1544,6 +1561,7 @@ def fixed_asset_cycle_new():
         "portal/inventory/fixed_assets/cycle_form.html",
         form=form_values,
         previous_cycles=previous_cycles,
+        committees=Committee.query.filter_by(is_active=True).order_by(Committee.name_ar.asc()).all(),
         is_edit=False,
         **choices,
     )
@@ -1553,12 +1571,19 @@ def fixed_asset_cycle_new():
 @login_required
 @_perm_any(STORE_MANAGE)
 def fixed_asset_cycle_edit(cycle_id: int):
-    cycle = InvFixedAssetCycle.query.get_or_404(cycle_id)
+    cycle = InvFixedAssetCycle.query.options(
+        noload(InvFixedAssetCycle.entries),
+        noload(InvFixedAssetCycle.manual_previous_lines),
+    ).get_or_404(cycle_id)
+    if cycle.finalized_at is not None:
+        flash("اعتمد الأمين العام تقرير هذه الدورة؛ لا يمكن تعديلها.", "warning")
+        return redirect(url_for("portal.fixed_asset_cycle_view", cycle_id=cycle.id))
     chair = next((member for member in cycle.members if member.member_role == "CHAIR"), None)
     form_values = {
         "code": cycle.code,
         "name": cycle.name,
         "inventory_date": cycle.inventory_date,
+        "committee_id": cycle.committee_id,
         "committee_name": cycle.committee_name or "",
         "previous_cycle_id": cycle.previous_cycle_id,
         "scope_warehouse_id": cycle.scope_warehouse_id,
@@ -1572,6 +1597,7 @@ def fixed_asset_cycle_edit(cycle_id: int):
             "code": _clean_text(request.form.get("code"), 80),
             "name": _clean_text(request.form.get("name"), 255),
             "inventory_date": request.form.get("inventory_date") or "",
+            "committee_id": _optional_int(request.form.get("committee_id")),
             "committee_name": _clean_text(request.form.get("committee_name"), 255),
             "chair_user_id": _optional_int(request.form.get("chair_user_id")),
             "member_ids": [_optional_int(value) for value in request.form.getlist("member_ids")],
@@ -1593,6 +1619,8 @@ def fixed_asset_cycle_edit(cycle_id: int):
             cycle.code = form_values["code"].upper()
             cycle.name = form_values["name"]
             cycle.inventory_date = inventory_date
+            committee = _entity_or_none(Committee, form_values["committee_id"], "لجنة الجرد")
+            cycle.committee_id = committee.id if committee else None
             cycle.committee_name = form_values["committee_name"]
             cycle.note = form_values["note"] or None
             cycle.members.clear()
@@ -1625,6 +1653,7 @@ def fixed_asset_cycle_edit(cycle_id: int):
 
     previous_cycles = (
         InvFixedAssetCycle.query
+        .options(noload(InvFixedAssetCycle.entries), noload(InvFixedAssetCycle.manual_previous_lines))
         .filter(InvFixedAssetCycle.status == "CLOSED")
         .filter(InvFixedAssetCycle.id != cycle.id)
         .order_by(InvFixedAssetCycle.inventory_date.desc(), InvFixedAssetCycle.id.desc())
@@ -1634,6 +1663,7 @@ def fixed_asset_cycle_edit(cycle_id: int):
         "portal/inventory/fixed_assets/cycle_form.html",
         form=form_values,
         previous_cycles=previous_cycles,
+        committees=Committee.query.filter_by(is_active=True).order_by(Committee.name_ar.asc()).all(),
         is_edit=True,
         **_choices(),
     )
@@ -1642,7 +1672,10 @@ def fixed_asset_cycle_edit(cycle_id: int):
 @portal_bp.route("/inventory/fixed-assets/cycles/<int:cycle_id>")
 @login_required
 def fixed_asset_cycle_view(cycle_id: int):
-    cycle = InvFixedAssetCycle.query.get_or_404(cycle_id)
+    cycle = InvFixedAssetCycle.query.options(
+        noload(InvFixedAssetCycle.entries),
+        noload(InvFixedAssetCycle.manual_previous_lines),
+    ).get_or_404(cycle_id)
     if not (current_user.has_perm(STORE_READ) or _can_scan_cycle(cycle)):
         abort(403)
     status = (request.args.get("status") or "").strip().upper()
@@ -1657,7 +1690,13 @@ def fixed_asset_cycle_view(cycle_id: int):
             InvFixedAsset.name.ilike(like),
             InvFixedAsset.serial_number.ilike(like),
         ))
-    entries = query.order_by(InvFixedAsset.asset_tag.asc()).all()
+    page = max(_optional_int(request.args.get("page")) or 1, 1)
+    pagination = query.order_by(InvFixedAsset.asset_tag.asc()).paginate(
+        page=page,
+        per_page=60,
+        error_out=False,
+    )
+    entries = pagination.items
     recent_scans = (
         InvFixedAssetScanLog.query
         .filter(InvFixedAssetScanLog.cycle_id == cycle.id)
@@ -1669,10 +1708,15 @@ def fixed_asset_cycle_view(cycle_id: int):
         "portal/inventory/fixed_assets/cycle_view.html",
         cycle=cycle,
         entries=entries,
+        pagination=pagination,
         stats=cycle_result_counts(cycle.id),
         recent_scans=recent_scans,
         selected={"q": search, "status": status},
         can_manage=current_user.has_perm(STORE_MANAGE),
+        can_edit=bool(
+            current_user.has_perm(STORE_MANAGE)
+            and cycle.finalized_at is None
+        ),
         can_scan=_can_scan_cycle(cycle),
         can_export=current_user.has_perm(STORE_EXPORT) or current_user.has_perm(STORE_MANAGE),
     )

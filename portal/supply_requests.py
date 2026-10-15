@@ -634,6 +634,29 @@ def _can_process(row):
     return current_user.id in _stage_approver_ids(row, _effective_approval_stage(row))
 
 
+def _processable_request_query():
+    """Build the current user's task query without hydrating every request."""
+    query = InvEmployeeRequest.query.filter(InvEmployeeRequest.status == "SUBMITTED")
+    if _is_system_admin(current_user):
+        return query
+
+    allowed_stages = set()
+    if current_user.id in _warehouse_approver_ids():
+        allowed_stages.update({"WAREHOUSE", "MANAGER"})
+    if current_user.id in _hr_fallback_approver_ids():
+        allowed_stages.update({"HR", "MANAGER"})
+    for stage in STAGE_APPROVAL_PERMISSIONS:
+        if current_user.id in _special_stage_approver_ids(stage):
+            allowed_stages.add(stage)
+
+    if not allowed_stages:
+        return query.filter(InvEmployeeRequest.id == -1)
+    return query.filter(
+        InvEmployeeRequest.requester_user_id != current_user.id,
+        InvEmployeeRequest.approval_stage.in_(sorted(allowed_stages)),
+    )
+
+
 def _can_manage():
     configured_ids = {
         _setting("INVENTORY_WAREHOUSE_MANAGER_USER_ID"),
@@ -1251,12 +1274,18 @@ def inventory_employee_requests():
         query = query.filter_by(requester_user_id=current_user.id)
     requester_users = _employee_request_filter_users(query) if can_manage else []
     filters = _employee_request_filter_values()
-    rows = (
+    filtered_query = (
         _apply_employee_request_filters(query, filters, can_filter_by_user=can_manage)
-        .order_by(InvEmployeeRequest.created_at.desc(), InvEmployeeRequest.id.desc())
-        .all()
     )
-    pending_count = sum(1 for row in rows if _can_process(row))
+    pagination = filtered_query.order_by(
+        InvEmployeeRequest.created_at.desc(), InvEmployeeRequest.id.desc()
+    ).paginate(
+        page=max(request.args.get("page", 1, type=int), 1),
+        per_page=30,
+        error_out=False,
+    )
+    rows = pagination.items
+    pending_count = _processable_request_query().count() if can_manage else 0
     return render_template(
         "portal/inventory/employee_requests.html",
         rows=rows,
@@ -1268,6 +1297,7 @@ def inventory_employee_requests():
         can_manage=can_manage,
         can_manage_catalog=_can_manage_catalog(),
         pending_count=pending_count,
+        pagination=pagination,
     )
 
 
@@ -1278,15 +1308,19 @@ def inventory_employee_request_tasks():
     filters = _employee_request_filter_values()
     filters["status"] = "SUBMITTED"
     query = _apply_employee_request_filters(
-        InvEmployeeRequest.query.filter_by(status="SUBMITTED"),
+        _processable_request_query(),
         filters,
         can_filter_by_user=can_manage,
     )
-    rows = [
-        row for row in query.order_by(InvEmployeeRequest.created_at.desc(), InvEmployeeRequest.id.desc()).all()
-        if _can_process(row)
-    ]
-    requester_users = _employee_request_filter_users(InvEmployeeRequest.query) if can_manage else []
+    pagination = query.order_by(
+        InvEmployeeRequest.created_at.desc(), InvEmployeeRequest.id.desc()
+    ).paginate(
+        page=max(request.args.get("page", 1, type=int), 1),
+        per_page=30,
+        error_out=False,
+    )
+    rows = pagination.items
+    requester_users = _employee_request_filter_users(_processable_request_query()) if can_manage else []
     return render_template(
         "portal/inventory/employee_requests.html",
         rows=rows,
@@ -1297,8 +1331,9 @@ def inventory_employee_request_tasks():
         request_status_labels={row.id: _request_status_label(row) for row in rows},
         can_manage=can_manage,
         can_manage_catalog=_can_manage_catalog(),
-        pending_count=len(rows),
+        pending_count=pagination.total,
         tasks=True,
+        pagination=pagination,
     )
 
 

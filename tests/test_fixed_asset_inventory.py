@@ -20,6 +20,7 @@ from models import (
 )
 from services.fixed_asset_inventory import (
     close_inventory_cycle,
+    cycle_result_counts_for_cycles,
     find_asset_by_identifier,
     normalize_asset_identifier,
     populate_cycle_entries,
@@ -295,6 +296,41 @@ class FixedAssetInventoryTests(unittest.TestCase):
         self.assertEqual(normalize_asset_identifier(qr_url), asset.qr_token)
         self.assertEqual(find_asset_by_identifier(qr_url).id, asset.id)
         self.assertEqual(find_asset_by_identifier("fa:FA-000006").id, asset.id)
+
+    def test_bulk_cycle_counts_use_one_grouped_entry_query(self):
+        first = self._cycle("COUNTS-1")
+        second = self._cycle("COUNTS-2")
+        first_entry = InvFixedAssetEntry(
+            cycle_id=first.id,
+            asset_id=self._asset("FA-COUNTS-1").id,
+            result_status="MATCHED",
+        )
+        second_entry = InvFixedAssetEntry(
+            cycle_id=second.id,
+            asset_id=self._asset("FA-COUNTS-2").id,
+            result_status="MISSING",
+        )
+        db.session.add_all([first_entry, second_entry])
+        db.session.commit()
+        first_id, second_id = first.id, second.id
+
+        statements = []
+
+        def capture_entry_query(conn, cursor, statement, parameters, context, executemany):
+            if "from inv_fixed_asset_entry" in statement.lower():
+                statements.append(statement.lower())
+
+        from sqlalchemy import event
+
+        event.listen(db.engine, "before_cursor_execute", capture_entry_query)
+        try:
+            counts = cycle_result_counts_for_cycles([first_id, second_id])
+        finally:
+            event.remove(db.engine, "before_cursor_execute", capture_entry_query)
+
+        self.assertEqual(len(statements), 1)
+        self.assertEqual(counts[first_id]["MATCHED"], 1)
+        self.assertEqual(counts[second_id]["MISSING"], 1)
 
 
 class FixedAssetMigrationTests(unittest.TestCase):

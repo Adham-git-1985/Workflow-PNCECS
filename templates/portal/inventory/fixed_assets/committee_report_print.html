@@ -1,0 +1,49 @@
+{% extends "portal/inventory/base.html" %}
+{% block inv_content %}
+<style>
+  .official-report { max-width: 1100px; margin:auto; }
+  .employee-report { page-break-before: always; break-before: page; padding-top: 8px; }
+  .employee-report:first-of-type { page-break-before: auto; break-before: auto; }
+  .report-table { font-size: .86rem; }
+  .report-table th { background:#17365d; color:#fff; }
+  .report-table tr { break-inside: avoid; }
+  @media print {
+    nav, aside, footer, .no-print { display:none!important; }
+    .container, .container-fluid { max-width:100%!important; width:100%!important; }
+    .official-report { max-width:none; }
+    .employee-report { page-break-before: always; }
+    .employee-report:first-of-type { page-break-before: auto; }
+  }
+</style>
+<div class="official-report">
+  <div class="no-print d-flex justify-content-end gap-2 mb-3"><button class="btn btn-outline-primary" onclick="window.print()">طباعة / حفظ PDF</button><a class="btn btn-outline-success" href="{{ url_for('portal.asset_committee_report_pdf', cycle_id=cycle.id) }}">تنزيل PDF الرسمي</a></div>
+  {% if report.header_filename %}<div class="text-center mb-3"><img src="{{ url_for('portal.asset_committee_report_header', cycle_id=cycle.id) }}" alt="الترويسة" style="max-width:100%;max-height:130px;object-fit:contain"></div>{% endif %}
+  <h2 class="text-center">تقرير جرد الأصول الثابتة للموظفين</h2>
+  <p class="text-center">السنة / التاريخ: {{ cycle.inventory_date }} · دورة الجرد: {{ cycle.code }}</p>
+  <p class="text-center">من: {{ cycle.committee.label if cycle.committee else cycle.committee_name or 'لجنة الجرد الثابت' }} · إلى: الأمين العام{% if report.submitted_by %} · رفعه: {{ report.submitted_by.full_name }}{% endif %}</p>
+  {% if report.introduction %}<h5>مقدمة التقرير</h5><div class="mb-3" style="white-space:pre-wrap">{{ report.introduction }}</div>{% endif %}
+  {% if report.points %}<h5>بنود التقرير</h5><div class="mb-3" style="white-space:pre-wrap">{{ report.points }}</div>{% endif %}
+  {% if report.summary %}<h5>ملخص التقرير</h5><div class="mb-3" style="white-space:pre-wrap">{{ report.summary }}</div>{% endif %}
+
+  {% for employee in employees %}
+    {% set employee_docs = documents|selectattr('employee_id', 'equalto', employee.id)|list %}
+    {% set current_line_state = namespace(count=0) %}{% for doc in employee_docs %}{% for line in doc.lines %}{% if line.snapshot.get('included', True) %}{% set current_line_state.count = current_line_state.count + 1 %}{% endif %}{% endfor %}{% endfor %}
+    <section class="employee-report" id="employee-{{ employee.id }}">
+      <h3 class="text-center">الموظف: {{ employee.full_name }}</h3>
+      <p class="text-center">قرار الموظف: {% for doc in employee_docs %}{{ employee_response_labels.get(doc.employee_response, 'لم يقرر بعد') }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+      <p class="text-center">حالة المستند: {% for doc in employee_docs %}{{ statuses.get(doc.status, doc.status) }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+      <h5>بنود العهدة حسب الجرد</h5>
+      <div class="table-responsive"><table class="table table-bordered report-table"><thead><tr><th>م</th><th>الأصل</th><th>التسلسلي</th><th>الموقع</th><th>الحالة / الوضع</th><th>نتيجة الجرد</th></tr></thead><tbody>
+      {% set line_number = namespace(value=0) %}{% for doc in employee_docs %}{% for line in doc.lines %}{% if line.snapshot.get('included', True) %}{% set line_number.value = line_number.value + 1 %}{% set snap = line.snapshot %}<tr><td>{{ line_number.value }}</td><td><strong>{{ snap.get('tag') }}</strong><br>{{ snap.get('name') }}</td><td>{{ snap.get('serial') or '-' }}</td><td>{{ snap.get('location') or '-' }}</td><td>{{ condition_labels.get(snap.get('condition'), snap.get('condition') or '-') }}<br>{{ lifecycle_labels.get(snap.get('target_lifecycle'), snap.get('target_lifecycle') or '-') }}</td><td>{{ result_labels.get(snap.get('result'), snap.get('result') or '-') }}</td></tr>{% endif %}{% endfor %}{% endfor %}{% if current_line_state.count == 0 %}<tr><td colspan="6">لا توجد بنود.</td></tr>{% endif %}
+      </tbody></table></div>
+      <h5>تقرير الفروقات</h5>
+      <p class="small text-muted">تتم مقارنة بيانات هذه البنود مع {{ cycle.previous_cycle.inventory_date if cycle.previous_cycle else 'البيانات اليدوية للسنة السابقة' }}.</p>
+      {% set variances = variance_by_employee.get(employee.id, []) %}
+      {% if variances %}<div class="table-responsive"><table class="table table-bordered report-table"><thead><tr><th>الأصل</th><th>السنة السابقة</th><th>السنة الحالية</th><th>الفرق والتفاصيل والإجراء</th></tr></thead><tbody>
+      {% for variance in variances %}{% set before = variance.previous %}{% set after = variance.current %}<tr><td><strong>{{ variance.tag }}</strong></td><td>الاسم: {{ before.get('name') or '-' }}<br>التسلسلي: {{ before.get('serial') or '-' }}<br>الموقع: {{ before.get('location') or '-' }}<br>صاحب العهدة: {{ before.get('custodian') or '-' }}<br>الحالة: {{ condition_labels.get(before.get('condition'), before.get('condition') or '-') }}<br>الوضع: {{ lifecycle_labels.get(before.get('lifecycle'), before.get('lifecycle') or '-') }}</td><td>الاسم: {{ after.get('name') or '-' }}<br>التسلسلي: {{ after.get('serial') or '-' }}<br>الموقع: {{ after.get('location') or '-' }}<br>صاحب العهدة: {{ after.get('custodian') or '-' }}<br>الحالة: {{ condition_labels.get(after.get('condition'), after.get('condition') or '-') }}<br>الوضع: {{ lifecycle_labels.get(after.get('lifecycle'), after.get('lifecycle') or '-') }}</td><td><div style="white-space:pre-wrap">{{ variance.differences|join('\n') }}</div></td></tr>{% endfor %}
+      </tbody></table></div>{% else %}<div class="alert alert-light border">لا توجد بيانات سابقة للمقارنة لهذا الموظف.</div>{% endif %}
+      {% for doc in employee_docs %}{% if doc.employee_response_note %}<div class="alert alert-light border"><strong>ملاحظة الموظف:</strong> {{ doc.employee_response_note }}</div>{% endif %}{% endfor %}
+    </section>
+  {% endfor %}
+</div>
+{% endblock %}

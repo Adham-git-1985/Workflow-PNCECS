@@ -4,23 +4,24 @@
 <div class="d-flex flex-wrap gap-2 mb-3">
 {% if can_scan and cycle.status == 'ACTIVE' %}<a class="btn btn-primary" href="{{ url_for('portal.fixed_asset_cycle_scan', cycle_id=cycle.id) }}">القراءة بالهاتف</a>{% endif %}
 {% if can_manage and cycle.status == 'ACTIVE' %}<a class="btn btn-success" href="{{ url_for('portal.fixed_asset_mobile_settings') }}"><i class="bi bi-phone"></i> إدارة أجهزة الهاتف</a>{% endif %}
-{% if can_manage %}<a class="btn btn-outline-primary" href="{{ url_for('portal.asset_documents', cycle_id=cycle.id) }}">تقارير الموظفين والعهد الصادرة</a>
-{% if cycle.status == 'CLOSED' %}<form method="post" action="{{ url_for('portal.asset_send_reports', cycle_id=cycle.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-success">إرسال تقرير كل موظف للاعتماد</button></form>{% endif %}{% endif %}
+{% if can_manage or can_scan %}<a class="btn btn-outline-primary" href="{{ url_for('portal.asset_documents', cycle_id=cycle.id) }}">تقارير الموظفين والعهد</a><a class="btn btn-outline-dark" href="{{ url_for('portal.asset_committee_report', cycle_id=cycle.id) }}">تقرير لجنة الجرد</a>
+{% if (can_manage or can_scan) and cycle.status == 'CLOSED' and not cycle.finalized_at %}<form method="post" action="{{ url_for('portal.asset_send_reports', cycle_id=cycle.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-success">إرسال عهد الموظفين للاعتماد</button></form>{% endif %}{% endif %}
 </div>
 <p class="text-muted">إغلاق الجرد يثبت النتيجة. تغيير الموظف صاحب العهدة يتم بعد مراجعة تقريره وإصدار العهدة.</p>
 {% set total = stats.get('TOTAL', 0) %}
 {% set completed = total - stats.get('PENDING', 0) %}
 {% set progress = ((completed * 100 / total)|round|int) if total else 0 %}
 <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-  <div><div class="d-flex align-items-center gap-2"><h4 class="mb-1">{{ cycle.name }}</h4><span class="badge text-bg-{{ 'success' if cycle.status == 'CLOSED' else 'primary' }}">{{ fixed_asset_cycle_labels.get(cycle.status, cycle.status) }}</span></div><div class="text-muted">{{ cycle.code }} · {{ cycle.inventory_date }} · {{ cycle.scope_label }}</div></div>
-  <div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_cycles') }}">كل الدورات</a>{% if can_manage %}<a class="btn btn-outline-primary" href="{{ url_for('portal.fixed_asset_cycle_edit', cycle_id=cycle.id) }}"><i class="bi bi-pencil"></i> تعديل اللجنة</a>{% endif %}{% if can_export %}<a class="btn btn-outline-success" href="{{ url_for('portal.fixed_asset_cycle_export', cycle_id=cycle.id) }}"><i class="bi bi-file-earmark-excel"></i> تصدير المقارنة</a>{% endif %}{% if can_manage and cycle.status == 'ACTIVE' %}<a class="btn btn-primary" href="{{ url_for('portal.fixed_asset_cycle_scan', cycle_id=cycle.id) }}"><i class="bi bi-qr-code-scan"></i> فتح الماسح</a>{% endif %}</div>
+  <div><div class="d-flex align-items-center gap-2"><h4 class="mb-1">{{ cycle.name }}</h4><span class="badge text-bg-{{ 'success' if cycle.status == 'CLOSED' else 'primary' }}">{{ 'مغلق نهائياً' if cycle.finalized_at else fixed_asset_cycle_labels.get(cycle.status, cycle.status) }}</span></div><div class="text-muted">{{ cycle.code }} · {{ cycle.inventory_date }} · {{ cycle.scope_label }}</div></div>
+  <div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_cycles') }}">كل الدورات</a>{% if can_edit %}<a class="btn btn-outline-primary" href="{{ url_for('portal.fixed_asset_cycle_edit', cycle_id=cycle.id) }}"><i class="bi bi-pencil"></i> تعديل اللجنة</a>{% endif %}{% if can_export %}<a class="btn btn-outline-success" href="{{ url_for('portal.fixed_asset_cycle_export', cycle_id=cycle.id) }}"><i class="bi bi-file-earmark-excel"></i> تصدير المقارنة</a>{% endif %}{% if can_manage and cycle.status == 'ACTIVE' %}<a class="btn btn-primary" href="{{ url_for('portal.fixed_asset_cycle_scan', cycle_id=cycle.id) }}"><i class="bi bi-qr-code-scan"></i> فتح الماسح</a>{% endif %}</div>
 </div>
 
 <div class="card shadow-sm mb-3"><div class="card-body"><div class="row g-3">
-  <div class="col-md-3"><div class="text-muted small">اللجنة الحالية</div><div class="fw-bold">{{ cycle.committee_name or '-' }}</div>{% for member in cycle.members %}<span class="badge text-bg-light border">{{ member.user.full_name }}{% if member.member_role == 'CHAIR' %} · رئيس{% endif %}</span> {% endfor %}</div>
+  <div class="col-md-3"><div class="text-muted small">اللجنة الحالية</div><div class="fw-bold">{{ cycle.committee.label if cycle.committee else cycle.committee_name or '-' }}</div>{% for member in cycle.members %}<span class="badge text-bg-light border">{{ member.user.full_name }}{% if member.member_role == 'CHAIR' %} · رئيس{% endif %}</span> {% endfor %}</div>
   <div class="col-md-3"><div class="text-muted small">اللجنة/الدورة السابقة</div><div class="fw-bold">{{ cycle.previous_cycle.committee_name if cycle.previous_cycle else '-' }}</div>{% if cycle.previous_cycle %}<a class="small" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.previous_cycle.id) }}">{{ cycle.previous_cycle.code }}</a>{% endif %}</div>
   <div class="col-md-3"><div class="text-muted small">بدأها</div><div class="fw-bold">{{ cycle.created_by.full_name if cycle.created_by else '-' }}</div><div class="small text-muted">{{ cycle.started_at|local_datetime }}</div></div>
-  <div class="col-md-3"><div class="text-muted small">الإغلاق</div><div class="fw-bold">{{ cycle.closed_by.full_name if cycle.closed_by else '-' }}</div><div class="small text-muted">{{ cycle.closed_at|local_datetime if cycle.closed_at else 'ما زالت جارية' }}</div></div>
+  <div class="col-md-3"><div class="text-muted small">الإغلاق</div><div class="fw-bold">{{ cycle.closed_by.full_name if cycle.closed_by else '-' }}</div><div class="small text-muted">{{ cycle.closed_at|local_datetime if cycle.closed_at else 'ما زالت جارية' }}</div>{% if cycle.finalized_at %}<div class="small text-success mt-1">إغلاق نهائي باعتماد الأمين العام: {{ cycle.finalized_at|local_datetime }}</div>{% endif %}</div>
+  {% if cycle.successor_cycle %}<div class="col-12"><div class="alert alert-success mb-0">تم اعتماد التقرير وفتح دورة الجرد التالية: <a class="alert-link" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.successor_cycle.id) }}">{{ cycle.successor_cycle.code }} · {{ cycle.successor_cycle.name }}</a></div></div>{% endif %}
   {% if cycle.note %}<div class="col-12"><div class="text-muted small">ملاحظات</div><div>{{ cycle.note }}</div></div>{% endif %}
 </div></div></div>
 
@@ -40,12 +41,12 @@
   <button class="btn btn-sm btn-outline-danger" type="button" data-bs-toggle="collapse" data-bs-target="#closeCycle"><i class="bi bi-lock"></i> إغلاق الدورة</button>
 </div>
 <div class="collapse mb-3" id="closeCycle"><form method="post" action="{{ url_for('portal.fixed_asset_cycle_close', cycle_id=cycle.id) }}" class="card card-body border-danger"><h6 class="text-danger">اعتماد النتيجة وإغلاق الدورة</h6><p class="small mb-2">ستُصنف كل الأصول غير المقروءة كغير موجودة، ولن تقبل الدورة قراءات جديدة إلا بعد إعادة فتحها.</p><div class="form-check mb-3"><input class="form-check-input" type="checkbox" name="apply_observed_values" value="1" id="applyObserved" checked><label class="form-check-label" for="applyObserved">تحديث الموقع والحالة في سجل الأصل حسب نتيجة اللجنة الحالية (العهدة بعد اعتماد الموظف)</label></div><div><button class="btn btn-danger" onclick="return confirm('هل أنت متأكد من اعتماد وإغلاق دورة الجرد؟')">اعتماد وإغلاق</button></div></form></div>
-{% elif can_manage and cycle.status == 'CLOSED' %}
+{% elif can_manage and cycle.status == 'CLOSED' and not cycle.finalized_at %}
 <form method="post" action="{{ url_for('portal.fixed_asset_cycle_reopen', cycle_id=cycle.id) }}" class="mb-3"><button class="btn btn-sm btn-outline-warning" onclick="return confirm('إعادة فتح الدورة للسماح بقراءات جديدة؟')"><i class="bi bi-unlock"></i> إعادة فتح الدورة</button></form>
 {% endif %}
 
 <form class="card card-body shadow-sm mb-2" method="get"><div class="row g-2"><div class="col-md-7"><input class="form-control" name="q" value="{{ selected.q }}" placeholder="رقم الأصل، الاسم، الرقم التسلسلي..."></div><div class="col-md-3"><select class="form-select" name="status"><option value="">كل النتائج</option>{% for code, label in fixed_asset_result_labels.items() %}<option value="{{ code }}" {% if selected.status == code %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div><div class="col-md-2 d-grid"><button class="btn btn-outline-primary">تصفية</button></div></div></form>
-<div class="d-flex flex-wrap gap-2 mb-2"><button class="btn btn-sm btn-outline-dark" id="printCycleSelected" type="button"><i class="bi bi-printer"></i> طباعة ملصقات المحدد</button><span class="small text-muted align-self-center">يعرض الجدول {{ entries|length }} نتيجة.</span></div>
+<div class="d-flex flex-wrap gap-2 mb-2"><button class="btn btn-sm btn-outline-dark" id="printCycleSelected" type="button"><i class="bi bi-printer"></i> طباعة ملصقات المحدد</button><span class="small text-muted align-self-center">يعرض الجدول {{ pagination.total }} نتيجة.</span></div>
 
 <div class="card shadow-sm mb-4"><div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead><tr><th><input class="form-check-input" id="cycleSelectAll" type="checkbox"></th><th>الأصل</th><th>نتيجة اللجنة السابقة</th><th>المتوقع</th><th>الفعلي</th><th>نتيجة اللجنة الحالية</th><th>القراءة</th></tr></thead><tbody>
   {% for entry in entries %}<tr class="{% if entry.result_status in ['MISSING', 'STILL_MISSING', 'UNEXPECTED'] %}table-danger{% elif entry.result_status in ['MOVED', 'CONDITION_CHANGED', 'MOVED_AND_CONDITION_CHANGED'] %}table-warning{% endif %}">
@@ -58,6 +59,14 @@
     <td>{{ entry.scanned_at|local_datetime if entry.scanned_at else '-' }}{% if entry.scanned_by %}<div class="small text-muted">{{ entry.scanned_by.full_name }} · {{ entry.scan_count }} مرة</div>{% endif %}</td>
   </tr>{% else %}<tr><td colspan="7" class="text-center text-muted py-5">لا توجد أصول مطابقة للمرشح.</td></tr>{% endfor %}
 </tbody></table></div></div>
+
+{% if pagination.pages > 1 %}
+<nav class="mt-3"><ul class="pagination justify-content-center">
+  <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}"><a class="page-link" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.id, page=pagination.prev_num, q=selected.q, status=selected.status) }}">السابق</a></li>
+  <li class="page-item disabled"><span class="page-link">{{ pagination.page }} / {{ pagination.pages }}</span></li>
+  <li class="page-item {% if not pagination.has_next %}disabled{% endif %}"><a class="page-link" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.id, page=pagination.next_num, q=selected.q, status=selected.status) }}">التالي</a></li>
+</ul></nav>
+{% endif %}
 
 <div class="card shadow-sm"><div class="card-header fw-bold">آخر عمليات القراءة</div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>الوقت</th><th>الأصل</th><th>النتيجة</th><th>بواسطة</th><th>المصدر</th></tr></thead><tbody>{% for scan in recent_scans %}<tr><td>{{ scan.scanned_at|local_datetime }}</td><td>{{ scan.asset.asset_tag }} · {{ scan.asset.name }}</td><td><span class="badge text-bg-{{ fixed_asset_result_colors.get(scan.result_status, 'secondary') }}">{{ fixed_asset_result_labels.get(scan.result_status, scan.result_status) }}</span></td><td>{{ scan.scanned_by.full_name if scan.scanned_by else '-' }}</td><td>{{ 'كاميرا الصفحة' if scan.source == 'CAMERA' else ('كاميرا الهاتف' if scan.source == 'PHONE_QR' else ('رابط QR' if scan.source == 'QR' else 'يدوي')) }}</td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted py-3">لا توجد قراءات.</td></tr>{% endfor %}</tbody></table></div></div>
 {% endblock %}

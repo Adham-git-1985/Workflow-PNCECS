@@ -1,14 +1,113 @@
 {% extends "portal/inventory/base.html" %}
 {% block inv_content %}
-<style>@media print {nav, aside, .col-lg-3, .no-print, footer {display:none!important}.col-lg-9{width:100%!important}tr{break-inside:avoid}textarea{border:0}}</style>
-<div class="d-flex flex-wrap justify-content-between gap-2 mb-3"><h4>{{ 'سند عهدة' if doc.status == 'ISSUED' else kinds[doc.kind] }} رقم {{ doc.id }}</h4><div class="no-print"><a class="btn btn-outline-secondary" href="{{ url_for('portal.asset_documents') }}">المستندات</a> <button type="button" class="btn btn-outline-primary" onclick="window.print()">طباعة / حفظ PDF</button></div></div>
-<div class="card card-body mb-3"><p>الموظف: <strong>{{ doc.employee.full_name }}</strong> · الحالة: <strong>{{ statuses[doc.status] }}</strong></p><p>إنشاء: {{ doc.created_at.strftime('%Y-%m-%d %H:%M') }}{% if doc.cycle %} · دورة الجرد: {{ doc.cycle.code }}{% endif %}</p>{% if doc.reviewed_at %}<p>مراجعة الموظف: {{ doc.reviewed_at.strftime('%Y-%m-%d %H:%M') }}</p>{% endif %}{% if doc.issued_at %}<p>الإصدار / التنفيذ: {{ doc.issued_at.strftime('%Y-%m-%d %H:%M') }}</p>{% endif %}{% if doc.reason %}<p>السبب / المرجع: {{ doc.reason }}</p>{% endif %}</div>
-<form method="post">
-<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="review">
-<div class="table-responsive"><table class="table table-bordered bg-white"><thead><tr><th>الأصل</th><th>الموقع والحالة وقت الإرسال</th><th>نتيجة الجرد</th><th>رأي الموظف</th><th>ملاحظات الموظف</th></tr></thead><tbody>
-{% for line in doc.lines %}<tr><td>{{ line.snapshot.tag }}<br>{{ line.snapshot.name }}<br><small>{{ line.snapshot.serial or '' }}</small></td><td>{{ line.snapshot.location }}<br>{{ fixed_asset_condition_labels.get(line.snapshot.condition, '') }}</td><td>{{ fixed_asset_result_labels.get(line.snapshot.result, '-') }}{% if line.snapshot.inventory_note %}<br>{{ line.snapshot.inventory_note }}{% endif %}{% if not line.snapshot.eligible %}<br><strong>للمراجعة فقط؛ لا يُضاف إلى العهدة</strong>{% endif %}</td><td>{% if can_review %}<select class="form-select" name="decision_{{ line.id }}" required><option value="">اختر</option><option value="ACCEPT" {{ 'selected' if request.form.get('decision_' ~ line.id) == 'ACCEPT' }}>موافق</option><option value="OBJECT" {{ 'selected' if request.form.get('decision_' ~ line.id) == 'OBJECT' }}>اعتراض</option></select>{% else %}{{ {'PENDING':'لم يراجع','ACCEPT':'موافق','OBJECT':'اعتراض'}.get(line.decision, line.decision) }}{% endif %}</td><td>{% if can_review %}<textarea class="form-control" name="note_{{ line.id }}" rows="3" maxlength="4000">{{ request.form.get('note_' ~ line.id, line.employee_note or '') }}</textarea>{% else %}{{ line.employee_note or '-' }}{% endif %}</td></tr>{% endfor %}
-</tbody></table></div>
-{% if can_review %}<div class="alert alert-info">الموافقة على جميع البنود تتيح إصدار العهدة. أي اعتراض يعيد المستند لمسؤول العهدة، ويجب توضيح سببه.</div><button class="btn btn-success no-print">إرسال المراجعة والاعتماد</button>{% endif %}
-</form>
-{% if manager %}<div class="d-flex gap-2 mt-3 no-print">{% if doc.status == 'APPROVED' %}<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-primary" name="action" value="issue">إصدار العهدة وإرسالها للموظف</button></form>{% endif %}{% if doc.status in ['PENDING','APPROVED','REJECTED'] %}<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-outline-danger" name="action" value="cancel">إلغاء المستند للمراجعة</button></form>{% endif %}</div>{% endif %}
+<style>
+  @media print {
+    nav, aside, .col-lg-3, .no-print, footer { display:none!important; }
+    .col-lg-9 { width:100%!important; }
+    textarea, input, select { border:0!important; background:transparent!important; }
+    tr { break-inside:avoid; }
+  }
+</style>
+
+<div class="d-flex flex-wrap justify-content-between gap-2 mb-3">
+  <h4>{{ 'سند عهدة' if doc.status == 'ISSUED' else ('عهدة جرد ثابت' if doc.kind == 'INVENTORY' else kinds[doc.kind]) }} رقم {{ doc.id }}</h4>
+  <div class="no-print">
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.asset_documents') }}">المستندات</a>
+    <button type="button" class="btn btn-outline-primary" onclick="window.print()">طباعة / حفظ PDF</button>
+  </div>
+</div>
+
+<div class="card card-body mb-3">
+  <div class="row g-2">
+    <div class="col-md-6">الموظف: <strong>{{ doc.employee.full_name }}</strong></div>
+    <div class="col-md-6">الحالة: <strong>{{ statuses.get(doc.status, doc.status) }}</strong></div>
+    <div class="col-md-6">تاريخ الإنشاء: {{ doc.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+    {% if doc.cycle %}<div class="col-md-6">مرجع لجنة الجرد: <strong>{{ doc.cycle.code }} · {{ doc.cycle.inventory_date }}</strong></div>{% endif %}
+    {% if doc.revision_number %}<div class="col-md-6">رقم المراجعة: {{ doc.revision_number }}</div>{% endif %}
+    {% if doc.reason %}<div class="col-12">المرجع / سبب الإنشاء: {{ doc.reason }}</div>{% endif %}
+    {% if doc.employee_response_note %}<div class="col-12 alert alert-warning mb-0">ملاحظة الموظف: {{ doc.employee_response_note }}</div>{% endif %}
+    {% if doc.rejection_escalation_note %}<div class="col-12 alert alert-danger mb-0">سبب التصعيد: {{ doc.rejection_escalation_note }}</div>{% endif %}
+  </div>
+</div>
+
+{% if doc.kind == 'INVENTORY' %}
+  {% if can_review %}
+  <form method="post" class="card card-body border-primary mb-3">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="review">
+    <h6 class="fw-bold">قرار الموظف</h6>
+    <div class="row g-2">
+      <div class="col-md-4"><label class="border rounded p-2 d-block"><input type="radio" name="inventory_action" value="ACCEPT" required> أوافق على العهدة</label></div>
+      <div class="col-md-4"><label class="border rounded p-2 d-block"><input type="radio" name="inventory_action" value="CHANGE"> أطلب مراجعة وتعديلاً</label></div>
+      <div class="col-md-4"><label class="border rounded p-2 d-block"><input type="radio" name="inventory_action" value="REJECT"> أرفض العهدة</label></div>
+      <div class="col-12"><label class="form-label">التوضيح (إلزامي للرفض أو طلب التعديل)</label><textarea class="form-control" name="employee_note" rows="3" maxlength="4000"></textarea></div>
+    </div>
+    <button class="btn btn-primary mt-3">إرسال قرار الموظف</button>
+  </form>
+  {% endif %}
+
+  {% if can_revise %}
+  <form method="post" class="card card-body border-warning mb-3">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="revise">
+    <h6 class="fw-bold text-warning">تعديل اللجنة وإعادة الإرسال للموظف</h6>
+    <p class="small text-muted">عدّل البيانات المطلوبة فقط، وأزل تحديد البند إذا قررت اللجنة عدم إدراجه في العهدة.</p>
+    <div class="table-responsive"><table class="table table-bordered align-middle">
+      <thead><tr><th>إدراج</th><th>رقم الأصل</th><th>الاسم</th><th>التسلسلي</th><th>الموقع</th><th>الحالة</th><th>الوضع</th><th>ملاحظة</th></tr></thead>
+      <tbody>{% for line in doc.lines %}{% set snap = line.snapshot %}
+        <tr>
+          <td><input class="form-check-input" type="checkbox" name="include_{{ line.id }}" {% if snap.get('included', True) %}checked{% endif %}></td>
+          <td><input class="form-control form-control-sm" name="tag_{{ line.id }}" value="{{ snap.get('tag', '') }}"></td>
+          <td><input class="form-control form-control-sm" name="name_{{ line.id }}" value="{{ snap.get('name', '') }}"></td>
+          <td><input class="form-control form-control-sm" name="serial_{{ line.id }}" value="{{ snap.get('serial', '') or '' }}"></td>
+          <td><input class="form-control form-control-sm" name="location_{{ line.id }}" value="{{ snap.get('location', '') or '' }}"></td>
+          <td><select class="form-select form-select-sm" name="condition_{{ line.id }}">{% for key, label in asset_conditions.items() %}<option value="{{ key }}" {% if snap.get('condition') == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></td>
+          <td><select class="form-select form-select-sm" name="lifecycle_{{ line.id }}">{% for key, label in asset_lifecycle_statuses.items() %}<option value="{{ key }}" {% if snap.get('target_lifecycle') == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></td>
+          <td><textarea class="form-control form-control-sm" name="inventory_note_{{ line.id }}" rows="2">{{ snap.get('inventory_note', '') or '' }}</textarea></td>
+        </tr>
+      {% endfor %}</tbody>
+    </table></div>
+    <textarea class="form-control" name="committee_revision_note" rows="2" maxlength="4000" placeholder="ملاحظة اللجنة على التعديل (اختيارية)"></textarea>
+    <button class="btn btn-warning mt-3">حفظ التعديل وإعادة الإرسال</button>
+  </form>
+  {% endif %}
+
+  {% if can_escalate %}
+  <form method="post" class="card card-body border-danger mb-3">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="escalate">
+    <h6 class="text-danger fw-bold">تصعيد رفض الموظف إلى الأمين العام</h6>
+    <textarea class="form-control" name="escalation_note" rows="3" maxlength="4000" required placeholder="سبب التصعيد أو ملخص معالجة اللجنة"></textarea>
+    <button class="btn btn-danger mt-2">تصعيد الرفض</button>
+  </form>
+  {% endif %}
+
+  <div class="card shadow-sm mb-3"><div class="table-responsive"><table class="table table-bordered bg-white align-middle mb-0">
+    <thead><tr><th>م</th><th>الأصل</th><th>الموقع والحالة</th><th>نتيجة الجرد</th><th>قرار الموظف</th><th>ملاحظات الموظف</th></tr></thead>
+    <tbody>{% for line in doc.lines %}{% set snap = line.snapshot %}
+      <tr class="{% if snap.get('included') is sameas false %}table-secondary{% endif %}">
+        <td>{{ loop.index }}</td>
+        <td><strong>{{ snap.get('tag') }}</strong><br>{{ snap.get('name') }}<br><small>{{ snap.get('serial') or '' }}</small></td>
+        <td>{{ snap.get('location') or '-' }}<br>{{ fixed_asset_condition_labels.get(snap.get('condition'), snap.get('condition') or '-') }}<br>{{ fixed_asset_lifecycle_labels.get(snap.get('target_lifecycle'), snap.get('target_lifecycle') or '-') }}</td>
+        <td>{{ fixed_asset_result_labels.get(snap.get('result'), snap.get('result') or '-') }}{% if snap.get('inventory_note') %}<br><small>{{ snap.get('inventory_note') }}</small>{% endif %}{% if not snap.get('eligible', True) %}<br><strong>للمراجعة فقط؛ لا يضاف إلى العهدة</strong>{% endif %}</td>
+        <td>{{ {'PENDING':'لم يقرر','ACCEPT':'موافق','OBJECT':'اعتراض'}.get(line.decision, line.decision) }}</td>
+        <td>{{ line.employee_note or '-' }}</td>
+      </tr>
+    {% endfor %}</tbody>
+  </table></div></div>
+{% else %}
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="review">
+    <div class="table-responsive"><table class="table table-bordered bg-white"><thead><tr><th>الأصل</th><th>الموقع والحالة</th><th>رأي الموظف</th><th>ملاحظاته</th></tr></thead><tbody>
+    {% for line in doc.lines %}<tr><td>{{ line.snapshot.tag }}<br>{{ line.snapshot.name }}<br><small>{{ line.snapshot.serial or '' }}</small></td><td>{{ line.snapshot.location }}<br>{{ fixed_asset_condition_labels.get(line.snapshot.condition, '') }}</td><td>{% if can_review %}<select class="form-select" name="decision_{{ line.id }}" required><option value="">اختر</option><option value="ACCEPT">موافق</option><option value="OBJECT">اعتراض</option></select>{% else %}{{ {'PENDING':'لم يراجع','ACCEPT':'موافق','OBJECT':'اعتراض'}.get(line.decision, line.decision) }}{% endif %}</td><td>{% if can_review %}<textarea class="form-control" name="note_{{ line.id }}" rows="2" maxlength="4000"></textarea>{% else %}{{ line.employee_note or '-' }}{% endif %}</td></tr>{% endfor %}
+    </tbody></table></div>
+    {% if can_review %}<button class="btn btn-success no-print">إرسال المراجعة والاعتماد</button>{% endif %}
+  </form>
+{% endif %}
+
+{% if manager %}<div class="d-flex gap-2 mt-3 no-print">
+  {% if doc.status == 'APPROVED' %}<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-primary" name="action" value="issue">إصدار العهدة وتنفيذها</button></form>{% endif %}
+  {% if doc.status in ['PENDING','APPROVED','CHANGE_REQUESTED','REJECTED','REJECTED_ESCALATED'] %}<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-outline-danger" name="action" value="cancel">إلغاء المستند</button></form>{% endif %}
+</div>{% endif %}
+
+{% if events %}<div class="card mt-4 no-print"><div class="card-header fw-bold">سجل مسار العهدة</div><div class="list-group list-group-flush">{% for event in events %}<div class="list-group-item"><strong>{{ event.action }}</strong> · {{ event.actor.full_name if event.actor else '-' }} · {{ event.created_at|local_datetime }}{% if event.note %}<div class="small text-muted">{{ event.note }}</div>{% endif %}</div>{% endfor %}</div></div>{% endif %}
 {% endblock %}

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from urllib.parse import parse_qs, unquote, urlparse
 
 from sqlalchemy import func, or_
@@ -9,6 +9,7 @@ from extensions import db
 from models import (
     InvFixedAsset,
     InvFixedAssetCycle,
+    InvFixedAssetCycleMember,
     InvFixedAssetEntry,
     InvFixedAssetScanLog,
     InvAssetDocument,
@@ -391,7 +392,96 @@ def close_inventory_cycle(
     return {"missing": missing_count, "reconciled": reconciled_count}
 
 
+def _next_inventory_date(cycle: InvFixedAssetCycle) -> str:
+    """Keep the annual inventory cadence when opening the next cycle."""
+    try:
+        current = date.fromisoformat(cycle.inventory_date)
+        try:
+            return current.replace(year=current.year + 1).isoformat()
+        except ValueError:
+            # February 29 has no representation in a non-leap following year.
+            return date(current.year + 1, 2, 28).isoformat()
+    except (TypeError, ValueError):
+        return f"{date.today().year + 1:04d}-01-01"
+
+
+def _next_inventory_cycle_code(year: int) -> str:
+    prefix = f"FA-INV-{year}"
+    sequence = 1
+    while True:
+        candidate = f"{prefix}-{sequence:03d}"
+        if not InvFixedAssetCycle.query.filter_by(code=candidate).first():
+            return candidate
+        sequence += 1
+
+
+def open_followup_inventory_cycle(
+    cycle: InvFixedAssetCycle,
+    *,
+    created_by_id: int | None,
+) -> InvFixedAssetCycle:
+    """Open the next annual committee cycle exactly once after approval."""
+    if cycle.status != "CLOSED":
+        raise ValueError("يجب إغلاق دورة الجرد قبل فتح الدورة السنوية التالية.")
+
+    existing = (
+        InvFixedAssetCycle.query
+        .filter(InvFixedAssetCycle.previous_cycle_id == cycle.id)
+        .order_by(InvFixedAssetCycle.id.desc())
+        .first()
+    )
+    if existing is not None:
+        cycle.successor_cycle_id = existing.id
+        return existing
+
+    next_inventory_date = _next_inventory_date(cycle)
+    next_year = int(next_inventory_date[:4])
+    now = datetime.utcnow()
+    next_cycle = InvFixedAssetCycle(
+        code=_next_inventory_cycle_code(next_year),
+        name=f"الجرد السنوي للأصول الثابتة {next_year}",
+        inventory_date=next_inventory_date,
+        committee_id=cycle.committee_id,
+        committee_name=cycle.committee_name,
+        previous_cycle_id=cycle.id,
+        scope_warehouse_id=cycle.scope_warehouse_id,
+        scope_room_id=cycle.scope_room_id,
+        status="ACTIVE",
+        note=f"دورة جديدة أنشئت تلقائياً بعد اعتماد تقرير اللجنة للدورة {cycle.code}.",
+        started_at=now,
+        created_by_id=created_by_id,
+        created_at=now,
+    )
+    db.session.add(next_cycle)
+    db.session.flush()
+
+    members = (
+        InvFixedAssetCycleMember.query
+        .with_entities(
+            InvFixedAssetCycleMember.user_id,
+            InvFixedAssetCycleMember.member_role,
+        )
+        .filter(InvFixedAssetCycleMember.cycle_id == cycle.id)
+        .all()
+    )
+    db.session.add_all([
+        InvFixedAssetCycleMember(
+            cycle_id=next_cycle.id,
+            user_id=user_id,
+            member_role=member_role,
+            created_at=now,
+        )
+        for user_id, member_role in members
+    ])
+    db.session.flush()
+    populate_cycle_entries(next_cycle)
+    cycle.successor_cycle_id = next_cycle.id
+    return next_cycle
+
+
 def reopen_inventory_cycle(cycle: InvFixedAssetCycle) -> int:
+    if cycle.finalized_at is not None:
+        raise ValueError("اعتمد الأمين العام تقرير هذه الدورة؛ لا يمكن إعادة فتحها.")
     if InvAssetDocument.query.filter(InvAssetDocument.cycle_id == cycle.id, InvAssetDocument.status.notin_(["CANCELLED", "REJECTED"])).first():
         raise ValueError("صدرت تقارير اعتماد لهذه الدورة. ألغ التقارير المعلقة أولاً، أو أنشئ دورة جديدة إن صدرت العهدة.")
     if cycle.status != "CLOSED":
@@ -410,18 +500,38 @@ def reopen_inventory_cycle(cycle: InvFixedAssetCycle) -> int:
 
 
 def cycle_result_counts(cycle_id: int) -> dict[str, int]:
-    counts = {key: 0 for key in INVENTORY_RESULT_LABELS}
+    return cycle_result_counts_for_cycles([cycle_id]).get(
+        int(cycle_id),
+        {**{key: 0 for key in INVENTORY_RESULT_LABELS}, "TOTAL": 0, "SCANNED": 0},
+    )
+
+
+def cycle_result_counts_for_cycles(cycle_ids) -> dict[int, dict[str, int]]:
+    """Aggregate result counts for many cycles with one grouped query."""
+    normalized_ids = sorted({int(cycle_id) for cycle_id in (cycle_ids or []) if cycle_id})
+    if not normalized_ids:
+        return {}
+
+    counts_by_cycle = {
+        cycle_id: {key: 0 for key in INVENTORY_RESULT_LABELS}
+        for cycle_id in normalized_ids
+    }
     rows = (
-        db.session.query(InvFixedAssetEntry.result_status, func.count(InvFixedAssetEntry.id))
-        .filter(InvFixedAssetEntry.cycle_id == cycle_id)
-        .group_by(InvFixedAssetEntry.result_status)
+        db.session.query(
+            InvFixedAssetEntry.cycle_id,
+            InvFixedAssetEntry.result_status,
+            func.count(InvFixedAssetEntry.id),
+        )
+        .filter(InvFixedAssetEntry.cycle_id.in_(normalized_ids))
+        .group_by(InvFixedAssetEntry.cycle_id, InvFixedAssetEntry.result_status)
         .all()
     )
-    for status, count in rows:
-        counts[status or "PENDING"] = int(count or 0)
-    counts["TOTAL"] = sum(
-        count for status, count in counts.items()
-        if status != "TOTAL"
-    )
-    counts["SCANNED"] = counts["TOTAL"] - counts.get("PENDING", 0) - counts.get("MISSING", 0) - counts.get("STILL_MISSING", 0)
-    return counts
+    for cycle_id, status, count in rows:
+        counts_by_cycle[int(cycle_id)][status or "PENDING"] = int(count or 0)
+    for counts in counts_by_cycle.values():
+        counts["TOTAL"] = sum(
+            count for status, count in counts.items()
+            if status != "TOTAL"
+        )
+        counts["SCANNED"] = counts["TOTAL"] - counts.get("PENDING", 0) - counts.get("MISSING", 0) - counts.get("STILL_MISSING", 0)
+    return counts_by_cycle

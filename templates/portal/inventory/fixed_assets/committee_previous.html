@@ -1,0 +1,8 @@
+{% extends "portal/inventory/base.html" %}
+{% block inv_content %}
+<div class="d-flex justify-content-between align-items-center mb-3"><div><h4>بيانات السنة السابقة</h4><div class="text-muted">{{ employee.full_name }} · {{ cycle.code }}</div></div><a class="btn btn-outline-secondary" href="{{ url_for('portal.asset_committee_report', cycle_id=cycle.id) }}">العودة للتقرير</a></div>
+<form method="post" class="card shadow-sm"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="card-body">
+  <p class="small text-muted">أدخل بنداً واحداً في كل سطر بهذا الترتيب: رقم الأصل | الاسم | الرقم التسلسلي | الموقع | الحالة | ملاحظة. الحقول بعد رقم الأصل اختيارية.</p>
+  <textarea class="form-control font-monospace" name="previous_data" rows="16" dir="auto" placeholder="FA-0001 | حاسوب مكتبي | SN-123 | الإدارة | جيد | يعمل بشكل طبيعي">{{ initial_text }}</textarea>
+</div><div class="card-footer d-flex gap-2"><button class="btn btn-primary">حفظ بيانات السنة السابقة</button><a class="btn btn-outline-secondary" href="{{ url_for('portal.asset_committee_report', cycle_id=cycle.id) }}">إلغاء</a></div></form>
+{% endblock %}

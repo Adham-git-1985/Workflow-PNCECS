@@ -71,7 +71,7 @@
                 <td><div class="fw-semibold">{{ cycle.name }}</div><div class="small text-muted">{{ cycle.code }}</div></td>
                 <td>{{ cycle.inventory_date }}</td>
                 <td>{{ cycle.scope_label }}</td>
-                <td><span class="badge text-bg-{{ 'success' if cycle.status == 'CLOSED' else 'primary' }}">{{ fixed_asset_cycle_labels.get(cycle.status, cycle.status) }}</span></td>
+                <td><span class="badge text-bg-{{ 'success' if cycle.status == 'CLOSED' else 'primary' }}">{{ 'مغلق نهائياً' if cycle.finalized_at else fixed_asset_cycle_labels.get(cycle.status, cycle.status) }}</span></td>
                 <td><a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.id) }}">عرض</a></td>
               </tr>
             {% else %}<tr><td colspan="5" class="text-center text-muted py-4">لا توجد دورات بعد.</td></tr>{% endfor %}

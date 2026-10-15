@@ -1757,6 +1757,30 @@ def _ensure_runtime_schema():
             if not _col_exists("inv_fixed_asset", "image_filename"):
                 _add_column_retry("inv_fixed_asset", "image_filename", "TEXT")
 
+            # Fixed-asset committee custody/report workflow columns.  The
+            # corresponding migration is the canonical upgrade path; these
+            # small SQLite additions keep older local installations usable
+            # when they start the application before running migrations.
+            for _table, _col, _ctype in [
+                ("inv_fixed_asset_cycle", "committee_id", "INTEGER"),
+                ("inv_fixed_asset_cycle", "finalized_at", "DATETIME"),
+                ("inv_fixed_asset_cycle", "finalized_by_id", "INTEGER"),
+                ("inv_fixed_asset_cycle", "successor_cycle_id", "INTEGER"),
+                ("inv_asset_document", "employee_response", "TEXT"),
+                ("inv_asset_document", "employee_response_note", "TEXT"),
+                ("inv_asset_document", "response_at", "DATETIME"),
+                ("inv_asset_document", "response_by_id", "INTEGER"),
+                ("inv_asset_document", "revision_number", "INTEGER NOT NULL DEFAULT 0"),
+                ("inv_asset_document", "committee_revision_note", "TEXT"),
+                ("inv_asset_document", "committee_revised_at", "DATETIME"),
+                ("inv_asset_document", "committee_revised_by_id", "INTEGER"),
+                ("inv_asset_document", "rejection_escalated_at", "DATETIME"),
+                ("inv_asset_document", "rejection_escalated_by_id", "INTEGER"),
+                ("inv_asset_document", "rejection_escalation_note", "TEXT"),
+            ]:
+                if not _col_exists(_table, _col):
+                    _add_column_retry(_table, _col, _ctype)
+
             # Materials requests can follow a dedicated technology or
             # furniture/maintenance path.  Keep existing SQLite deployments
             # compatible without requiring a manual migration first.

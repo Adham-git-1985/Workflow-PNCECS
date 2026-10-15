@@ -1,0 +1,74 @@
+{% extends "portal/inventory/base.html" %}
+{% block inv_content %}
+<style>
+  .report-intro textarea { min-height: 100px; }
+  .report-status { font-size: .85rem; }
+  @media (max-width: 768px) { .report-actions .btn { width:100%; } }
+</style>
+
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div><h4 class="mb-1">تقرير لجنة الجرد الثابت</h4><div class="text-muted">{{ cycle.name }} · {{ cycle.code }} · {{ cycle.inventory_date }}</div></div>
+  <div class="d-flex flex-wrap gap-2 report-actions">
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.id) }}">دورة الجرد</a>
+    <a class="btn btn-outline-primary" target="_blank" rel="noopener" href="{{ url_for('portal.asset_committee_report_print', cycle_id=cycle.id) }}">معاينة الطباعة</a>
+    <a class="btn btn-outline-success" href="{{ url_for('portal.asset_committee_report_pdf', cycle_id=cycle.id) }}">تنزيل PDF الرسمي</a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3"><div class="card-body"><div class="row g-3">
+  <div class="col-md-3"><div class="text-muted small">الجهة المرسلة</div><strong>{{ cycle.committee.label if cycle.committee else cycle.committee_name or 'لجنة الجرد الثابت' }}</strong></div>
+  <div class="col-md-3"><div class="text-muted small">الجهة الموجه إليها</div><strong>الأمين العام</strong></div>
+  <div class="col-md-3"><div class="text-muted small">حالة التقرير</div><span class="badge text-bg-{{ 'success' if report.status == 'APPROVED' else ('warning' if report.status == 'RETURNED' else ('primary' if report.status == 'SUBMITTED' else 'secondary')) }} report-status">{{ report_statuses.get(report.status, report.status) }}</span></div>
+  <div class="col-md-3"><div class="text-muted small">عدد العهد</div><strong>{{ documents|length }}</strong></div>
+</div></div></div>
+{% if cycle.successor_cycle %}<div class="alert alert-success">اعتمد الأمين العام التقرير وأُغلقت دورة {{ cycle.code }} نهائيًا. دورة الجرد الجديدة مفتوحة: <a class="alert-link" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.successor_cycle.id) }}">{{ cycle.successor_cycle.code }} · {{ cycle.successor_cycle.name }}</a></div>{% endif %}
+
+{% if committee_actor and report.status in ['DRAFT','RETURNED'] %}
+<form method="post" enctype="multipart/form-data" class="card shadow-sm mb-4 report-intro">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="card-header fw-bold">إعداد التقرير</div>
+  <div class="card-body"><div class="row g-3">
+    <div class="col-12"><label class="form-label">مقدمة التقرير <span class="text-muted">(اختياري)</span></label><textarea class="form-control" name="introduction" rows="4">{{ report.introduction or '' }}</textarea></div>
+    <div class="col-12"><label class="form-label">بنود التقرير <span class="text-muted">(اختياري)</span></label><textarea class="form-control" name="points" rows="4">{{ report.points or '' }}</textarea></div>
+    <div class="col-12"><label class="form-label">ملخص التقرير <span class="text-muted">(اختياري)</span></label><textarea class="form-control" name="summary" rows="4">{{ report.summary or '' }}</textarea></div>
+    <div class="col-md-7"><label class="form-label">الترويسة الرسمية لهذه السنة <span class="text-muted">(اختياري)</span></label><input class="form-control" type="file" name="header" accept="image/png,image/jpeg,image/webp"><div class="form-text">يمكن تغييرها من سنة إلى أخرى. الحد الأقصى 8 ميغابايت.</div></div>
+    <div class="col-md-5 d-flex align-items-end">{% if report.header_filename %}<a class="btn btn-outline-secondary" target="_blank" rel="noopener" href="{{ url_for('portal.asset_committee_report_header', cycle_id=cycle.id) }}">عرض الترويسة الحالية</a>{% endif %}</div>
+  </div></div>
+  <div class="card-footer d-flex flex-wrap gap-2">
+    <button class="btn btn-outline-primary" name="action" value="save">حفظ المسودة</button>
+    <button class="btn btn-success" name="action" value="submit" {% if not documents %}disabled{% endif %}>رفع التقرير للأمين العام</button>
+  </div>
+</form>
+{% elif report.status == 'RETURNED' %}<div class="alert alert-warning">أعاد الأمين العام التقرير للجنة. راجع الملاحظة ثم أعد رفعه.</div>{% endif %}
+
+{% if secretary_actor and report.status == 'SUBMITTED' %}
+<form method="post" class="card border-primary mb-4"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="card-body">
+  <h6 class="fw-bold">قرار الأمين العام</h6>
+  <textarea class="form-control mb-2" name="secretary_note" rows="3" maxlength="4000" placeholder="الملاحظة أو سبب الإعادة للجنة"></textarea>
+  <button class="btn btn-success" name="action" value="approve">اعتماد التقرير فقط</button>
+  <button class="btn btn-outline-warning" name="action" value="return">إعادة للجنة للتعديل</button>
+</div></form>
+{% endif %}
+
+<div class="card shadow-sm"><div class="card-header fw-bold">العهدة حسب الموظف</div><div class="table-responsive"><table class="table table-hover align-middle mb-0">
+  <thead><tr><th>الموظف</th><th>قرار الموظف</th><th>حالة المستند</th><th>البنود</th><th>ملاحظة الموظف</th><th>السنة السابقة</th><th></th></tr></thead>
+  <tbody>
+  {% for employee in employees %}
+    {% set employee_docs = documents|selectattr('employee_id', 'equalto', employee.id)|list %}
+    {% set employee_line_count = namespace(value=0) %}{% for doc in employee_docs %}{% set employee_line_count.value = employee_line_count.value + (doc.lines|length) %}{% endfor %}
+    <tr>
+      <td><strong>{{ employee.full_name }}</strong><div class="small text-muted">{{ employee.job_title or '' }}</div></td>
+      <td>{% for doc in employee_docs %}<a href="{{ url_for('portal.asset_document', document_id=doc.id) }}" class="badge text-bg-{{ 'success' if doc.employee_response == 'ACCEPT' else ('danger' if doc.employee_response == 'REJECT' else ('warning' if doc.employee_response == 'CHANGE' else 'secondary')) }} text-decoration-none">{{ employee_response_labels.get(doc.employee_response, 'لم يقرر بعد') }}</a>{% endfor %}</td>
+      <td>{% for doc in employee_docs %}<a href="{{ url_for('portal.asset_document', document_id=doc.id) }}" class="badge text-bg-{{ 'success' if doc.status in ['APPROVED','ISSUED'] else ('danger' if doc.status in ['REJECTED','REJECTED_ESCALATED'] else ('warning' if doc.status == 'CHANGE_REQUESTED' else 'secondary')) }} text-decoration-none">{{ statuses.get(doc.status, doc.status) }}</a>{% endfor %}</td>
+      <td>{{ employee_line_count.value }}</td>
+      <td>{% for doc in employee_docs %}{% if doc.employee_response_note %}<div class="small">{{ doc.employee_response_note }}</div>{% endif %}{% else %}-{% endfor %}</td>
+      <td>{{ previous_by_employee.get(employee.id, [])|length }} بند{% if cycle.previous_cycle %} · {{ cycle.previous_cycle.inventory_date }}{% else %} · يدوي{% endif %}</td>
+      <td class="text-nowrap">
+        {% if committee_actor and report.status in ['DRAFT','RETURNED'] %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.asset_committee_report_previous', cycle_id=cycle.id, employee_id=employee.id) }}">إدخال السنة السابقة</a>{% endif %}
+        <a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener" href="{{ url_for('portal.asset_committee_report_print', cycle_id=cycle.id) }}#employee-{{ employee.id }}">عرض التقرير</a>
+      </td>
+    </tr>
+  {% else %}<tr><td colspan="7" class="text-center text-muted py-5">لا توجد عهد موظفين بعد. أغلق الدورة ثم أرسل تقارير الموظفين أولاً.</td></tr>{% endfor %}
+  </tbody>
+</table></div></div>
+{% endblock %}

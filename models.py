@@ -5596,6 +5596,15 @@ class InvEmployeeRequest(db.Model):
     requester = db.relationship("User", foreign_keys=[requester_user_id], lazy="joined")
     manager = db.relationship("User", foreign_keys=[manager_user_id], lazy="joined")
 
+    __table_args__ = (
+        db.Index(
+            "ix_inv_employee_request_status_stage_created",
+            "status",
+            "approval_stage",
+            "created_at",
+        ),
+    )
+
 
 class InvEmployeeRequestLine(db.Model):
     __tablename__ = "inv_employee_request_line"
@@ -5967,6 +5976,7 @@ class InvFixedAssetCycle(db.Model):
     code = db.Column(db.String(80), nullable=False, unique=True, index=True)
     name = db.Column(db.String(255), nullable=False, index=True)
     inventory_date = db.Column(db.String(10), nullable=False, index=True)
+    committee_id = db.Column(db.Integer, db.ForeignKey("committees.id"), nullable=True, index=True)
     committee_name = db.Column(db.String(255), nullable=True)
     previous_cycle_id = db.Column(
         db.Integer,
@@ -5987,6 +5997,14 @@ class InvFixedAssetCycle(db.Model):
     closed_at = db.Column(db.DateTime, nullable=True, index=True)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
     closed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    finalized_at = db.Column(db.DateTime, nullable=True, index=True)
+    finalized_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    successor_cycle_id = db.Column(
+        db.Integer,
+        db.ForeignKey("inv_fixed_asset_cycle.id"),
+        nullable=True,
+        index=True,
+    )
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
 
     previous_cycle = db.relationship(
@@ -5995,10 +6013,18 @@ class InvFixedAssetCycle(db.Model):
         foreign_keys=[previous_cycle_id],
         lazy="joined",
     )
+    successor_cycle = db.relationship(
+        "InvFixedAssetCycle",
+        remote_side=[id],
+        foreign_keys=[successor_cycle_id],
+        lazy="joined",
+    )
+    committee = db.relationship("Committee", foreign_keys=[committee_id], lazy="joined")
     scope_warehouse = db.relationship("InvWarehouse", foreign_keys=[scope_warehouse_id], lazy="joined")
     scope_room = db.relationship("InvRoom", foreign_keys=[scope_room_id], lazy="joined")
     created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
     closed_by = db.relationship("User", foreign_keys=[closed_by_id], lazy="joined")
+    finalized_by = db.relationship("User", foreign_keys=[finalized_by_id], lazy="joined")
     members = db.relationship(
         "InvFixedAssetCycleMember",
         back_populates="cycle",
@@ -6010,12 +6036,26 @@ class InvFixedAssetCycle(db.Model):
         "InvFixedAssetEntry",
         back_populates="cycle",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="select",
         order_by="InvFixedAssetEntry.id",
+    )
+    committee_report = db.relationship(
+        "InvFixedAssetCommitteeReport",
+        back_populates="cycle",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    manual_previous_lines = db.relationship(
+        "InvFixedAssetPreviousLine",
+        back_populates="cycle",
+        cascade="all, delete-orphan",
+        lazy="select",
+        order_by="InvFixedAssetPreviousLine.id",
     )
 
     __table_args__ = (
         db.Index("ix_inv_fixed_asset_cycle_date_status", "inventory_date", "status"),
+        db.Index("ix_inv_fixed_asset_cycle_previous_successor", "previous_cycle_id", "successor_cycle_id"),
     )
 
     @property
@@ -6180,9 +6220,30 @@ class InvAssetDocument(db.Model):
     issued_at = db.Column(db.DateTime)
     issued_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     reason = db.Column(db.Text)
+    employee_response = db.Column(db.String(30), nullable=True, index=True)
+    employee_response_note = db.Column(db.Text, nullable=True)
+    response_at = db.Column(db.DateTime, nullable=True, index=True)
+    response_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    revision_number = db.Column(db.Integer, nullable=False, default=0)
+    committee_revision_note = db.Column(db.Text, nullable=True)
+    committee_revised_at = db.Column(db.DateTime, nullable=True)
+    committee_revised_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    rejection_escalated_at = db.Column(db.DateTime, nullable=True, index=True)
+    rejection_escalated_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    rejection_escalation_note = db.Column(db.Text, nullable=True)
     employee = db.relationship("User", foreign_keys=[employee_id])
     cycle = db.relationship("InvFixedAssetCycle", foreign_keys=[cycle_id])
+    response_by = db.relationship("User", foreign_keys=[response_by_id], lazy="joined")
+    committee_revised_by = db.relationship("User", foreign_keys=[committee_revised_by_id], lazy="joined")
+    rejection_escalated_by = db.relationship("User", foreign_keys=[rejection_escalated_by_id], lazy="joined")
     lines = db.relationship("InvAssetDocumentLine", back_populates="document", cascade="all, delete-orphan", order_by="InvAssetDocumentLine.id")
+    events = db.relationship(
+        "InvAssetDocumentEvent",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="InvAssetDocumentEvent.created_at",
+    )
 
 
 class InvAssetDocumentLine(db.Model):
@@ -6202,6 +6263,77 @@ class InvAssetDocumentReservation(db.Model):
     __tablename__ = "inv_asset_document_reservation"
     asset_id = db.Column(db.Integer, db.ForeignKey("inv_fixed_asset.id"), primary_key=True)
     document_id = db.Column(db.Integer, db.ForeignKey("inv_asset_document.id"), nullable=False, index=True)
+
+
+class InvAssetDocumentEvent(db.Model):
+    """Auditable actions taken on a fixed-asset custody document."""
+
+    __tablename__ = "inv_asset_document_event"
+
+    id = db.Column(db.Integer, primary_key=True)
+    document_id = db.Column(db.Integer, db.ForeignKey("inv_asset_document.id"), nullable=False, index=True)
+    action = db.Column(db.String(40), nullable=False, index=True)
+    actor_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    note = db.Column(db.Text, nullable=True)
+    metadata_json = db.Column(db.JSON, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    document = db.relationship("InvAssetDocument", back_populates="events")
+    actor = db.relationship("User", foreign_keys=[actor_id], lazy="joined")
+
+
+class InvFixedAssetCommitteeReport(db.Model):
+    """The committee's consolidated report for one fixed-asset cycle."""
+
+    __tablename__ = "inv_fixed_asset_committee_report"
+
+    id = db.Column(db.Integer, primary_key=True)
+    cycle_id = db.Column(db.Integer, db.ForeignKey("inv_fixed_asset_cycle.id"), nullable=False, unique=True, index=True)
+    status = db.Column(db.String(30), nullable=False, default="DRAFT", index=True)
+    introduction = db.Column(db.Text, nullable=True)
+    points = db.Column(db.Text, nullable=True)
+    summary = db.Column(db.Text, nullable=True)
+    header_filename = db.Column(db.String(255), nullable=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    submitted_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    decided_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    secretary_note = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+    submitted_at = db.Column(db.DateTime, nullable=True, index=True)
+    decided_at = db.Column(db.DateTime, nullable=True, index=True)
+
+    cycle = db.relationship("InvFixedAssetCycle", foreign_keys=[cycle_id], back_populates="committee_report")
+    created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+    submitted_by = db.relationship("User", foreign_keys=[submitted_by_id], lazy="joined")
+    decided_by = db.relationship("User", foreign_keys=[decided_by_id], lazy="joined")
+
+
+class InvFixedAssetPreviousLine(db.Model):
+    """Optional manually entered previous-year snapshot for variance reporting."""
+
+    __tablename__ = "inv_fixed_asset_previous_line"
+
+    id = db.Column(db.Integer, primary_key=True)
+    cycle_id = db.Column(db.Integer, db.ForeignKey("inv_fixed_asset_cycle.id"), nullable=False, index=True)
+    employee_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    asset_id = db.Column(db.Integer, db.ForeignKey("inv_fixed_asset.id"), nullable=True, index=True)
+    asset_tag = db.Column(db.String(255), nullable=False, index=True)
+    snapshot = db.Column(db.JSON, nullable=False)
+    source = db.Column(db.String(20), nullable=False, default="MANUAL")
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    cycle = db.relationship("InvFixedAssetCycle", foreign_keys=[cycle_id], back_populates="manual_previous_lines")
+    employee = db.relationship("User", foreign_keys=[employee_id], lazy="joined")
+    asset = db.relationship("InvFixedAsset", foreign_keys=[asset_id], lazy="joined")
+    created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+
+    __table_args__ = (
+        db.UniqueConstraint("cycle_id", "employee_id", "asset_tag", name="uq_inv_fixed_asset_previous_line"),
+        db.Index("ix_inv_fixed_asset_previous_employee_cycle", "employee_id", "cycle_id"),
+    )
 
 
 class PortalAccessRequest(db.Model):
