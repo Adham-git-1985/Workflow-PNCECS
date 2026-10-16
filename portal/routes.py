@@ -18,6 +18,7 @@ import base64
 import mimetypes
 import math
 import unicodedata
+import hashlib
 from pathlib import Path
 from io import BytesIO
 
@@ -17429,25 +17430,63 @@ def hr_deduction_approve(run_id: int):
         flash('يوجد خصم معتمد لنفس الشهر ولبعض الموظفين. أنشئ معاينة للموظفين غير المعتمدين فقط.', 'danger')
         return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
 
-    pending_leave = (
-        HRLeaveRequest.query
-        .filter(HRLeaveRequest.user_id.in_(user_ids))
-        .filter(HRLeaveRequest.status.in_(('SUBMITTED', 'PENDING')))
-        .filter(HRLeaveRequest.start_date <= month_end)
-        .filter(HRLeaveRequest.end_date >= month_start)
-        .first()
+    pending_by_user = _deduction_pending_approval_summary(
+        user_ids,
+        month_start,
+        month_end,
     )
-    pending_permission = (
-        HRPermissionRequest.query
-        .filter(HRPermissionRequest.user_id.in_(user_ids))
-        .filter(HRPermissionRequest.status.in_(('SUBMITTED', 'PENDING')))
-        .filter(HRPermissionRequest.day >= month_start)
-        .filter(HRPermissionRequest.day <= month_end)
-        .first()
-    )
-    if pending_leave or pending_permission:
-        flash('لا يمكن اعتماد الخصم قبل معالجة جميع الإجازات والمغادرات المنتظرة ضمن الشهر.', 'warning')
-        return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
+    blocked_user_ids = {
+        int(user_id)
+        for user_id, bucket in pending_by_user.items()
+        if bucket.get('permission_count', 0) or bucket.get('leave_count', 0)
+    }
+    blocked_run = None
+    pending_payload = None
+    if blocked_user_ids:
+        blocked_items = [
+            item for item in list(run.items)
+            if int(item.user_id) in blocked_user_ids
+        ]
+        if blocked_items and len(blocked_items) < len(run.items):
+            blocked_run = _split_pending_deduction_items(
+                run,
+                blocked_user_ids,
+                actor_id=getattr(current_user, 'id', None),
+            )
+            run.note = (
+                f"{run.note or ''} "
+                f"تم تجاوز {len(blocked_items)} موظفاً بسبب طلبات معلقة؛ "
+                f"الحركة المعلقة رقم #{blocked_run.id} عند الحاجة."
+            ).strip()
+            pending_payload = _notify_deduction_pending_users(
+                pending_by_user,
+                run.year,
+                run.month,
+                link_url=f"/portal/hr/deductions/{blocked_run.id}",
+            )
+            _portal_audit(
+                'HR_DEDUCTION_PARTIAL_PENDING_ITEMS',
+                f'تم فصل {len(blocked_items)} موظفاً بانتظار الاعتماد من الحركة #{run.id} إلى الحركة #{blocked_run.id}',
+                target_type='HR_ATT_DEDUCTION_RUN',
+                target_id=run.id,
+            )
+            user_ids = [item.user_id for item in run.items]
+        else:
+            pending_payload = _notify_deduction_pending_users(
+                pending_by_user,
+                run.year,
+                run.month,
+                link_url=f"/portal/hr/deductions/{run.id}",
+            )
+            labels = '، '.join((pending_payload or {}).get('labels', []))
+            flash(
+                'لم يتم اعتماد أي خصم لأن جميع موظفي هذه المعاينة لديهم طلبات '
+                f'غير محسومة بانتظار اعتماد المدير: {labels or "راجع تفاصيل المعاينة"}. '
+                'تم إظهار الطلبات وحالاتها داخل الحركة.',
+                'warning',
+            )
+            db.session.commit()
+            return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
 
     try:
         snapshot = json.loads(run.config_snapshot_json or '{}')
@@ -17645,7 +17684,14 @@ def hr_deduction_approve(run_id: int):
         event_key=f'hr-deduction:final:{run.id}',
     )
     db.session.commit()
-    flash('تم اعتماد الخصم. انعكس خصم الإجازة على الرصيد، وأصبح خصم الراتب نهائياً.', 'success')
+    if blocked_run:
+        flash(
+            f'تم اعتماد الخصم للموظفين الذين لا توجد لديهم طلبات معلّقة. '
+            f'تم إيقاف خصم الموظفين المتأثرين في الحركة #{blocked_run.id} حتى اعتماد أو رفض أو إلغاء طلباتهم.',
+            'warning',
+        )
+    else:
+        flash('تم اعتماد الخصم. انعكس خصم الإجازة على الرصيد، وأصبح خصم الراتب نهائياً.', 'success')
     return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
 
 
@@ -21957,6 +22003,143 @@ def _deduction_pending_approval_summary(
     return result
 
 
+def _deduction_pending_notification_payload(
+    summary: dict[int, dict],
+    year: int,
+    month: int,
+    *,
+    link_url: str | None = None,
+) -> dict | None:
+    """Build one deduplicated HR notice for employees blocked by pending requests."""
+    blocked = {
+        int(user_id): bucket
+        for user_id, bucket in (summary or {}).items()
+        if bucket.get("permission_count", 0) or bucket.get("leave_count", 0)
+    }
+    if not blocked:
+        return None
+
+    request_signature = []
+    for user_id in sorted(blocked):
+        for entry in blocked[user_id].get("requests", []) or []:
+            request_signature.append({
+                "user_id": user_id,
+                "kind": entry.get("kind"),
+                "id": entry.get("id"),
+                "status": entry.get("status"),
+                "day": entry.get("day"),
+                "end_day": entry.get("end_day"),
+                "minutes": entry.get("minutes"),
+                "days": entry.get("days"),
+            })
+    digest = hashlib.sha256(
+        json.dumps(request_signature, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:12]
+    users = {
+        int(user.id): (
+            getattr(user, "full_name", None)
+            or getattr(user, "name", None)
+            or getattr(user, "email", None)
+            or f"#{user.id}"
+        )
+        for user in User.query.filter(User.id.in_(sorted(blocked))).all()
+    }
+    lines = []
+    for user_id in sorted(blocked):
+        bucket = blocked[user_id]
+        permission_minutes = int(bucket.get("permission_minutes", 0) or 0)
+        display_name = users.get(user_id) or f"#{user_id}"
+        lines.append(
+            f"- {display_name}: "
+            f"{int(bucket.get('permission_count', 0) or 0)} مغادرة غير معتمدة "
+            f"({permission_minutes} دقيقة) و"
+            f"{int(bucket.get('leave_count', 0) or 0)} إجازة غير معتمدة"
+        )
+    if len(lines) > 25:
+        hidden_count = len(lines) - 25
+        lines = lines[:25] + [f"- و{hidden_count} موظفاً آخر"]
+    message = (
+        f"لم يتم خصم الإجازات عن شهر {month:02d}/{year} للموظفين الموضحين أدناه "
+        "لوجود مغادرات أو إجازات بحالة بانتظار الاعتماد. يستمر النظام في معالجة الموظفين "
+        "الآخرين الذين لا توجد لديهم طلبات معلّقة، ولن يتم إرسال إشعار خصم للموظف المتوقف قبل حسم طلباته.\n"
+        + "\n".join(lines)
+    )
+    return {
+        "blocked_user_ids": sorted(blocked),
+        "message": message,
+        "event_key": f"hr-deduction:pending:{year:04d}{month:02d}:{digest}",
+        "link_url": link_url or "/portal/hr/approvals?status=SUBMITTED",
+        "labels": [users.get(user_id, f"#{user_id}") for user_id in sorted(blocked)],
+    }
+
+
+def _notify_deduction_pending_users(
+    summary: dict[int, dict],
+    year: int,
+    month: int,
+    *,
+    link_url: str | None = None,
+) -> dict | None:
+    """Notify only HR/Administrative Affairs staff, once per pending state."""
+    payload = _deduction_pending_notification_payload(
+        summary,
+        year,
+        month,
+        link_url=link_url,
+    )
+    if not payload:
+        return None
+    _portal_notify(
+        hr_notification_user_ids(),
+        payload["message"],
+        ntype="HR_DEDUCTION_PENDING",
+        link_url=payload["link_url"],
+        event_key=payload["event_key"],
+    )
+    return payload
+
+
+def _split_pending_deduction_items(
+    run: HRAttendanceDeductionRun,
+    blocked_user_ids: set[int],
+    *,
+    actor_id: int | None = None,
+) -> HRAttendanceDeductionRun | None:
+    """Move only blocked employees to a separate DRAFT before partial approval."""
+    blocked_items = [item for item in list(run.items) if int(item.user_id) in blocked_user_ids]
+    processable_items = [item for item in list(run.items) if int(item.user_id) not in blocked_user_ids]
+    if not blocked_items or not processable_items:
+        return None
+
+    blocked_run = HRAttendanceDeductionRun(
+        year=run.year,
+        month=run.month,
+        status="DRAFT",
+        execution_mode=run.execution_mode or "MANUAL",
+        operation_type=run.operation_type or "NORMAL",
+        replacement_of_run_id=run.replacement_of_run_id,
+        carry_departures=bool(run.carry_departures),
+        carry_late=bool(run.carry_late),
+        carry_early=bool(run.carry_early),
+        note=(
+            f"تم تعليق موظفين من الحركة الأصلية #{run.id} بسبب وجود طلبات "
+            "إجازة أو مغادرة بانتظار الاعتماد. لا يؤثر هذا التعليق على الموظفين الآخرين."
+        ),
+        config_snapshot_json=run.config_snapshot_json,
+        created_by_id=actor_id,
+    )
+    db.session.add(blocked_run)
+    db.session.flush()
+    for item in blocked_items:
+        item.run = blocked_run
+    db.session.flush()
+    db.session.expire(run, ["items"])
+    db.session.expire(blocked_run, ["items"])
+    _refresh_deduction_run_totals(run)
+    _refresh_deduction_run_totals(blocked_run)
+    return blocked_run
+
+
 def _monthly_attendance_deduction_breakdown(
     user_id: int,
     year: int,
@@ -22433,60 +22616,86 @@ def _create_leave_deduction_draft(
     execution_mode: str = "MANUAL",
     replacement_of_run_id: int | None = None,
     deduction_leave_type_id: int | None = None,
+    append_to_run: HRAttendanceDeductionRun | None = None,
+    policy_snapshot: dict | None = None,
 ) -> HRAttendanceDeductionRun:
     """Build a DRAFT without changing a balance; used by manual and monthly jobs."""
-    enabled_leave_type_ids = _leave_deduction_leave_type_ids(cfg)
-    selection_was_saved = getattr(cfg, "leave_type_selection_json", None) is not None
-    selected_leave_type_id = _leave_balance_owner_id(deduction_leave_type_id) if deduction_leave_type_id else None
-    annual_leave_type_id = selected_leave_type_id or _leave_balance_owner_id(cfg.annual_leave_type_id)
-    if enabled_leave_type_ids:
-        if annual_leave_type_id not in enabled_leave_type_ids:
-            annual_leave_type_id = enabled_leave_type_ids[0]
-    elif selection_was_saved:
-        # An explicitly empty selection is a valid disabled policy, not a
-        # request to silently fall back to annual or permission leave.
-        annual_leave_type_id = None
+    append_mode = append_to_run is not None
+    if policy_snapshot:
+        # An automatic period may be completed in more than one safe batch.
+        # Reuse the first run's immutable policy snapshot for later batches so
+        # a settings edit cannot change the meaning of an already-open period.
+        snapshot = dict(policy_snapshot)
+        enabled_leave_type_ids = [
+            int(value)
+            for value in (snapshot.get("enabled_leave_type_ids") or [])
+            if str(value).isdigit()
+        ]
+        annual_leave_type_id = _leave_balance_owner_id(snapshot.get("annual_leave_type_id")) if snapshot.get("annual_leave_type_id") else None
+        selected_sources = _leave_deduction_sources(snapshot.get("selected_sources")) or ["DEPARTURES"]
+        carry_departures = bool(snapshot.get("carry_departures"))
+        carry_late = bool(snapshot.get("carry_late"))
+        carry_early = bool(snapshot.get("carry_early"))
+        snapshot.setdefault("policy_version", 2)
+        snapshot.setdefault("hours_per_day", 6.5)
+        snapshot.setdefault("deduction_style", "AGGREGATE")
+        snapshot.setdefault("deduction_sequence", "LEAVE_ONLY")
     else:
-        annual_leave_type_id = annual_leave_type_id or _permission_excess_leave_type_id()
-    selected_sources = _leave_deduction_sources(
-        selected_sources if selected_sources is not None else getattr(cfg, "source_selection_json", None)
-    )
-    if not selected_sources:
-        selected_sources = ["DEPARTURES"]
-    carry_departures = bool(getattr(cfg, "default_carry_departures", False) if carry_departures is None else carry_departures)
-    carry_late = bool(getattr(cfg, "default_carry_late", False) if carry_late is None else carry_late)
-    carry_early = bool(getattr(cfg, "default_carry_early", False) if carry_early is None else carry_early)
-    snapshot = {
-        "policy_version": 2,
-        "deduction_style": (cfg.deduction_style or "AGGREGATE").upper(),
-        "hours_per_day": float(cfg.hours_per_day or 6.5),
-        "selected_sources": selected_sources,
-        "annual_leave_type_id": annual_leave_type_id,
-        "enabled_leave_type_ids": enabled_leave_type_ids,
-        "deduction_sequence": (cfg.deduction_sequence or "LEAVE_ONLY").upper(),
-        "carry_departures": carry_departures,
-        "carry_late": carry_late,
-        "carry_early": carry_early,
-        "execution_mode": execution_mode,
-        "gregorian_period": f"{year:04d}-{month:02d}",
-        "exclusion_policy_version": 1,
-    }
-    run = HRAttendanceDeductionRun(
-        year=year,
-        month=month,
-        status="DRAFT",
-        execution_mode=execution_mode,
-        operation_type="ADJUSTMENT" if replacement_of_run_id else "NORMAL",
-        replacement_of_run_id=replacement_of_run_id,
-        carry_departures=carry_departures,
-        carry_late=carry_late,
-        carry_early=carry_early,
-        note=note or None,
-        config_snapshot_json=json.dumps(snapshot, ensure_ascii=False),
-        created_by_id=actor_id,
-    )
-    db.session.add(run)
-    db.session.flush()
+        enabled_leave_type_ids = _leave_deduction_leave_type_ids(cfg)
+        selection_was_saved = getattr(cfg, "leave_type_selection_json", None) is not None
+        selected_leave_type_id = _leave_balance_owner_id(deduction_leave_type_id) if deduction_leave_type_id else None
+        annual_leave_type_id = selected_leave_type_id or _leave_balance_owner_id(cfg.annual_leave_type_id)
+        if enabled_leave_type_ids:
+            if annual_leave_type_id not in enabled_leave_type_ids:
+                annual_leave_type_id = enabled_leave_type_ids[0]
+        elif selection_was_saved:
+            # An explicitly empty selection is a valid disabled policy, not a
+            # request to silently fall back to annual or permission leave.
+            annual_leave_type_id = None
+        else:
+            annual_leave_type_id = annual_leave_type_id or _permission_excess_leave_type_id()
+        selected_sources = _leave_deduction_sources(
+            selected_sources if selected_sources is not None else getattr(cfg, "source_selection_json", None)
+        )
+        if not selected_sources:
+            selected_sources = ["DEPARTURES"]
+        carry_departures = bool(getattr(cfg, "default_carry_departures", False) if carry_departures is None else carry_departures)
+        carry_late = bool(getattr(cfg, "default_carry_late", False) if carry_late is None else carry_late)
+        carry_early = bool(getattr(cfg, "default_carry_early", False) if carry_early is None else carry_early)
+        snapshot = {
+            "policy_version": 2,
+            "deduction_style": (cfg.deduction_style or "AGGREGATE").upper(),
+            "hours_per_day": float(cfg.hours_per_day or 6.5),
+            "selected_sources": selected_sources,
+            "annual_leave_type_id": annual_leave_type_id,
+            "enabled_leave_type_ids": enabled_leave_type_ids,
+            "deduction_sequence": (cfg.deduction_sequence or "LEAVE_ONLY").upper(),
+            "carry_departures": carry_departures,
+            "carry_late": carry_late,
+            "carry_early": carry_early,
+            "execution_mode": execution_mode,
+            "gregorian_period": f"{year:04d}-{month:02d}",
+            "exclusion_policy_version": 1,
+        }
+    if append_mode:
+        run = append_to_run
+    else:
+        run = HRAttendanceDeductionRun(
+            year=year,
+            month=month,
+            status="DRAFT",
+            execution_mode=execution_mode,
+            operation_type="ADJUSTMENT" if replacement_of_run_id else "NORMAL",
+            replacement_of_run_id=replacement_of_run_id,
+            carry_departures=carry_departures,
+            carry_late=carry_late,
+            carry_early=carry_early,
+            note=note or None,
+            config_snapshot_json=json.dumps(snapshot, ensure_ascii=False),
+            created_by_id=actor_id,
+        )
+        db.session.add(run)
+        db.session.flush()
 
     total_leave_days = 0
     total_salary_days = 0
@@ -22577,13 +22786,18 @@ def _create_leave_deduction_draft(
             "carry_out_minutes": components["carry_out"],
             "hours_per_day": hours_per_day,
         })
-    run.totals_json = json.dumps({
-        "policy_version": 2,
-        "employees_count": len(payload_items),
-        "total_leave_deduction_days": round(total_leave_days, 4),
-        "total_salary_deduction_days": round(total_salary_days, 4),
-        "items": payload_items,
-    }, ensure_ascii=False)
+    if append_mode:
+        db.session.flush()
+        db.session.expire(run, ["items"])
+        _refresh_deduction_run_totals(run)
+    else:
+        run.totals_json = json.dumps({
+            "policy_version": 2,
+            "employees_count": len(payload_items),
+            "total_leave_deduction_days": round(total_leave_days, 4),
+            "total_salary_deduction_days": round(total_salary_days, 4),
+            "items": payload_items,
+        }, ensure_ascii=False)
     return run
 
 
@@ -22605,8 +22819,10 @@ def run_automatic_leave_deduction_cycle() -> int:
 
     This function is called only by the monthly background check.  It is not
     called from attendance imports, attendance edits, or request approval
-    handlers.  A manual run already present for the target month wins and
-    prevents a duplicate automatic run.
+    handlers.  Manual previews and finalized items are excluded per employee.
+    A pending request therefore pauses only that employee; a later run can
+    append the employee after resolution without creating a second automatic
+    run for the same month.
     """
     cfg = HRAttendanceDeductionConfig.query.order_by(HRAttendanceDeductionConfig.updated_at.desc()).first()
     if not cfg or not bool(getattr(cfg, "automatic_enabled", False)):
@@ -22650,9 +22866,6 @@ def run_automatic_leave_deduction_cycle() -> int:
         # The policy is explicitly disabled until an administrator enables at
         # least one balance-owning leave type.
         return 0
-    if HRAttendanceDeductionRun.query.filter_by(year=target_year, month=target_month, status="DRAFT").first():
-        return 0
-
     exempt_ids = _attendance_exempt_user_ids()
     pending_leave_ids = {
         int(value[0]) for value in db.session.query(HRLeaveRequest.user_id).filter(
@@ -22673,12 +22886,41 @@ def run_automatic_leave_deduction_cycle() -> int:
         for value in db.session.query(EmployeeFile.user_id).distinct().all()
         if value[0]
     }
-    # Do not finalize only a subset of the month.  If one employee still has
-    # a pending leave/departure decision, wait for that decision so the period
-    # can be processed consistently and is not marked consumed too early.
-    if employee_user_ids.intersection(pending_leave_ids | pending_permission_ids):
-        return 0
     eligible_user_ids = employee_user_ids.difference(exempt_ids)
+    pending_user_ids = eligible_user_ids.intersection(
+        pending_leave_ids | pending_permission_ids
+    )
+    auto_draft = (
+        HRAttendanceDeductionRun.query
+        .filter_by(
+            year=target_year,
+            month=target_month,
+            status="DRAFT",
+            execution_mode="AUTO",
+        )
+        .first()
+    )
+    if auto_draft:
+        # A concurrent automatic worker may still be building this period.
+        return 0
+    draft_user_ids = {
+        int(value[0])
+        for value in (
+            db.session.query(HRAttendanceDeductionItem.user_id)
+            .join(
+                HRAttendanceDeductionRun,
+                HRAttendanceDeductionRun.id == HRAttendanceDeductionItem.run_id,
+            )
+            .filter(
+                HRAttendanceDeductionRun.year == target_year,
+                HRAttendanceDeductionRun.month == target_month,
+                HRAttendanceDeductionRun.status == "DRAFT",
+            )
+            .distinct()
+            .all()
+        )
+        if value[0]
+    }
     finalized_user_ids = {
         int(value[0])
         for value in db.session.query(HRAttendanceDeductionItem.user_id)
@@ -22692,17 +22934,57 @@ def run_automatic_leave_deduction_cycle() -> int:
         .all()
         if value[0]
     }
-    if eligible_user_ids and eligible_user_ids.issubset(finalized_user_ids):
+    if (
+        eligible_user_ids
+        and eligible_user_ids.issubset(finalized_user_ids)
+        and not pending_user_ids
+        and not eligible_user_ids.intersection(draft_user_ids)
+    ):
         cfg.automatic_last_period = period
         cfg.updated_at = datetime.utcnow()
         db.session.commit()
         return 0
-    user_ids = sorted(eligible_user_ids.difference(finalized_user_ids))
+    user_ids = sorted(
+        eligible_user_ids
+        .difference(finalized_user_ids)
+        .difference(draft_user_ids)
+        .difference(pending_user_ids)
+    )
+    pending_summary = {}
+    if pending_user_ids:
+        pending_summary = _deduction_pending_approval_summary(
+            sorted(pending_user_ids),
+            f"{target_year:04d}-{target_month:02d}-01",
+            _end_of_month_str(target_year, target_month),
+        )
     if not user_ids:
-        # No employee files is not a completed deduction cycle.  Leave the
-        # period open so a later data import can be picked up safely.
+        if pending_user_ids:
+            _notify_deduction_pending_users(
+                pending_summary,
+                target_year,
+                target_month,
+            )
+        # No safe employee is ready. Leave the period open so a later request
+        # decision or data import can be picked up safely.
         return 0
     selected_sources = _leave_deduction_sources(cfg.source_selection_json) or ["DEPARTURES"]
+    automatic_run = (
+        HRAttendanceDeductionRun.query
+        .filter_by(
+            year=target_year,
+            month=target_month,
+            execution_mode="AUTO",
+            status="FINAL",
+        )
+        .order_by(HRAttendanceDeductionRun.id.asc())
+        .first()
+    )
+    existing_policy_snapshot = None
+    if automatic_run:
+        try:
+            existing_policy_snapshot = json.loads(automatic_run.config_snapshot_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            existing_policy_snapshot = None
     try:
         run = _create_leave_deduction_draft(
             cfg,
@@ -22716,6 +22998,8 @@ def run_automatic_leave_deduction_cycle() -> int:
             carry_late=bool(getattr(cfg, "default_carry_late", False)),
             carry_early=bool(getattr(cfg, "default_carry_early", False)),
             execution_mode="AUTO",
+            append_to_run=automatic_run,
+            policy_snapshot=existing_policy_snapshot,
         )
     except IntegrityError:
         # Another worker may have won the same Gregorian period between the
@@ -22726,11 +23010,19 @@ def run_automatic_leave_deduction_cycle() -> int:
     run.status = "FINAL"
     run.approved_at = datetime.utcnow()
     run.approval_note = "اعتماد تلقائي مجدول؛ لا علاقة له برفع أو تعديل الحضور."
-    cfg.automatic_last_period = period
+    processed_user_ids = set(finalized_user_ids).union(user_ids)
+    period_complete = bool(
+        eligible_user_ids
+        and eligible_user_ids.issubset(processed_user_ids)
+        and not pending_user_ids
+        and not eligible_user_ids.intersection(draft_user_ids)
+    )
+    if period_complete:
+        cfg.automatic_last_period = period
     cfg.updated_at = datetime.utcnow()
     _refresh_deduction_run_totals(run)
     db.session.flush()
-    deduction_user_ids = [item.user_id for item in run.items if item.user_id]
+    deduction_user_ids = sorted(set(user_ids))
     _portal_notify(
         deduction_user_ids,
         f"تم اعتماد خصم الإجازة تلقائياً عن شهر {target_month:02d}/{target_year}. افتح الإشعار لمراجعة التفاصيل.",
@@ -22741,6 +23033,12 @@ def run_automatic_leave_deduction_cycle() -> int:
         target_id=run.id,
         event_key=f"hr-deduction:final:{run.id}",
     )
+    if pending_user_ids:
+        _notify_deduction_pending_users(
+            pending_summary,
+            target_year,
+            target_month,
+        )
     try:
         db.session.commit()
     except IntegrityError:

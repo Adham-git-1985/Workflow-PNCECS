@@ -129,7 +129,7 @@
                   {% if pending.get('leave_count', 0) %}
                     {% if pending.get('permission_count', 0) %}كما يوجد{% else %}يوجد{% endif %} {{ pending.get('leave_count', 0) }} طلب إجازة غير معتمد{% if pending.get('leave_count', 0) != 1 %}ة{% endif %}.
                   {% endif %}
-                  لن تدخل الطلبات غير المعتمدة في الخصم، ولن يسمح باعتماد الخصم أو تشغيله تلقائيًا، حتى يتم اعتمادها أو رفضها أو إلغاؤها.
+                  لن تدخل طلبات هذا الموظف غير المعتمدة في الخصم، ولن يُنفّذ خصمه قبل اعتمادها أو رفضها أو إلغائها. أما الموظفون الذين لا توجد لديهم طلبات معلّقة فيستمر اعتمادهم بشكل مستقل.
                   <div class="d-flex flex-wrap gap-2 mt-2">
                     {% if pending.get('requests') %}
                       <a class="btn btn-sm btn-outline-warning" data-bs-toggle="collapse" href="#pendingRequests{{ item.id }}" role="button" aria-expanded="false" aria-controls="pendingRequests{{ item.id }}">

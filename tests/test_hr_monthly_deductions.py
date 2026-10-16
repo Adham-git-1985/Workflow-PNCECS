@@ -26,6 +26,7 @@ from models import (
     HROfficialMission,
     HRPermissionRequest,
     HRPermissionType,
+    Notification,
     SystemSetting,
     User,
     UserPermission,
@@ -47,6 +48,7 @@ from portal.routes import (
     _leave_used_days_as_of,
     _deduction_live_departure_summary,
     _deduction_pending_approval_summary,
+    _notify_deduction_pending_users,
     _monthly_attendance_deduction_breakdown,
     _has_manual_deduction_operation,
     run_automatic_leave_deduction_cycle,
@@ -464,6 +466,229 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(run.status, "DRAFT")
         self.assertEqual(HRAttendanceDeductionRun.query.filter_by(status="FINAL").count(), 0)
+
+    def test_manual_approval_processes_safe_employees_and_separates_pending_ones(self):
+        second_user = User(
+            email="deduction-safe@example.test",
+            name="Safe Employee",
+            password_hash="not-used",
+            role="EMPLOYEE",
+        )
+        permission_type = HRPermissionType(
+            code="PENDING_PARTIAL",
+            name_ar="Ù…ØºØ§Ø¯Ø±Ø© Ù…Ø¹Ù„Ù‚Ø©",
+            counts_as_work=False,
+            deduct_from_allowance=True,
+        )
+        admin = User(
+            email="partial-admin@example.test",
+            name="Partial Admin",
+            password_hash="not-used",
+            role="SUPER_ADMIN",
+        )
+        db.session.add_all((
+            second_user,
+            permission_type,
+            admin,
+        ))
+        db.session.flush()
+        db.session.add(EmployeeFile(
+            user_id=second_user.id,
+            timeclock_code="D-200",
+            hire_date="2026-03-01",
+        ))
+        run = HRAttendanceDeductionRun(
+            year=2026,
+            month=3,
+            status="DRAFT",
+            config_snapshot_json=json.dumps({
+                "policy_version": 2,
+                "hours_per_day": 6.5,
+                "selected_sources": ["DEPARTURES"],
+                "deduction_sequence": "LEAVE_ONLY",
+            }),
+        )
+        db.session.add(run)
+        db.session.flush()
+        db.session.add_all((
+            HRAttendanceDeductionItem(
+                run_id=run.id,
+                user_id=self.user.id,
+                chargeable_minutes=90,
+                details_json=json.dumps({}, ensure_ascii=False),
+            ),
+            HRAttendanceDeductionItem(
+                run_id=run.id,
+                user_id=second_user.id,
+                chargeable_minutes=90,
+                details_json=json.dumps({}, ensure_ascii=False),
+            ),
+            HRPermissionRequest(
+                user_id=self.user.id,
+                permission_type_id=permission_type.id,
+                day="2026-03-10",
+                from_time="10:00",
+                to_time="11:30",
+                status="SUBMITTED",
+            ),
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context(
+            f"/portal/hr/deductions/{run.id}/approve",
+            method="POST",
+        ):
+            login_user(admin)
+            first_response = hr_deduction_approve(run.id)
+            logout_user()
+
+        self.assertEqual(first_response.status_code, 302)
+        db.session.expire_all()
+        original = db.session.get(HRAttendanceDeductionRun, run.id)
+        blocked_runs = [
+            row for row in HRAttendanceDeductionRun.query.all()
+            if row.id != original.id
+        ]
+        self.assertEqual(original.status, "DRAFT")
+        self.assertEqual(len(blocked_runs), 1)
+        self.assertEqual({item.user_id for item in original.items}, {second_user.id})
+        self.assertEqual({item.user_id for item in blocked_runs[0].items}, {self.user.id})
+        self.assertEqual(blocked_runs[0].status, "DRAFT")
+
+        with self.app.test_request_context(
+            f"/portal/hr/deductions/{original.id}/approve",
+            method="POST",
+        ):
+            login_user(admin)
+            second_response = hr_deduction_approve(original.id)
+            logout_user()
+
+        self.assertEqual(second_response.status_code, 302)
+        db.session.expire_all()
+        self.assertEqual(
+            db.session.get(HRAttendanceDeductionRun, original.id).status,
+            "FINAL",
+        )
+        blocked = db.session.get(HRAttendanceDeductionRun, blocked_runs[0].id)
+        self.assertEqual(blocked.status, "DRAFT")
+        self.assertEqual(
+            _deduction_pending_approval_summary(
+                [self.user.id], "2026-03-01", "2026-03-31"
+            )[self.user.id]["permission_count"],
+            1,
+        )
+
+    def test_automatic_cycle_processes_safe_batch_then_appends_resolved_employee(self):
+        second_user = User(
+            email="automatic-safe@example.test",
+            name="Automatic Safe Employee",
+            password_hash="not-used",
+            role="EMPLOYEE",
+        )
+        hr_admin = User(
+            email="automatic-hr@example.test",
+            name="Automatic HR",
+            password_hash="not-used",
+            role="HR",
+        )
+        permission_type = HRPermissionType(
+            code="AUTO_PARTIAL_PENDING",
+            name_ar="Ù…ØºØ§Ø¯Ø±Ø© Ù…Ø¹Ù„Ù‚Ø©",
+            counts_as_work=False,
+            deduct_from_allowance=True,
+        )
+        config = HRAttendanceDeductionConfig(
+            automatic_enabled=True,
+            source_selection_json=json.dumps(["DEPARTURES"]),
+        )
+        manual_run = HRAttendanceDeductionRun(
+            year=2026,
+            month=2,
+            status="FINAL",
+            execution_mode="MANUAL",
+        )
+        db.session.add_all((
+            second_user,
+            hr_admin,
+            permission_type,
+            config,
+            manual_run,
+        ))
+        db.session.flush()
+        db.session.add_all((
+            EmployeeFile(
+                user_id=second_user.id,
+                timeclock_code="D-201",
+                hire_date="2026-03-01",
+            ),
+            HRPermissionRequest(
+                user_id=self.user.id,
+                permission_type_id=permission_type.id,
+                day="2026-03-10",
+                from_time="10:00",
+                to_time="11:00",
+                status="SUBMITTED",
+            ),
+        ))
+        db.session.commit()
+
+        with patch("portal.routes.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = datetime(2026, 4, 16)
+            mocked_datetime.utcnow.return_value = datetime(2026, 4, 16)
+            mocked_datetime.strptime.side_effect = datetime.strptime
+            mocked_datetime.combine.side_effect = datetime.combine
+            mocked_datetime.fromisoformat.side_effect = datetime.fromisoformat
+            mocked_datetime.min = datetime.min
+            first_result = run_automatic_leave_deduction_cycle()
+        self.assertEqual(first_result, 1)
+        auto_run = HRAttendanceDeductionRun.query.filter_by(execution_mode="AUTO").one()
+        self.assertEqual({item.user_id for item in auto_run.items}, {second_user.id})
+        db.session.refresh(config)
+        self.assertFalse(config.automatic_last_period)
+        first_pending_notice_count = Notification.query.filter_by(user_id=hr_admin.id).count()
+        self.assertEqual(first_pending_notice_count, 1)
+        self.assertEqual(
+            Notification.query.filter_by(
+                user_id=self.user.id,
+                type="HR_DEDUCTION_FINAL",
+            ).count(),
+            0,
+        )
+
+        with patch("portal.routes.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = datetime(2026, 4, 16)
+            mocked_datetime.utcnow.return_value = datetime(2026, 4, 16)
+            mocked_datetime.strptime.side_effect = datetime.strptime
+            mocked_datetime.combine.side_effect = datetime.combine
+            mocked_datetime.fromisoformat.side_effect = datetime.fromisoformat
+            mocked_datetime.min = datetime.min
+            self.assertEqual(run_automatic_leave_deduction_cycle(), 0)
+        self.assertEqual(
+            Notification.query.filter_by(user_id=hr_admin.id).count(),
+            first_pending_notice_count,
+        )
+
+        pending_request = HRPermissionRequest.query.filter_by(user_id=self.user.id).one()
+        pending_request.status = "APPROVED"
+        db.session.commit()
+        with patch("portal.routes.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = datetime(2026, 4, 16)
+            mocked_datetime.utcnow.return_value = datetime(2026, 4, 16)
+            mocked_datetime.strptime.side_effect = datetime.strptime
+            mocked_datetime.combine.side_effect = datetime.combine
+            mocked_datetime.fromisoformat.side_effect = datetime.fromisoformat
+            mocked_datetime.min = datetime.min
+            second_result = run_automatic_leave_deduction_cycle()
+        self.assertEqual(second_result, 1)
+        db.session.expire_all()
+        auto_run = HRAttendanceDeductionRun.query.filter_by(execution_mode="AUTO").one()
+        self.assertEqual(auto_run.status, "FINAL")
+        self.assertEqual(
+            {item.user_id for item in auto_run.items},
+            {self.user.id, second_user.id},
+        )
+        db.session.refresh(config)
+        self.assertEqual(config.automatic_last_period, "2026-03")
 
     def test_balance_correction_and_reversal_recalculate_remaining_balance(self):
         leave_type = HRLeaveType(
