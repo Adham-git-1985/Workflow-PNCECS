@@ -95,9 +95,22 @@ class WorkflowCommentDeletionTests(unittest.TestCase):
         self.assertIsNotNone(deletion_audit)
         self.assertEqual(deletion_audit.note, "تم حذف تعليق من سجل المسار.")
 
-    def test_regular_admin_cannot_delete_a_workflow_comment(self):
+    def test_regular_admin_can_delete_a_workflow_comment(self):
+        response = self._delete(self.admin, self.comment.id)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIsNone(db.session.get(AuditLog, self.comment.id))
+        deletion_audit = AuditLog.query.filter_by(
+            request_id=self.request_row.id,
+            action="WORKFLOW_COMMENT_DELETED",
+            user_id=self.admin.id,
+            target_id=self.comment.id,
+        ).one_or_none()
+        self.assertIsNotNone(deletion_audit)
+
+    def test_regular_user_cannot_delete_a_workflow_comment(self):
         with self.assertRaises(Forbidden):
-            self._delete(self.admin, self.comment.id)
+            self._delete(self.requester, self.comment.id)
 
         self.assertIsNotNone(db.session.get(AuditLog, self.comment.id))
 

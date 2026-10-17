@@ -7083,7 +7083,7 @@ def view_request(request_id):
         for log in audit
     ]
     simple_audit = _workflow_user_summary(req, current_step)
-    can_delete_workflow_comments = is_super_admin(current_user)
+    can_delete_workflow_comments = _is_admin(current_user)
     simple_comments = []
     for log in audit:
         if (log.action or "").upper() not in {"WORKFLOW_COMMENT", "WORKFLOW_REPLY"}:
@@ -7741,9 +7741,8 @@ def view_request(request_id):
         user_audit=user_audit,
         story_events=story_events,
         can_delete_workflow_comments=can_delete_workflow_comments,
-        # Dynamic paths do not have a WorkflowTemplate row, but the super admin
-        # must still get the complete audit view.  Keep the existing detailed
-        # view rule for regular admins on predefined template paths.
+        # Dynamic paths do not have a WorkflowTemplate row, but an administrator
+        # must still get the complete audit view so comment controls are usable.
         show_detailed_audit=bool(
             can_delete_workflow_comments
             or (bool(template) and current_user.has_role("ADMIN"))
@@ -9509,9 +9508,9 @@ def remove_request_mention(request_id: int, mentioned_user_id: int):
 )
 @login_required
 def delete_workflow_comment(request_id, audit_log_id):
-    """Allow only super admins to remove a workflow comment or legacy reply."""
+    """Allow admins to remove a workflow comment or legacy reply."""
     working_user = _workflow_actor()
-    if not is_super_admin(working_user):
+    if not _is_admin(working_user):
         abort(403)
 
     req = WorkflowRequest.query.get_or_404(request_id)
