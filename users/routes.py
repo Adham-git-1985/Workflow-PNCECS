@@ -340,75 +340,12 @@ def _is_super_admin():
     return (getattr(current_user, "role", "") or "").strip().upper() == "SUPER_ADMIN"
 
 
-_VIEW_AS_MODULES = (
-    {
-        "label": "مسار العمل",
-        "icon": "bi-diagram-3",
-        "permissions": ("WORKFLOW_DASHBOARD_READ",),
-        "description": "لوحة العمل والطلبات والمسارات.",
-    },
-    {
-        "label": "البوابة الإدارية",
-        "icon": "bi-grid-1x2",
-        "permissions": ("PORTAL_READ", "PORTAL_VIEW"),
-        "description": "الدخول إلى البوابة الإدارية.",
-    },
-    {
-        "label": "الموارد البشرية",
-        "icon": "bi-people",
-        "permissions": ("HR_READ", "HR_EMPLOYEE_READ", "HR_REQUESTS_READ"),
-        "description": "شاشات الموارد البشرية الأساسية.",
-    },
-    {
-        "label": "المراسلات",
-        "icon": "bi-envelope",
-        "permissions": ("CORR_READ",),
-        "description": "عرض الوارد والصادر.",
-    },
-    {
-        "label": "المستودع",
-        "icon": "bi-box-seam",
-        "permissions": ("STORE_READ", "STORE_MANAGE"),
-        "description": "عرض ملفات ووحدة المستودع.",
-    },
-    {
-        "label": "الحركة والنقل",
-        "icon": "bi-car-front",
-        "permissions": ("TRANSPORT_READ",),
-        "description": "عرض وحدة الحركة والنقل.",
-    },
-)
-
-
 def _actual_super_admin(user=None) -> bool:
-    """Check the logged-in account itself, without using delegation context.
-
-    The preview must never become available because a SuperAdmin is currently
-    acting for another identity.  Reading the stored role directly keeps this
-    check independent from the application's effective-user/delegation logic.
-    """
+    """Check the logged-in account itself, without using delegation context."""
     user = user or current_user
     raw_role = str(getattr(user, "role", "") or "").strip().upper()
     normalized = raw_role.replace("-", "_").replace(" ", "_")
     return normalized in {"SUPER_ADMIN", "SUPERADMIN"}
-
-
-def _view_as_module_preview(user: User) -> list[dict]:
-    """Build the small, read-only module preview shown by View As."""
-    preview = []
-    for module in _VIEW_AS_MODULES:
-        allowed = any(
-            user.has_perm(permission, _ignore_selected_context=True)
-            for permission in module["permissions"]
-        )
-        preview.append({
-            "label": module["label"],
-            "icon": module["icon"],
-            "description": module["description"],
-            "permissions": module["permissions"],
-            "allowed": allowed,
-        })
-    return preview
 
 
 def _resolve_user_org(u: User):
@@ -716,29 +653,8 @@ def list_users():
         pagination=pagination,
         role_choices=roles_for_ui,
         is_super_admin=_is_super_admin(),
-        can_view_as=_actual_super_admin(),
+        can_view_workflow_as=_actual_super_admin(),
         q=q,
-    )
-
-
-@users_bp.route("/<int:user_id>/view-as")
-@login_required
-def view_as_user(user_id: int):
-    """Show a small read-only preview of one user's visible modules.
-
-    This deliberately does not select the target as the Flask-Login user and
-    does not write to the session or database.  Business routes remain bound
-    to the SuperAdmin account, so notifications, email delivery, delegation,
-    and normal authorization behavior are unchanged.
-    """
-    if not _actual_super_admin():
-        abort(403)
-
-    target = User.query.get_or_404(user_id)
-    return render_template(
-        "users/view_as.html",
-        target=target,
-        module_preview=_view_as_module_preview(target),
     )
 
 
@@ -1145,7 +1061,7 @@ def manage_user(user_id):
         "users/manage.html",
         user=user,
         role_choices=roles_for_ui,
-        can_view_as=_actual_super_admin(),
+        can_view_workflow_as=_actual_super_admin(),
     )
 
 

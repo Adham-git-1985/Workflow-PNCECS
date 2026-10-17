@@ -92,9 +92,9 @@
     <a class="btn btn-sm btn-outline-dark ms-1" href="{{ url_for('users.manage_user', user_id=user.id) }}">⚙️ إدارة</a>
   {% endif %}
 
-  {% if can_view_as %}
-    <a class="btn btn-sm btn-outline-success ms-1" href="{{ url_for('users.view_as_user', user_id=user.id) }}" title="معاينة ما يراه المستخدم">
-      👁️ عرض كمستخدم
+  {% if can_view_workflow_as %}
+    <a class="btn btn-sm btn-outline-success ms-1" href="{{ url_for('workflow.view_as_user_workflow', user_id=user.id) }}" title="عرض تفاصيل المسار كما يراه المستخدم">
+      👁️ تفاصيل المسار
     </a>
   {% endif %}
 </td>

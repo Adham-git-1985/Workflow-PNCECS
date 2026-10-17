@@ -8,8 +8,8 @@
     <small class="text-muted">هذه الصفحة متاحة لمدير النظام العام فقط</small>
   </div>
   <div class="d-flex gap-2">
-    {% if can_view_as %}
-      <a href="{{ url_for('users.view_as_user', user_id=user.id) }}" class="btn btn-outline-success">👁️ عرض كمستخدم</a>
+    {% if can_view_workflow_as %}
+      <a href="{{ url_for('workflow.view_as_user_workflow', user_id=user.id) }}" class="btn btn-outline-success">👁️ تفاصيل المسار</a>
     {% endif %}
     <a href="{{ url_for('users.list_users') }}" class="btn btn-outline-secondary">← رجوع</a>
   </div>

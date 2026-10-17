@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>تفاصيل المسار #{{ req.id }}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v=20261007-user-menu1">
+  <style>
+    body { background: #f5f7fb; }
+    .preview-shell { max-width: 1500px; }
+    .preview-banner { border-right: 4px solid #d39e00; }
+    .workflow-note-card { border: 1px solid #f0cf82; border-right: 4px solid #d89b12; border-radius: .7rem; background: linear-gradient(135deg, #fffdf7, #fff8e8); white-space: pre-wrap; line-height: 1.85; }
+    .step-card { border-right: 4px solid #b9d4ff; }
+    .muted-label { color: #6c757d; font-size: .86rem; }
+    .audit-note { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+<main class="container-fluid py-4 preview-shell">
+  <div class="alert alert-warning preview-banner d-flex justify-content-between align-items-center gap-3 flex-wrap shadow-sm" role="status">
+    <div>
+      <div class="fw-bold"><i class="bi bi-eye"></i> معاينة تفاصيل المسار — قراءة فقط</div>
+      <div class="small mt-1">
+        المستخدم المحدد:
+        <strong>{{ view_as_user.full_name or view_as_user.name or view_as_user.email }}</strong>
+        {% if view_as_user.email %}<span dir="ltr">({{ view_as_user.email }})</span>{% endif %}
+        · لا يتم تبديل جلسة الدخول ولا تنفيذ أي إجراء باسم المستخدم.
+      </div>
+    </div>
+    <a class="btn btn-sm btn-outline-dark" href="{{ url_for('users.list_users') }}">العودة إلى المستخدمين</a>
+  </div>
+
+  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-4">
+    <div>
+      <h3 class="mb-1"><i class="bi bi-file-earmark-text"></i> الطلب #{{ req.id }}</h3>
+      <div class="small text-muted">
+        الحالة:
+        <span class="badge {% if req.status == 'APPROVED' %}bg-success{% elif req.status == 'REJECTED' %}bg-danger{% elif req.status == 'CLOSED' %}bg-secondary{% else %}bg-primary{% endif %}">
+          {{ req.status or '—' }}
+        </span>
+        · الأولوية: <span class="badge text-bg-light border">{{ req.priority or 'NORMAL' }}</span>
+        {% if inst %} · الخطوة الحالية: <strong>{{ inst.current_step_order }}</strong>{% endif %}
+        {% if template %} · المسار: <strong>{{ template.name }} (#{{ template.id }})</strong>{% endif %}
+      </div>
+    </div>
+    <span class="badge text-bg-light border">SuperAdmin / Read-only</span>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-8">
+      <section class="card shadow-sm mb-3">
+        <div class="card-header bg-white"><strong><i class="bi bi-info-circle"></i> تفاصيل الطلب</strong></div>
+        <div class="card-body">
+          <h5>{{ req.title or 'بدون عنوان' }}</h5>
+          <div class="small text-muted mb-2">نوع الطلب: {{ req.request_type.label if req.request_type else '—' }}</div>
+          <div class="text-body" style="white-space: pre-wrap">{{ req.description or '—' }}</div>
+          {% set requester = users_map.get(req.requester_id) if users_map else None %}
+          <div class="border-top mt-3 pt-3 small">
+            <span class="muted-label">مقدم الطلب:</span>
+            <strong>{{ requester.full_name if requester and requester.full_name else (requester.email if requester else ('#' ~ req.requester_id)) }}</strong>
+          </div>
+        </div>
+      </section>
+
+      {% if corr_source %}
+      <section class="card shadow-sm mb-3 border-primary">
+        <div class="card-header bg-primary bg-opacity-10"><strong><i class="bi bi-envelope-paper"></i> المراسلة المرتبطة بالمسار</strong></div>
+        <div class="card-body">
+          <div class="row g-3 small">
+            <div class="col-md-4"><span class="muted-label d-block">النوع</span><strong>{{ corr_source.kind_label or '—' }}</strong></div>
+            <div class="col-md-4"><span class="muted-label d-block">الرقم</span><strong>{{ corr_source.ref_no or '—' }}</strong></div>
+            <div class="col-md-4"><span class="muted-label d-block">التاريخ</span>{{ corr_source.date or '—' }}</div>
+            <div class="col-12"><span class="muted-label d-block">الموضوع</span><strong>{{ corr_source.subject or '—' }}</strong></div>
+            {% if corr_source.body %}<div class="col-12"><span class="muted-label d-block">المحتوى</span><div class="border rounded bg-body-tertiary p-3" style="white-space: pre-wrap">{{ corr_source.body }}</div></div>{% endif %}
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
+      <section class="card shadow-sm mb-3">
+        <div class="card-header bg-white"><strong><i class="bi bi-diagram-3"></i> تفاصيل خطوات المسار</strong></div>
+        <div class="card-body">
+          {% if steps %}
+            <div class="vstack gap-3">
+              {% for s in steps %}
+                {% set route_user = users_map.get(s.approver_user_id) if s.approver_user_id and users_map else None %}
+                <article class="card step-card">
+                  <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                      <div>
+                        <div class="fw-bold">الخطوة {{ s.step_order }}</div>
+                        <div class="small text-muted mt-1">
+                          {{ s.routing_label or (route_user.full_name if route_user else None) or (route_user.email if route_user else None) or (s.approver_kind or 'الجهة المسؤولة') }}
+                          {% if s.approver_role %} · {{ s.approver_role|ui_label }}{% endif %}
+                        </div>
+                        {% if s.approver_department_id and depts_map and depts_map.get(s.approver_department_id) %}
+                          <div class="small text-muted">الدائرة: {{ depts_map.get(s.approver_department_id).name_ar }}</div>
+                        {% endif %}
+                        {% if s.approver_committee_id and committees_map and committees_map.get(s.approver_committee_id) %}
+                          <div class="small text-muted">اللجنة: {{ committees_map.get(s.approver_committee_id).name_ar }}</div>
+                        {% endif %}
+                      </div>
+                      <span class="badge {% if s.status == 'APPROVED' %}bg-success{% elif s.status == 'REJECTED' %}bg-danger{% elif s.status == 'PENDING' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ s.status or '—' }}</span>
+                    </div>
+
+                    {% if s.due_at %}
+                    <div class="small text-muted mt-2"><i class="bi bi-clock"></i> الموعد: {{ s.due_at|local_datetime }}{% if step_sla_days_map and step_sla_days_map.get(s.step_order) is not none %} · SLA: {{ step_sla_days_map.get(s.step_order) }} يوم{% endif %}</div>
+                    {% endif %}
+                    {% if s.decided_at %}
+                      {% set decision_user = users_map.get(s.decided_by_id) if s.decided_by_id and users_map else None %}
+                      <div class="small mt-2"><i class="bi bi-person-check"></i> نُفذت بواسطة <strong>{{ decision_user.full_name if decision_user else ('#' ~ s.decided_by_id) }}</strong> · {{ s.decided_at|local_datetime }}</div>
+                    {% endif %}
+                    {% if s.note %}<div class="workflow-note-card p-3 mt-3"><strong><i class="bi bi-chat-right-text"></i> التعليق:</strong><div class="mt-2">{{ s.note }}</div></div>{% endif %}
+
+                    {% set step_items = step_att_items.get(s.step_order) if step_att_items else [] %}
+                    {% if step_items %}
+                      <div class="border-top mt-3 pt-3">
+                        <div class="small fw-bold text-muted mb-2"><i class="bi bi-paperclip"></i> مرفقات الخطوة</div>
+                        {% for item in step_items %}
+                          <div class="d-flex justify-content-between align-items-center gap-2 small mb-2">
+                            <span class="text-truncate"><i class="bi bi-file-earmark"></i> {{ item.name }} <span class="text-muted">· {{ item.size_human }}</span></span>
+                            <span class="text-nowrap">
+                              <a class="btn btn-sm btn-outline-secondary py-0 px-2" target="_blank" href="{{ url_for('workflow.preview_workflow_attachment', file_id=item.file_id) }}">عرض</a>
+                              <a class="btn btn-sm btn-outline-primary py-0 px-2" href="{{ url_for('workflow.download_workflow_attachment', file_id=item.file_id) }}">تنزيل</a>
+                            </span>
+                          </div>
+                        {% endfor %}
+                      </div>
+                    {% endif %}
+                  </div>
+                </article>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="text-muted">لا يوجد مسار منشأ لهذا الطلب.</div>
+          {% endif %}
+        </div>
+      </section>
+
+      {% if parallel_tasks %}
+      <section class="card shadow-sm mb-3">
+        <div class="card-header bg-white"><strong><i class="bi bi-people"></i> متابعة الخطوة المتزامنة</strong></div>
+        <div class="card-body table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead class="table-light"><tr><th>المستخدم</th><th>الحالة</th><th>الرد</th><th>التاريخ</th></tr></thead>
+            <tbody>
+            {% for task in parallel_tasks %}
+              <tr>
+                <td>{{ task.assignee.full_name if task.assignee and task.assignee.full_name else (task.assignee.email if task.assignee else ('#' ~ task.assignee_user_id)) }}</td>
+                <td>{{ task.status or '—' }}</td>
+                <td>{{ task.response or '—' }}</td>
+                <td class="small text-muted">{{ (task.responded_at or task.bypassed_at)|local_datetime if (task.responded_at or task.bypassed_at) else '—' }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {% endif %}
+    </div>
+
+    <div class="col-lg-4">
+      <section class="card shadow-sm mb-3">
+        <div class="card-header bg-white"><strong><i class="bi bi-paperclip"></i> مرفقات الطلب</strong></div>
+        <div class="card-body">
+          {% if attachments %}
+            <div class="list-group list-group-flush">
+            {% for attachment in attachments %}
+              {% set file = files_map.get(attachment.archived_file_id) if files_map else None %}
+              {% if file and not file.is_deleted %}
+                <div class="list-group-item px-0 d-flex justify-content-between align-items-center gap-2">
+                  <span class="small text-truncate">{{ file.original_name or file.stored_name or ('File #' ~ file.id) }}</span>
+                  <span class="text-nowrap"><a class="btn btn-sm btn-outline-secondary py-0 px-2" target="_blank" href="{{ url_for('workflow.preview_workflow_attachment', file_id=file.id) }}">عرض</a><a class="btn btn-sm btn-outline-primary py-0 px-2" href="{{ url_for('workflow.download_workflow_attachment', file_id=file.id) }}">تنزيل</a></span>
+                </div>
+              {% endif %}
+            {% endfor %}
+            </div>
+          {% else %}
+            <div class="text-muted">لا توجد مرفقات.</div>
+          {% endif %}
+        </div>
+      </section>
+
+      <section class="card shadow-sm mb-3">
+        <div class="card-header bg-white"><strong><i class="bi bi-clock-history"></i> سجل المسار</strong></div>
+        <div class="card-body">
+          {% if user_audit %}
+            <div class="vstack gap-3">
+              {% for item in user_audit %}
+                <div class="border-bottom pb-2">
+                  <div class="fw-semibold">{{ item.action }}</div>
+                  <div class="small text-muted">{{ item.author }}{% if item.created_at %} · {{ item.created_at|local_datetime }}{% endif %}</div>
+                  {% if item.note %}<div class="small audit-note mt-1">{{ item.note }}</div>{% endif %}
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="text-muted">لا توجد أحداث عرض قابلة للإظهار.</div>
+          {% endif %}
+        </div>
+      </section>
+
+      {% if simple_comments %}
+      <section class="card shadow-sm mb-3">
+        <div class="card-header bg-white"><strong><i class="bi bi-chat-left-text"></i> التعليقات</strong></div>
+        <div class="card-body">
+          {% for comment in simple_comments %}
+            <div class="border-bottom pb-2 mb-2">
+              <div class="fw-semibold">{{ comment.kind }} · {{ comment.author }}</div>
+              <div class="small text-muted">{{ comment.created_at|local_datetime if comment.created_at else '—' }}</div>
+              <div class="small mt-1" style="white-space: pre-wrap">{{ comment.note }}</div>
+            </div>
+          {% endfor %}
+        </div>
+      </section>
+      {% endif %}
+    </div>
+  </div>
+</main>
+</body>
+</html>

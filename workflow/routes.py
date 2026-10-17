@@ -15,7 +15,7 @@ from urllib.parse import quote
 
 from flask import (
     send_file, abort, render_template,
-    request, redirect, url_for,
+    request, redirect, url_for, g,
     flash, jsonify, Response, stream_with_context, current_app
 )
 from flask_login import login_required, current_user
@@ -5214,9 +5214,15 @@ def _collapse_attachment_activity_entries(entries: list[dict]) -> list[dict]:
     return collapsed
 
 
-def _user_facing_audit_note(log: AuditLog, action: str, files_map: dict[int, ArchivedFile]) -> str:
+def _user_facing_audit_note(
+    log: AuditLog,
+    action: str,
+    files_map: dict[int, ArchivedFile],
+    *,
+    viewer=None,
+) -> str:
     """Return the useful, non-technical detail for the request activity feed."""
-    raw_note = audit_display_note(log).strip()
+    raw_note = audit_display_note(log, viewer).strip()
 
     if action in {"WORKFLOW_ATTACHMENT_UPLOADED", "WORKFLOW_ATTACHMENT_DELETED"}:
         file_item = files_map.get(int(getattr(log, "target_id", 0) or 0))
@@ -6808,10 +6814,126 @@ def _following_page(
 # =========================
 # View Request (Timeline + Action)
 # =========================
+def _is_raw_super_admin(user=None) -> bool:
+    """Check the signed-in account without consulting delegated context."""
+    user = user or current_user
+    raw_role = str(getattr(user, "role", "") or "").strip().upper()
+    normalized = raw_role.replace("-", "_").replace(" ", "_")
+    return normalized in {"SUPER_ADMIN", "SUPERADMIN"}
+
+
+def _sample_workflow_request_for_user(user: User):
+    """Pick one recent request for the read-only SuperAdmin example screen.
+
+    This is intentionally a bounded lookup used only by the SuperAdmin entry
+    point.  It does not change the normal inbox/dashboard queries.
+    """
+    candidates = []
+
+    owned = (
+        WorkflowRequest.query
+        .filter(WorkflowRequest.requester_id == user.id)
+        .order_by(WorkflowRequest.created_at.desc(), WorkflowRequest.id.desc())
+        .first()
+    )
+    if owned:
+        candidates.append(owned)
+
+    direct_step = (
+        WorkflowRequest.query
+        .join(WorkflowInstance, WorkflowInstance.request_id == WorkflowRequest.id)
+        .join(
+            WorkflowInstanceStep,
+            WorkflowInstanceStep.instance_id == WorkflowInstance.id,
+        )
+        .filter(
+            or_(
+                WorkflowInstanceStep.approver_user_id == user.id,
+                WorkflowInstanceStep.decided_by_id == user.id,
+            )
+        )
+        .order_by(WorkflowRequest.created_at.desc(), WorkflowRequest.id.desc())
+        .distinct()
+        .first()
+    )
+    if direct_step:
+        candidates.append(direct_step)
+
+    parallel_task = (
+        WorkflowRequest.query
+        .join(WorkflowStepTask, WorkflowStepTask.request_id == WorkflowRequest.id)
+        .filter(WorkflowStepTask.assignee_user_id == user.id)
+        .order_by(WorkflowRequest.created_at.desc(), WorkflowRequest.id.desc())
+        .first()
+    )
+    if parallel_task:
+        candidates.append(parallel_task)
+
+    for candidate in candidates:
+        if _user_can_view_request(user, candidate):
+            return candidate
+
+    # Keep the example useful for organizational/committee viewers whose
+    # access is derived from a role or structure rather than a frozen user id.
+    for candidate in (
+        WorkflowRequest.query
+        .order_by(WorkflowRequest.created_at.desc(), WorkflowRequest.id.desc())
+        .limit(25)
+        .all()
+    ):
+        if _user_can_view_request(user, candidate):
+            return candidate
+    return None
+
+
+@workflow_bp.route("/view-as/<int:user_id>")
+@login_required
+def view_as_user_workflow(user_id: int):
+    """Open one user's latest visible workflow request in read-only mode."""
+    if not _is_raw_super_admin():
+        abort(403)
+
+    target = User.query.get_or_404(user_id)
+    req = _sample_workflow_request_for_user(target)
+    if not req:
+        return render_template(
+            "workflow/view_as_unavailable.html",
+            target=target,
+        )
+    return redirect(
+        url_for(
+            "workflow.view_request_as_user",
+            request_id=req.id,
+            user_id=target.id,
+        )
+    )
+
+
+@workflow_bp.route("/request/<int:request_id>/view-as/<int:user_id>")
+@login_required
+def view_request_as_user(request_id: int, user_id: int):
+    """Render the existing request details as a safe read-only example."""
+    if not _is_raw_super_admin():
+        abort(403)
+
+    target = User.query.get_or_404(user_id)
+    req = WorkflowRequest.query.get_or_404(request_id)
+    if not _user_can_view_request(target, req):
+        abort(403)
+
+    # Keep the real Flask-Login identity and all delegation/session state
+    # untouched.  The request details route consumes this request-local value
+    # only to build a read-only presentation.
+    g._workflow_view_as_user = target
+    return view_request(request_id)
+
+
 @workflow_bp.route("/request/<int:request_id>")
 @login_required
 def view_request(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
+    view_as_user = getattr(g, "_workflow_view_as_user", None)
+    view_as_readonly = bool(view_as_user)
     attendance_delay_case = get_delay_case_for_request(req.id)
     attendance_delay_direct_managers = []
     if attendance_delay_case and getattr(attendance_delay_case, "employee_id", None):
@@ -6824,9 +6946,10 @@ def view_request(request_id):
                 "Unable to resolve attendance-delay managers for request %s",
                 request_id,
             )
+    attendance_actor = view_as_user or current_user
     attendance_delay_employee = bool(
         attendance_delay_case
-        and int(getattr(attendance_delay_case, "employee_id", 0) or 0) == int(current_user.id)
+        and int(getattr(attendance_delay_case, "employee_id", 0) or 0) == int(attendance_actor.id)
     )
     attendance_delay_employee_form = bool(
         attendance_delay_employee
@@ -6835,9 +6958,12 @@ def view_request(request_id):
     execution = get_execution_context()
     explicit_context_actor = execution.get("acting_for_user")
 
-    actor_users = _workflow_actor_users()
+    actor_users = [view_as_user] if view_as_readonly else _workflow_actor_users()
 
-    if execution.get("execution_context") != "SELF":
+    if view_as_readonly:
+        if not _user_can_view_request(view_as_user, req):
+            abort(403)
+    elif execution.get("execution_context") != "SELF":
         try:
             authorize_action(
                 "VIEW",
@@ -6850,7 +6976,7 @@ def view_request(request_id):
             return redirect(url_for("workflow.inbox"))
 
     can_view_as_delay_summary_viewer = False
-    if not _actor_context_can_view_request(req, actor_users):
+    if not view_as_readonly and not _actor_context_can_view_request(req, actor_users):
         # The daily overdue-path report is an explicit read-only audience for
         # the Secretary General, Super Admins and global notification
         # observers.  Keep the confidentiality gate mandatory; the report
@@ -6866,49 +6992,52 @@ def view_request(request_id):
 
     inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
 
-    # ✅ Mark related WORKFLOW notifications as read when the approver opens the request
-    try:
-        pending_notifs = (
-            Notification.query
-            .filter(
-                Notification.user_id == current_user.id,
-                Notification.is_mirror.is_(False),
-                Notification.is_read.is_(False),
-                Notification.is_visible.is_(True),
-                Notification.type == "WORKFLOW",
-                or_(
-                    and_(
-                        Notification.target_type == "WorkflowRequest",
-                        Notification.target_id == req.id,
+    # A SuperAdmin example must not consume notifications or create a
+    # workflow-request-view row for either the target or the signed-in admin.
+    if not view_as_readonly:
+        # ✅ Mark related WORKFLOW notifications as read when the approver opens the request
+        try:
+            pending_notifs = (
+                Notification.query
+                .filter(
+                    Notification.user_id == current_user.id,
+                    Notification.is_mirror.is_(False),
+                    Notification.is_read.is_(False),
+                    Notification.is_visible.is_(True),
+                    Notification.type == "WORKFLOW",
+                    or_(
+                        and_(
+                            Notification.target_type == "WorkflowRequest",
+                            Notification.target_id == req.id,
+                        ),
+                        Notification.message.contains(f"#{req.id}"),
                     ),
-                    Notification.message.contains(f"#{req.id}"),
-                ),
+                )
+                .all()
             )
-            .all()
-        )
-        if pending_notifs:
-            for n in pending_notifs:
-                n.is_read = True
-                if n.event_key:
-                    _sync_mirror_for_event(n.event_key)
-            db.session.commit()
-    except Exception:
-        db.session.rollback()
+            if pending_notifs:
+                for n in pending_notifs:
+                    n.is_read = True
+                    if n.event_key:
+                        _sync_mirror_for_event(n.event_key)
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
 
-    try:
-        if mark_workflow_request_viewed(
-            current_user.id,
-            req.id,
-            inst.current_step_order if inst else 0,
-        ):
-            db.session.commit()
-    except Exception:
-        db.session.rollback()
-        current_app.logger.exception(
-            "Unable to record workflow request view for request %s and user %s",
-            req.id,
-            current_user.id,
-        )
+        try:
+            if mark_workflow_request_viewed(
+                current_user.id,
+                req.id,
+                inst.current_step_order if inst else 0,
+            ):
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception(
+                "Unable to record workflow request view for request %s and user %s",
+                req.id,
+                current_user.id,
+            )
 
     template = WorkflowTemplate.query.get(inst.template_id) if (inst and inst.template_id) else None
     corr_source = correspondence_context(req)
@@ -7107,6 +7236,7 @@ def view_request(request_id):
         )
     }
 
+    audit_viewer = view_as_user or current_user
     audit = (
         AuditLog.query
         .filter_by(request_id=req.id)
@@ -7128,7 +7258,9 @@ def view_request(request_id):
             "formal_delegation": log.formal_delegation,
             "execution_context": log.execution_context or "SELF",
             "created_at": log.created_at,
-            "note": _strip_workflow_operation_source(audit_display_note(log)),
+            "note": _strip_workflow_operation_source(
+                audit_display_note(log, audit_viewer)
+            ),
             "is_workflow_comment": (log.action or "").upper()
             in {"WORKFLOW_COMMENT", "WORKFLOW_REPLY"},
         }
@@ -7140,10 +7272,10 @@ def view_request(request_id):
     for log in audit:
         if (log.action or "").upper() not in {"WORKFLOW_COMMENT", "WORKFLOW_REPLY"}:
             continue
-        safe_note = _clean_workflow_note(audit_display_note(log))
+        safe_note = _clean_workflow_note(audit_display_note(log, audit_viewer))
         if not safe_note:
             continue
-        safe_actor = audit_display_actor(log)
+        safe_actor = audit_display_actor(log, audit_viewer)
         simple_comments.append({
             "kind": "تعليق" if log.action == "WORKFLOW_COMMENT" else "رد",
             "author": (
@@ -7195,21 +7327,26 @@ def view_request(request_id):
         action = (log.action or "").upper()
         if action in technical_actions:
             continue
-        audit_actor = audit_display_actor(log)
+        audit_actor = audit_display_actor(log, audit_viewer)
         principal = audit_principal(log)
         if (
-            can_view_delegation_details(log)
+            can_view_delegation_details(log, audit_viewer)
             and log.formal_delegation
             and audit_actor
             and principal
         ):
             audit_author = f"{audit_actor.full_name} بموجب تفويض عن {principal.full_name}"
-        elif can_view_delegation_details(log) and audit_actor and principal:
+        elif can_view_delegation_details(log, audit_viewer) and audit_actor and principal:
             audit_author = f"{audit_actor.full_name} بالنيابة عن {principal.full_name}"
         else:
             audit_author = audit_actor.full_name if audit_actor else "النظام"
         attachment_activity = action == "WORKFLOW_ATTACHMENT_UPLOADED"
-        attachment_note = _user_facing_audit_note(log, action, files_map)
+        attachment_note = _user_facing_audit_note(
+            log,
+            action,
+            files_map,
+            viewer=audit_viewer,
+        )
         attachment_name = ""
         if attachment_activity:
             attachment_name = attachment_note
@@ -7670,12 +7807,13 @@ def view_request(request_id):
     can_bypass_parallel_as_committee_chair = False
     try:
         if current_step and (getattr(current_step, "mode", "") or "").strip().upper() == "PARALLEL_SYNC":
-            try:
-                ensure_parallel_tasks(req, inst, current_step)
-                db.session.commit()
-            except Exception:
-                db.session.rollback()
-                logger.exception("Failed to ensure parallel tasks for request %s step %s", req.id, current_step.step_order)
+            if not view_as_readonly:
+                try:
+                    ensure_parallel_tasks(req, inst, current_step)
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                    logger.exception("Failed to ensure parallel tasks for request %s step %s", req.id, current_step.step_order)
 
             parallel_tasks = (
                 WorkflowStepTask.query
@@ -7757,9 +7895,26 @@ def view_request(request_id):
     except Exception:
         pass
 
-    can_manage_quick_endorsements = _can_manage_quick_endorsements(current_user)
-    can_use_secretary_endorsements = _can_use_secretary_endorsements(current_user)
-    can_use_employee_endorsements = _can_use_employee_endorsements(current_user)
+    if view_as_readonly:
+        can_manage_quick_endorsements = False
+        can_use_secretary_endorsements = False
+        can_use_employee_endorsements = False
+        can_decide = False
+        can_escalate = False
+        can_close = False
+        can_delete_request = False
+        can_delete_workflow_comments = False
+        can_reopen_workflow = False
+        can_bypass_parallel = False
+        can_bypass_parallel_as_committee_chair = False
+        can_authorize_parallel = False
+        hierarchy_bypass_step = None
+        assistant_secretary_redirect_targets = []
+        attendance_delay_employee_form = False
+    else:
+        can_manage_quick_endorsements = _can_manage_quick_endorsements(current_user)
+        can_use_secretary_endorsements = _can_use_secretary_endorsements(current_user)
+        can_use_employee_endorsements = _can_use_employee_endorsements(current_user)
 
     # The calendar shortcut is intentionally manual, but it saves users from
     # re-entering the active step's SLA deadline when one is available.
@@ -7773,9 +7928,17 @@ def view_request(request_id):
     calendar_suggested_date = calendar_suggested_local.strftime("%Y-%m-%d")
     calendar_suggested_time = calendar_suggested_local.strftime("%H:%M")
 
+    view_template = (
+        "workflow/view_request_view_as.html"
+        if view_as_readonly
+        else "workflow/view_request.html"
+    )
     return render_template(
-        "workflow/view_request.html",
+        view_template,
         req=req,
+        view_as_readonly=view_as_readonly,
+        view_as_user=view_as_user,
+        hide_shell=view_as_readonly,
         inst=inst,
         steps=steps,
         current_step=current_step,
@@ -7796,7 +7959,7 @@ def view_request(request_id):
         # Dynamic paths do not have a WorkflowTemplate row, but an administrator
         # must still get the complete audit view so comment controls are usable.
         show_detailed_audit=_should_show_detailed_workflow_audit(
-            current_user,
+            audit_viewer,
             template,
             can_delete_workflow_comments,
         ),
@@ -7838,7 +8001,11 @@ def view_request(request_id):
         corr_source=corr_source,
         corr_status_labels=CORR_STATUS_LABELS,
         corr_action_labels=CORR_ACTION_LABELS,
-        execution_context=execution,
+        execution_context=(
+            {"execution_context": "SELF"}
+            if view_as_readonly
+            else execution
+        ),
         attendance_delay_case=attendance_delay_case,
         attendance_delay_direct_managers=attendance_delay_direct_managers,
         attendance_delay_employee=attendance_delay_employee,

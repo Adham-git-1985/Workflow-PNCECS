@@ -272,7 +272,7 @@ class User(db.Model, UserMixin):
         passive_deletes=True,
     )
 
-    def has_perm(self, key: str, *, _ignore_selected_context: bool = False) -> bool:
+    def has_perm(self, key: str) -> bool:
         """Permission check with CRUD support + backward compatibility.
 
         Supported patterns:
@@ -288,19 +288,11 @@ class User(db.Model, UserMixin):
 
         # The technical login account stays available in flask.g for audit,
         # but a selected delegated context is a single working identity.
-        if not _ignore_selected_context:
-            principal = _selected_principal_for_current_account(self)
-            if principal is not None:
-                return bool(principal.has_perm(key))
+        principal = _selected_principal_for_current_account(self)
+        if principal is not None:
+            return bool(principal.has_perm(key))
 
-        # A read-only SuperAdmin preview may inspect the stored permissions of
-        # the logged-in account while a separate delegation is selected.  Do
-        # not reuse the delegation-aware request cache for that explicit view.
-        result_cache = (
-            None
-            if _ignore_selected_context
-            else _request_authorization_cache("_permission_result_cache")
-        )
+        result_cache = _request_authorization_cache("_permission_result_cache")
         cache_key = _request_authorization_cache_key(self, key)
         if result_cache is not None and cache_key is not None and cache_key in result_cache:
             return bool(result_cache[cache_key])
