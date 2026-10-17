@@ -205,7 +205,10 @@ from services.attendance_delay_workflow import (
     get_delay_case_for_request,
     is_attendance_delay_workflow,
 )
-from services.hr_request_workflow import resolve_responsible_managers
+from services.hr_request_workflow import (
+    resolve_responsible_managers,
+    secretary_general_user_ids,
+)
 from services.workflow_delay_summary import (
     get_overdue_workflow_rows,
     is_workflow_delay_summary_viewer,
@@ -2157,6 +2160,55 @@ def _find_or_create_request_type(request_type_name: str) -> RequestType:
 def _is_admin(user) -> bool:
     role = (getattr(user, "role", "") or "").strip().upper()
     return role in ("ADMIN", "SUPER_ADMIN")
+
+
+def _is_secretary_general_audit_user(user) -> bool:
+    """Identify the Secretary General for audit presentation purposes.
+
+    The account may also carry ``SUPER_ADMIN`` for operational access, so the
+    audit view cannot rely on ``User.role`` alone.  Prefer the explicit role or
+    job title, then fall back to the shared Secretary-General resolver which
+    also knows about organizational-node assignments.
+    """
+    if not user or not getattr(user, "id", None):
+        return False
+
+    try:
+        if user.has_role("GENERAL_SECRETARY") or user.has_role("GENERAL-SECRETARY"):
+            return True
+    except Exception:
+        pass
+
+    for value in (getattr(user, "job_title", None), getattr(user, "role", None)):
+        normalized = "".join(
+            character
+            for character in str(value or "").strip().upper()
+            if character.isalnum()
+        )
+        if normalized.startswith((
+            "GENERALSECRETARY",
+            "SECRETARYGENERAL",
+            "أمينعام",
+            "امينعام",
+            "الأمينالعام",
+            "الامينالعام",
+        )):
+            return True
+
+    try:
+        return int(user.id) in set(secretary_general_user_ids())
+    except Exception:
+        return False
+
+
+def _should_show_detailed_workflow_audit(user, template, can_delete_workflow_comments) -> bool:
+    """Keep the Secretary General's activity feed in the normal user format."""
+    if _is_secretary_general_audit_user(user):
+        return False
+    return bool(
+        can_delete_workflow_comments
+        or (bool(template) and user.has_role("ADMIN"))
+    )
 
 
 def _user_can_reopen_workflow_request(req: WorkflowRequest, user: User | None) -> bool:
@@ -7743,9 +7795,10 @@ def view_request(request_id):
         can_delete_workflow_comments=can_delete_workflow_comments,
         # Dynamic paths do not have a WorkflowTemplate row, but an administrator
         # must still get the complete audit view so comment controls are usable.
-        show_detailed_audit=bool(
-            can_delete_workflow_comments
-            or (bool(template) and current_user.has_role("ADMIN"))
+        show_detailed_audit=_should_show_detailed_workflow_audit(
+            current_user,
+            template,
+            can_delete_workflow_comments,
         ),
         users_map=users_map,
         user_org_path_map=user_org_path_map,

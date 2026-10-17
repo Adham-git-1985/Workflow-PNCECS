@@ -5,12 +5,35 @@ from workflow.routes import (
     MENTION_ACCESS_ACTION,
     MENTION_ACCESS_REVOKED_ACTION,
     _clean_workflow_note,
+    _is_secretary_general_audit_user,
+    _should_show_detailed_workflow_audit,
     _strip_workflow_operation_source,
     _user_facing_audit_note,
 )
 
 
 class WorkflowActivityDetailsTests(unittest.TestCase):
+    def test_super_admin_with_secretary_general_title_uses_compact_audit(self):
+        user = SimpleNamespace(
+            id=5,
+            role="SUPER_ADMIN",
+            job_title="امين عام اللجنة الوطنية",
+        )
+
+        self.assertTrue(_is_secretary_general_audit_user(user))
+        self.assertFalse(_should_show_detailed_workflow_audit(user, object(), True))
+
+    def test_super_admin_without_secretary_general_identity_keeps_detailed_audit(self):
+        user = SimpleNamespace(
+            id=None,
+            role="SUPER_ADMIN",
+            job_title="مدير النظام",
+            has_role=lambda role: role == "ADMIN",
+        )
+
+        self.assertFalse(_is_secretary_general_audit_user(user))
+        self.assertTrue(_should_show_detailed_workflow_audit(user, object(), True))
+
     def test_operation_source_line_is_removed_without_losing_comment_text(self):
         note = "يرجى المتابعة.\nمصدر العملية: IP=127.0.0.1\nمع الشكر"
 
