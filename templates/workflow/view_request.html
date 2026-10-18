@@ -782,7 +782,7 @@
                 {% endif %}
 
                 {# المرفقات تظهر صراحةً داخل القصة حتى لا تضيع بين تفاصيل بطاقة الخطوة. #}
-                {% set story_items = (step_att_items.get(s.step_order) if step_att_items else []) %}
+                {% set story_items = ((step_att_items.get(s.step_order) if step_att_items else []) or []) %}
                 {% if story_items or (loop.first and pre_att_items) %}
                   <div class="workflow-story-only border rounded-3 bg-light p-3 mt-3">
                     <div class="fw-semibold mb-2"><i class="bi bi-paperclip text-primary"></i> مرفقات هذه المرحلة</div>
