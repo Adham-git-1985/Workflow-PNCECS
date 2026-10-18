@@ -891,7 +891,18 @@
         <h3><i class="bi bi-kanban"></i> المعاملات حسب اليوم والوحدة</h3>
         <p>توضح الأرقام مقدار تعامل المستخدمين مع معاملات «مسار» و«البوابة الإدارية» في كل يوم، حسب نوع الإجراء.</p>
       </div>
-      <span class="badge rounded-pill text-bg-light">{{ number(report.transactions_daily|length) }} صف يومي</span>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <span class="badge rounded-pill text-bg-light">
+          {% if report.transaction_rows_limited and report.transactions_daily_total > report.transactions_daily|length %}
+            عرض {{ number(report.transactions_daily|length) }} من أصل {{ number(report.transactions_daily_total) }} صف يومي
+          {% else %}
+            {{ number(report.transactions_daily|length) }} صف يومي
+          {% endif %}
+        </span>
+        {% if report.transaction_rows_limited and report.transactions_daily_total > report.transactions_daily|length %}
+          <a class="btn btn-sm btn-outline-secondary no-print" href="{{ url_for('audit.audit_dashboard', rows='all', user_id=report.selected_user_id, period=report.period.key, date_from=report.period.date_from_value, date_to=report.period.date_to_value) }}">عرض كل التفاصيل</a>
+        {% endif %}
+      </div>
     </div>
     <div class="audit-dashboard-transaction-legend">
       <span>المعاملة/المرجع الفريد لا يتكرر عند فتحه أكثر من مرة في اليوم نفسه.</span>
@@ -936,7 +947,13 @@
         <h3><i class="bi bi-person-vcard"></i> التفصيل اليومي حسب المستخدم</h3>
         <p>هذا هو الجدول الرئيسي لتوجيه الموظفين: يبين ماذا فعل كل مستخدم في «مسار» أو «البوابة الإدارية» في كل يوم.</p>
       </div>
-      <span class="badge rounded-pill text-bg-light">{{ number(report.transactions_daily_by_user|length) }} صف تفصيلي</span>
+      <span class="badge rounded-pill text-bg-light">
+        {% if report.transaction_rows_limited and report.transactions_daily_by_user_total > report.transactions_daily_by_user|length %}
+          عرض {{ number(report.transactions_daily_by_user|length) }} من أصل {{ number(report.transactions_daily_by_user_total) }} صف تفصيلي
+        {% else %}
+          {{ number(report.transactions_daily_by_user|length) }} صف تفصيلي
+        {% endif %}
+      </span>
     </div>
     <div class="table-responsive">
       <table class="table audit-dashboard-transaction-table">

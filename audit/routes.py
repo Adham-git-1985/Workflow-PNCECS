@@ -6,6 +6,7 @@ from flask_login import login_required, current_user
 from datetime import date, datetime, timedelta
 from sqlalchemy import or_, func, and_, case, false
 from sqlalchemy.orm import aliased, joinedload
+from cachelib import SimpleCache
 
 from io import BytesIO
 from utils.excel import make_xlsx_bytes, make_xlsx_bytes_multi
@@ -59,6 +60,16 @@ _DASHBOARD_PERIODS = {
     "all": {"label": "كل الفترة", "days": None},
     "custom": {"label": "فترة مخصصة", "days": None},
 }
+
+# Keep the first dashboard load intentionally small. Administrators can still
+# request a longer period explicitly from the filter controls.
+_DASHBOARD_DEFAULT_PERIOD = "7"
+
+# Aggregates remain complete, but the HTML tables should not render thousands
+# of rows for a long period. Excel export keeps the complete report.
+_DASHBOARD_DISPLAY_DAILY_LIMIT = 62
+_DASHBOARD_DISPLAY_DAILY_USER_LIMIT = 200
+_DASHBOARD_REPORT_CACHE = SimpleCache(default_timeout=20, threshold=32)
 
 _DASHBOARD_MODULE_LABELS = {
     "WORKFLOW": "مسار",
@@ -374,9 +385,11 @@ def _dashboard_filter_state():
     raw_period = (request.args.get("period") or "").strip().lower()
     raw_from = (request.args.get("date_from") or "").strip()
     raw_to = (request.args.get("date_to") or "").strip()
-    period = raw_period or ("custom" if raw_from or raw_to else "30")
+    period = raw_period or (
+        "custom" if raw_from or raw_to else _DASHBOARD_DEFAULT_PERIOD
+    )
     if period not in _DASHBOARD_PERIODS:
-        period = "30"
+        period = _DASHBOARD_DEFAULT_PERIOD
 
     notice = None
 
@@ -395,10 +408,10 @@ def _dashboard_filter_state():
         date_from = parse_day(raw_from)
         date_to = parse_day(raw_to)
         if not date_from and not date_to:
-            period = "30"
-            date_from = today - timedelta(days=29)
+            period = _DASHBOARD_DEFAULT_PERIOD
+            date_from = today - timedelta(days=6)
             date_to = today
-            notice = "لم تُحدّد فترة مخصصة؛ عُرضت آخر 30 يومًا."
+            notice = "لم تُحدّد فترة مخصصة؛ عُرضت آخر 7 أيام."
     else:
         days = _DASHBOARD_PERIODS[period]["days"]
         date_from = today - timedelta(days=max(0, days - 1))
@@ -461,7 +474,7 @@ def _dashboard_user_label(user):
     )
 
 
-def _build_audit_dashboard_report():
+def _build_audit_dashboard_report(*, limit_transaction_rows=False):
     """Build all aggregates used by the HTML and Excel usage reports."""
     filter_state = _dashboard_filter_state()
     users = User.query.order_by(User.name.asc(), User.email.asc()).all()
@@ -958,6 +971,15 @@ def _build_audit_dashboard_report():
         if row["code"] == "ADMIN_PORTAL"
     )
 
+    transaction_daily_total = len(transaction_daily)
+    transaction_daily_by_user_total = len(transaction_daily_by_user)
+    transaction_rows_limited = bool(limit_transaction_rows)
+    if transaction_rows_limited:
+        transaction_daily = transaction_daily[:_DASHBOARD_DISPLAY_DAILY_LIMIT]
+        transaction_daily_by_user = transaction_daily_by_user[
+            :_DASHBOARD_DISPLAY_DAILY_USER_LIMIT
+        ]
+
     return {
         "summary": summary,
         "users": user_rows,
@@ -978,6 +1000,9 @@ def _build_audit_dashboard_report():
         "transaction_modules": transaction_module_rows,
         "transactions_daily": transaction_daily,
         "transactions_daily_by_user": transaction_daily_by_user,
+        "transactions_daily_total": transaction_daily_total,
+        "transactions_daily_by_user_total": transaction_daily_by_user_total,
+        "transaction_rows_limited": transaction_rows_limited,
         "trend": trend,
         "distribution": distribution,
         "selected_user": selected_user,
@@ -988,6 +1013,14 @@ def _build_audit_dashboard_report():
         "generated_at_text": _dashboard_datetime_text(datetime.utcnow()),
         "print_mode": request.args.get("print") in {"1", "true", "yes"},
     }
+
+
+def _dashboard_report_cache_key(show_all_rows):
+    """Build a viewer-scoped key for the short-lived dashboard cache."""
+    viewer_id = getattr(current_user, "id", None)
+    viewer_role = getattr(current_user, "role", "") or ""
+    query_values = tuple(sorted(request.args.items(multi=True)))
+    return repr((viewer_id, viewer_role, bool(show_all_rows), query_values))
 
 
 @audit_bp.route("/")
@@ -1095,7 +1128,18 @@ def list_audit_logs():
 @login_required
 @perm_required("AUDIT_DASHBOARD_READ")
 def audit_dashboard():
-    report = _build_audit_dashboard_report()
+    show_all_rows = request.args.get("rows", "").strip().lower() in {
+        "all",
+        "full",
+    }
+    report = None
+    cache_key = _dashboard_report_cache_key(show_all_rows)
+    if not show_all_rows:
+        report = _DASHBOARD_REPORT_CACHE.get(cache_key)
+    if report is None:
+        report = _build_audit_dashboard_report(limit_transaction_rows=not show_all_rows)
+        if not show_all_rows:
+            _DASHBOARD_REPORT_CACHE.set(cache_key, report, timeout=20)
     return render_template(
         "audit/dashboard.html",
         report=report,
@@ -1120,7 +1164,7 @@ def audit_dashboard():
 @perm_required("AUDIT_DASHBOARD_READ")
 def audit_dashboard_export_excel():
     """Export the same filtered usage report shown on the dashboard."""
-    report = _build_audit_dashboard_report()
+    report = _build_audit_dashboard_report(limit_transaction_rows=False)
     summary = report["summary"]
     transaction_action_headers = [
         label for _key, _code, label in _DASHBOARD_TRANSACTION_ACTIONS
