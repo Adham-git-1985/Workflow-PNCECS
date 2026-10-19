@@ -8699,12 +8699,31 @@ def portal_admin_edit_sent_notification(message_id: int):
     return render_form(title=message.subject or "", body=message.body or "")
 
 
+def _portal_admin_notification_source_filter(source: str):
+    """Return the notification-source predicate used by the merged admin view."""
+    if source == "portal":
+        return Notification.source == "portal"
+    if source == "workflow":
+        # Older Masar rows may not have a source value yet.
+        return or_(Notification.source.is_(None), Notification.source == "workflow")
+    return None
+
+
 @portal_bp.route("/admin/notifications", methods=["GET", "POST"])
 @login_required
 def portal_admin_notifications():
-    """Let super administrators hide selected notifications for one employee."""
+    """Show portal and Masar notifications in one admin view.
+
+    Only portal notifications remain manageable from this page. Masar
+    notifications are intentionally read-only here so their workflow-owned
+    lifecycle is not changed by the portal administrator.
+    """
     if not _is_super_admin():
         abort(403)
+
+    source = (request.values.get("source") or "all").strip().lower()
+    if source not in {"all", "portal", "workflow"}:
+        source = "all"
 
     if request.method == "POST":
         try:
@@ -8731,6 +8750,7 @@ def portal_admin_notifications():
                 q=post_q,
                 user_id=target_user.id,
                 notification_q=post_notification_q,
+                source=source,
             ))
 
         hidden_count = (
@@ -8757,6 +8777,7 @@ def portal_admin_notifications():
             q=post_q,
             user_id=target_user.id,
             notification_q=post_notification_q,
+            source=source,
         ))
 
     q = (request.args.get("q") or "").strip()
@@ -8768,6 +8789,7 @@ def portal_admin_notifications():
     selected_user = db.session.get(User, selected_user_id) if selected_user_id else None
     if selected_user_id and not selected_user:
         abort(404)
+    source_filter = _portal_admin_notification_source_filter(source)
     users_query = (
         db.session.query(
             User,
@@ -8775,9 +8797,10 @@ def portal_admin_notifications():
         )
         .join(Notification, Notification.user_id == User.id)
         .filter(Notification.is_mirror.is_(False))
-        .filter(Notification.source == "portal")
         .filter(Notification.is_visible.is_(True))
     )
+    if source_filter is not None:
+        users_query = users_query.filter(source_filter)
     if q:
         needle = f"%{q}%"
         users_query = users_query.filter(or_(
@@ -8799,9 +8822,10 @@ def portal_admin_notifications():
             Notification.query
             .filter(Notification.user_id == selected_user.id)
             .filter(Notification.is_mirror.is_(False))
-            .filter(Notification.source == "portal")
             .filter(Notification.is_visible.is_(True))
         )
+        if source_filter is not None:
+            notifications_query = notifications_query.filter(source_filter)
         if notification_q:
             notification_needle = f"%{notification_q}%"
             notifications_query = notifications_query.filter(or_(
@@ -8814,6 +8838,9 @@ def portal_admin_notifications():
             .limit(500)
             .all()
         )
+    manageable_notification_count = sum(
+        1 for notification in notifications if notification.source == "portal"
+    )
     return render_template(
         "portal/admin/notifications.html",
         users=users,
@@ -8821,6 +8848,8 @@ def portal_admin_notifications():
         notification_q=notification_q,
         selected_user=selected_user,
         notifications=notifications,
+        source=source,
+        manageable_notification_count=manageable_notification_count,
     )
 
 
