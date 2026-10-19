@@ -57,6 +57,7 @@ class WorkflowReportsTests(unittest.TestCase):
         ])
         cls.app.jinja_env.filters["ui_label"] = ui_label
         cls.app.jinja_env.filters["workflow_status_label"] = workflow_status_label
+        cls.app.jinja_env.globals["csrf_token"] = lambda: "test-csrf"
         cls.context = cls.app.app_context()
         cls.context.push()
         db.create_all()
@@ -170,13 +171,57 @@ class WorkflowReportsTests(unittest.TestCase):
         with self.app.test_client() as client:
             self._login(client)
             response = client.get(
-                f"/workflow/reports?user_id={self.employee.id}"
+                f"/workflow/reports/employee-workflow?user_id={self.employee.id}"
             )
 
         self.assertEqual(response.status_code, 200)
         body = response.get_data(as_text=True)
         self.assertIn("مسار تقرير تجريبي", body)
         self.assertIn("وقت فتح الموظف", body)
+
+
+    def test_reports_index_is_a_catalog_with_employee_report_button(self):
+        db.session.add(UserPermission(
+            user_id=self.employee.id,
+            key="WORKFLOW_REPORTS_READ",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client)
+            response = client.get("/workflow/reports")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("/workflow/reports/employee-workflow", body)
+        self.assertNotIn("workflow-report-search", body)
+
+    def test_email_settings_are_available_only_to_email_managers(self):
+        db.session.add(UserPermission(
+            user_id=self.employee.id,
+            key="WORKFLOW_REPORTS_READ",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client)
+            denied = client.get("/workflow/reports/email-settings")
+        self.assertEqual(denied.status_code, 403)
+
+        db.session.add(UserPermission(
+            user_id=self.employee.id,
+            key="WORKFLOW_REPORTS_EMAIL_MANAGE",
+            is_allowed=True,
+        ))
+        db.session.commit()
+        with self.app.test_client() as client:
+            self._login(client)
+            allowed = client.get("/workflow/reports/email-settings")
+
+        self.assertEqual(allowed.status_code, 200)
+        self.assertIn("10:00", allowed.get_data(as_text=True))
 
 
 if __name__ == "__main__":

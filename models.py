@@ -3621,6 +3621,42 @@ class HRDocVersion(db.Model):
     )
 
 
+class WorkflowReportEmailDelivery(db.Model):
+    """One scheduled or on-demand Masar workflow report email run."""
+
+    __tablename__ = "workflow_report_email_delivery"
+
+    id = db.Column(db.Integer, primary_key=True)
+    report_key = db.Column(db.String(80), nullable=False, default="EMPLOYEE_WORKFLOW", index=True)
+    slot_key = db.Column(db.String(120), nullable=False, unique=True, index=True)
+    run_date = db.Column(db.String(10), nullable=False, index=True)
+    scheduled_time = db.Column(db.String(20), nullable=False, default="10:00", index=True)
+    trigger = db.Column(db.String(20), nullable=False, default="SCHEDULED", index=True)
+    status = db.Column(db.String(20), nullable=False, default="PENDING", index=True)
+    attempt_count = db.Column(db.Integer, nullable=False, default=0)
+    recipient_count = db.Column(db.Integer, nullable=False, default=0)
+    employee_count = db.Column(db.Integer, nullable=False, default=0)
+    assignment_count = db.Column(db.Integer, nullable=False, default=0)
+    sent_at = db.Column(db.DateTime, nullable=True)
+    last_error = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        db.Index(
+            "ix_workflow_report_email_delivery_report_date",
+            "report_key",
+            "run_date",
+            "scheduled_time",
+        ),
+        db.Index(
+            "ix_workflow_report_email_delivery_status_date",
+            "status",
+            "run_date",
+        ),
+    )
+
+
 
 # =========================================================
 # Portal HR: Attendance Masterdata (Schedules + Permissions + Leaves)

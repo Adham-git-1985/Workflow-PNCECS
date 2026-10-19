@@ -1,0 +1,60 @@
+{% extends "layout.html" %}
+{% block title %}تقارير مسار{% endblock %}
+{% block content %}
+
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-4">
+  <div>
+    <h3 class="mb-1"><i class="bi bi-bar-chart-line"></i> تقارير مسار</h3>
+    <div class="text-muted">فهرس تقارير مسار. يمكن إضافة تقارير أخرى هنا مستقبلًا.</div>
+  </div>
+  {% if current_user.has_perm('WORKFLOW_DASHBOARD_READ') %}
+    <a class="btn btn-outline-secondary" href="{{ url_for('workflow.work_dashboard') }}">
+      <i class="bi bi-kanban"></i> لوحة عمل مسار
+    </a>
+  {% endif %}
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-xl-6">
+    <div class="card shadow-sm h-100 border-primary">
+      <div class="card-body d-flex flex-column">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <i class="bi bi-people fs-3 text-primary"></i>
+          <h5 class="mb-0">تقرير الموظفين والمسارات</h5>
+        </div>
+        <p class="text-muted mb-4">
+          عدد المسارات لكل موظف، حالتها، بيانات الموظف، وقت التكليف، ووقت فتح الموظف للمسار.
+        </p>
+        <a class="btn btn-primary mt-auto" href="{{ url_for('workflow.workflow_employee_paths_report') }}">
+          <i class="bi bi-box-arrow-up-left"></i> فتح التقرير
+        </a>
+      </div>
+    </div>
+  </div>
+
+  {% if can_manage_email %}
+  <div class="col-12 col-xl-6">
+    <div class="card shadow-sm h-100 border-success">
+      <div class="card-body d-flex flex-column">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <i class="bi bi-envelope-paper fs-3 text-success"></i>
+          <h5 class="mb-0">إرسال تقرير مسار بالبريد</h5>
+        </div>
+        <p class="text-muted mb-2">
+          جدولة الإرسال اليومي الساعة 10:00 صباحًا أو أي وقت آخر، وتحديد المستلمين والإرسال عند الطلب.
+        </p>
+        {% if email_config and email_config.enabled %}
+          <div class="small text-success mb-3"><i class="bi bi-check-circle"></i> الإرسال الآلي مفعّل — {{ email_config.send_times_list|join('، ') }}</div>
+        {% else %}
+          <div class="small text-muted mb-3"><i class="bi bi-pause-circle"></i> الإرسال الآلي غير مفعّل</div>
+        {% endif %}
+        <a class="btn btn-success mt-auto" href="{{ url_for('workflow.workflow_report_email_settings') }}">
+          <i class="bi bi-sliders"></i> إعدادات الإرسال والعرض
+        </a>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

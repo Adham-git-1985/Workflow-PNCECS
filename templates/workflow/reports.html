@@ -7,11 +7,21 @@
     <h3 class="mb-1"><i class="bi bi-bar-chart-line"></i> تقارير مسار</h3>
     <div class="text-muted">تقرير تكليفات الموظفين بالمسارات وحالاتها وأوقات فتحها.</div>
   </div>
-  {% if current_user.has_perm('WORKFLOW_DASHBOARD_READ') %}
-    <a class="btn btn-outline-secondary" href="{{ url_for('workflow.work_dashboard') }}">
-      <i class="bi bi-kanban"></i> لوحة عمل مسار
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-secondary" href="{{ url_for('workflow.workflow_reports') }}">
+      <i class="bi bi-arrow-right"></i> فهرس التقارير
     </a>
-  {% endif %}
+    {% if current_user.has_perm('WORKFLOW_REPORTS_EMAIL_MANAGE') %}
+      <a class="btn btn-outline-success" href="{{ url_for('workflow.workflow_report_email_settings') }}">
+        <i class="bi bi-envelope-paper"></i> إعدادات الإرسال
+      </a>
+    {% endif %}
+    {% if current_user.has_perm('WORKFLOW_DASHBOARD_READ') %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('workflow.work_dashboard') }}">
+        <i class="bi bi-kanban"></i> لوحة عمل مسار
+      </a>
+    {% endif %}
+  </div>
 </div>
 
 <div class="row g-2 mb-3">
@@ -64,7 +74,7 @@
         <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض التقرير</button>
       </div>
       <div class="col-lg-2">
-        <a class="btn btn-outline-secondary w-100" href="{{ url_for('workflow.workflow_reports') }}">مسح</a>
+        <a class="btn btn-outline-secondary w-100" href="{{ url_for('workflow.workflow_employee_paths_report') }}">مسح</a>
       </div>
     </form>
   </div>
@@ -135,7 +145,7 @@
             </td>
             <td>
               <a class="btn btn-sm btn-outline-primary text-nowrap"
-                 href="{{ url_for('workflow.workflow_reports', q=q, status=status, user_id=row.user.id) }}">
+                 href="{{ url_for('workflow.workflow_employee_paths_report', q=q, status=status, user_id=row.user.id) }}">
                 <i class="bi bi-list-ul"></i> التفاصيل
               </a>
             </td>
@@ -152,7 +162,7 @@
         <ul class="pagination pagination-sm mb-0">
           {% for page_number in range(1, pages + 1) %}
             <li class="page-item {{ 'active' if page_number == page else '' }}">
-              <a class="page-link" href="{{ url_for('workflow.workflow_reports', q=q, status=status, page=page_number) }}">{{ page_number }}</a>
+              <a class="page-link" href="{{ url_for('workflow.workflow_employee_paths_report', q=q, status=status, page=page_number) }}">{{ page_number }}</a>
             </li>
           {% endfor %}
         </ul>
@@ -168,7 +178,7 @@
       <strong>تفاصيل مسارات: {{ selected_user.full_name }}</strong>
       <div class="small text-muted">يعرض التقرير وقت التكليف ووقت فتح الموظف للمسار.</div>
     </div>
-    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('workflow.workflow_reports', q=q, status=status) }}">إغلاق التفاصيل</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('workflow.workflow_employee_paths_report', q=q, status=status) }}">إغلاق التفاصيل</a>
   </div>
   <div class="table-responsive">
     <table class="table table-hover align-middle mb-0">

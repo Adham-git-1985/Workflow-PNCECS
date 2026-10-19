@@ -142,7 +142,8 @@ def build_employee_workflow_report(
     status: str = "",
     selected_user_id: int | None = None,
     page: int = 1,
-    per_page: int = 50,
+    per_page: int | None = 50,
+    include_all_details: bool = False,
 ) -> dict:
     """Build the first Masar report: workflow assignments by employee.
 
@@ -401,29 +402,61 @@ def build_employee_workflow_report(
         page = max(1, int(page or 1))
     except (TypeError, ValueError):
         page = 1
-    try:
-        per_page = max(10, min(int(per_page or 50), 100))
-    except (TypeError, ValueError):
-        per_page = 50
     total_employees = len(summary_rows)
-    pages = max(1, (total_employees + per_page - 1) // per_page)
-    page = min(page, pages)
-    page_rows = summary_rows[(page - 1) * per_page:page * per_page]
+    if per_page is None:
+        page = 1
+        pages = 1
+        page_rows = summary_rows
+    else:
+        try:
+            per_page = max(10, min(int(per_page or 50), 100))
+        except (TypeError, ValueError):
+            per_page = 50
+        pages = max(1, (total_employees + per_page - 1) // per_page)
+        page = min(page, pages)
+        page_rows = summary_rows[(page - 1) * per_page:page * per_page]
+
+    def detail_row(association: dict) -> dict:
+        detail = dict(association)
+        detail["user"] = user_map.get(int(association["user_id"]))
+        assignment_dates = association.get("assignment_dates") or []
+        detail["assignment_at"] = max(assignment_dates) if assignment_dates else None
+        detail["step_orders_label"] = ", ".join(
+            str(step_order)
+            for step_order in sorted(association.get("step_orders") or [])
+        )
+        detail["active"] = bool(association.get("active_step_orders"))
+        return detail
 
     selected_user = user_map.get(int(selected_user_id or 0)) if selected_user_id else None
     selected_details = []
     if selected_user:
-        selected_details = list(filtered_by_user.get(int(selected_user.id), []))
-        for association in selected_details:
-            assignment_dates = association.get("assignment_dates") or []
-            association["assignment_at"] = max(assignment_dates) if assignment_dates else None
-            association["step_orders_label"] = ", ".join(
-                str(step_order)
-                for step_order in sorted(association.get("step_orders") or [])
-            )
-            association["active"] = bool(association.get("active_step_orders"))
+        selected_details = [
+            detail_row(association)
+            for association in filtered_by_user.get(int(selected_user.id), [])
+        ]
         selected_details.sort(
             key=lambda association: (
+                not association["active"],
+                -(
+                    association["assignment_at"].timestamp()
+                    if association.get("assignment_at")
+                    else 0
+                ),
+                -int(association["request"].id or 0),
+            )
+        )
+
+    report_details = []
+    if include_all_details:
+        report_details = [
+            detail_row(association)
+            for user_associations in filtered_by_user.values()
+            for association in user_associations
+        ]
+        report_details.sort(
+            key=lambda association: (
+                _text(user_map[int(association["user_id"])].full_name),
                 not association["active"],
                 -(
                     association["assignment_at"].timestamp()
@@ -448,6 +481,7 @@ def build_employee_workflow_report(
         "summary_rows": page_rows,
         "selected_user": selected_user,
         "selected_details": selected_details,
+        "report_details": report_details,
         "status_options": tuple(dict.fromkeys((*REPORT_STATUS_OPTIONS, *status_totals.keys()))),
         "status_totals": dict(status_totals),
         "total_employees": sum(1 for row in summary_rows if row["total_paths"]),

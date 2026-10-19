@@ -399,6 +399,7 @@ def manage_permissions():
         "CREATE_REQUEST",
         "APPROVE_REQUEST",
         "WORKFLOW_REPORTS_READ",
+        "WORKFLOW_REPORTS_EMAIL_MANAGE",
         "WORKFLOW_REOPEN_TO_STEP",
         "UPLOAD_ATTACHMENT",
         "SIGN_ARCHIVE",

@@ -1,0 +1,231 @@
+{% extends "layout.html" %}
+{% block title %}إعدادات إرسال تقارير مسار{% endblock %}
+{% block content %}
+
+<div class="card shadow-sm">
+  <div class="card-body" dir="rtl">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+      <div>
+        <h3 class="mb-1"><i class="bi bi-envelope-paper text-success"></i> إرسال تقارير مسار</h3>
+        <p class="text-muted mb-0">تحكم كامل في الجدولة والمستلمين ومحتوى التقرير والإرسال عند الطلب.</p>
+      </div>
+      <a class="btn btn-outline-secondary" href="{{ url_for('workflow.workflow_reports') }}">
+        <i class="bi bi-arrow-right"></i> العودة إلى التقارير
+      </a>
+    </div>
+
+    <form method="post" class="row g-4">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <div class="col-12">
+        <div class="border rounded-3 p-3 bg-light-subtle">
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" role="switch" id="enabled" name="enabled" value="1" {% if config.enabled %}checked{% endif %}>
+            <label class="form-check-label fw-bold" for="enabled">تفعيل الإرسال الآلي</label>
+          </div>
+          <div class="small text-muted mt-2">يتم الفحص كل دقيقة حسب المنطقة الزمنية للتطبيق: Asia/Jerusalem. الإرسال عند الطلب لا يتأثر بهذا المفتاح.</div>
+        </div>
+      </div>
+
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-bold">ساعات الإرسال</label>
+        <div id="sendTimesList" class="d-flex flex-column gap-2">
+          {% for send_time in config.send_times_list %}
+          <div class="send-time-row input-group">
+            <input class="form-control" type="time" name="send_times" value="{{ send_time }}" required>
+            <button class="btn btn-outline-danger remove-send-time" type="button" title="حذف الوقت"><i class="bi bi-trash"></i></button>
+          </div>
+          {% endfor %}
+        </div>
+        <button class="btn btn-sm btn-outline-secondary mt-2" type="button" id="addSendTime"><i class="bi bi-plus-circle"></i> إضافة ساعة</button>
+        <div class="form-text">الافتراضي 10:00 صباحًا، ويمكن إضافة أكثر من وقت يوميًا.</div>
+      </div>
+
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-bold" for="frequency">نمط التكرار</label>
+        <select class="form-select" id="frequency" name="frequency">
+          <option value="DAILY" {% if config.frequency == 'DAILY' %}selected{% endif %}>يوميًا</option>
+          <option value="EVERY_N_DAYS" {% if config.frequency == 'EVERY_N_DAYS' %}selected{% endif %}>كل عدد محدد من الأيام</option>
+          <option value="WEEKLY" {% if config.frequency == 'WEEKLY' %}selected{% endif %}>أيام أسبوعية محددة</option>
+        </select>
+      </div>
+
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-bold" for="include_details">محتوى الرسالة</label>
+        <div class="form-check mt-2">
+          <input class="form-check-input" type="checkbox" id="include_details" name="include_details" value="1" {% if config.include_details %}checked{% endif %}>
+          <label class="form-check-label" for="include_details">إرفاق تفاصيل كل مسار</label>
+        </div>
+        <div class="form-text">عند إلغاء الاختيار، تصل خلاصة الموظفين فقط. في الحالتين يُرفق ملف Excel.</div>
+      </div>
+
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-bold" for="interval_days">عدد الأيام</label>
+        <input class="form-control" type="number" min="1" max="365" id="interval_days" name="interval_days" value="{{ config.interval_days }}">
+        <div class="form-text">يُستخدم مع نمط «كل عدد محدد من الأيام».</div>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-bold" for="start_date">تاريخ بداية التكرار</label>
+        <input class="form-control" type="date" id="start_date" name="start_date" value="{{ config.start_date.isoformat() if config.start_date else today }}">
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label fw-bold d-block">أيام الأسبوع</label>
+        <div class="d-flex flex-wrap gap-2">
+          {% for value, label in weekdays %}
+          <label class="border rounded px-2 py-1 bg-white small">
+            <input type="checkbox" name="weekdays" value="{{ value }}" {% if value in config.weekdays_list %}checked{% endif %}> {{ label }}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="col-12">
+        <div class="border rounded-3 p-3">
+          <h6 class="mb-3"><i class="bi bi-calendar-x"></i> الاستثناءات</h6>
+          <div class="row g-3">
+            <div class="col-12 col-md-4">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="skip_weekly_holidays" id="skip_weekly_holidays" value="1" {% if config.skip_weekly_holidays %}checked{% endif %}>
+                <label class="form-check-label" for="skip_weekly_holidays">تخطي العطل الأسبوعية</label>
+              </div>
+            </div>
+            <div class="col-12 col-md-4">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="skip_official_holidays" id="skip_official_holidays" value="1" {% if config.skip_official_holidays %}checked{% endif %}>
+                <label class="form-check-label" for="skip_official_holidays">تخطي العطل الرسمية</label>
+              </div>
+            </div>
+            <div class="col-12 col-md-4">
+              <label class="form-label" for="excluded_dates">تواريخ مستثناة يدويًا</label>
+              <textarea class="form-control" id="excluded_dates" name="excluded_dates" rows="2" placeholder="2026-10-25&#10;2026-11-01">{{ config.excluded_dates_list|join('\n') }}</textarea>
+              <div class="form-text">تاريخ واحد في كل سطر بصيغة YYYY-MM-DD.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-lg-6">
+        <div class="border rounded-3 p-3 h-100">
+          <h6 class="mb-2"><i class="bi bi-people"></i> المستلمون من مستخدمي النظام</h6>
+          <input type="search" class="form-control form-control-sm mb-2" id="recipientSearch" placeholder="بحث بالاسم أو البريد..."><div class="small text-muted mb-2">يمكن اختيار أكثر من مستخدم.</div>
+          <div id="recipientList" class="border rounded p-2" style="max-height:280px;overflow:auto">
+            {% for user in users %}
+            <label class="recipient-item d-flex gap-2 align-items-start py-1" data-search="{{ (user.name or '')|lower }} {{ (user.email or '')|lower }}">
+              <input class="form-check-input mt-1" type="checkbox" name="recipient_user_ids" value="{{ user.id }}" {% if user.id in config.recipient_user_ids_list %}checked{% endif %}>
+              <span><span class="fw-semibold">{{ user.name or user.email }}</span><br><small class="text-muted">{{ user.email }}</small></span>
+            </label>
+            {% else %}
+            <div class="text-muted small">لا يوجد مستخدمون لديهم بريد إلكتروني.</div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-lg-6">
+        <div class="border rounded-3 p-3 h-100">
+          <h6 class="mb-2"><i class="bi bi-at"></i> عناوين بريد إضافية</h6>
+          <textarea class="form-control" name="recipient_emails" rows="8" placeholder="manager@example.com&#10;hr@example.com">{{ config.recipient_emails_list|join('\n') }}</textarea>
+          <div class="form-text">يمكن إدخال عنوان في كل سطر أو فصل العناوين بفاصلة.</div>
+        </div>
+      </div>
+
+      <div class="col-12 d-flex flex-wrap gap-2 justify-content-end">
+        <button class="btn btn-success" type="submit" name="action" value="save"><i class="bi bi-check2-circle"></i> حفظ الإعدادات</button>
+        <button class="btn btn-outline-primary" type="submit" name="action" value="send_now"><i class="bi bi-send"></i> إرسال الآن</button>
+      </div>
+    </form>
+
+    <div class="border rounded-3 p-3 mt-4">
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+        <div>
+          <h5 class="mb-1"><i class="bi bi-clock-history"></i> سجل إرسال تقارير مسار</h5>
+          <div class="small text-muted">يعرض الإرسال المجدول والإرسال عند الطلب، وعدد المستلمين، وعدد الموظفين والمسارات، وأسباب الفشل.</div>
+        </div>
+        <div class="small text-muted text-end">
+          <div>آخر فحص للجدولة: <b>{{ config.scheduler_last_check_at or 'لم يتم الفحص بعد' }}</b></div>
+          {% if config.scheduler_last_status %}
+          <div>الحالة: <b>{{ config.scheduler_last_status }}</b></div>
+          {% endif %}
+          {% if config.scheduler_last_error %}<div class="text-danger mt-1">{{ config.scheduler_last_error }}</div>{% endif %}
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>وقت التسجيل</th>
+              <th>التشغيل</th>
+              <th>وقت الجدولة</th>
+              <th>الحالة</th>
+              <th>المستلمون</th>
+              <th>الموظفون</th>
+              <th>المسارات</th>
+              <th>الخطأ</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for delivery in delivery_history %}
+            {% set delivery_labels = {'SENT':'تم الإرسال', 'SENDING':'قيد الإرسال', 'FAILED':'فاشل', 'ALREADY_ATTEMPTED':'تمت المحاولة مسبقًا', 'PENDING':'معلق'} %}
+            {% set delivery_class = 'text-bg-success' if delivery.status == 'SENT' else ('text-bg-danger' if delivery.status == 'FAILED' else 'text-bg-warning') %}
+            <tr>
+              <td class="small">{{ delivery.updated_at|local_datetime if delivery.updated_at else (delivery.created_at|local_datetime if delivery.created_at else '—') }}</td>
+              <td>{{ 'عند الطلب' if delivery.trigger == 'ON_DEMAND' else 'مجدول' }}</td>
+              <td><span class="badge bg-light text-dark border">{{ delivery.scheduled_time }}</span></td>
+              <td><span class="badge {{ delivery_class }}">{{ delivery_labels.get(delivery.status, delivery.status) }}</span></td>
+              <td>{{ delivery.recipient_count or 0 }}</td>
+              <td>{{ delivery.employee_count or 0 }}</td>
+              <td>{{ delivery.assignment_count or 0 }}</td>
+              <td class="small text-danger" style="min-width:260px">{{ delivery.last_error or '—' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8" class="text-center text-muted py-3">لا توجد محاولات إرسال مسجلة حتى الآن.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById('recipientSearch')?.addEventListener('input', function () {
+  const query = (this.value || '').trim().toLowerCase();
+  document.querySelectorAll('#recipientList .recipient-item').forEach(function (item) {
+    item.classList.toggle('d-none', query && !(item.dataset.search || '').includes(query));
+  });
+});
+const sendTimesList = document.getElementById('sendTimesList');
+const addSendTime = document.getElementById('addSendTime');
+function syncSendTimeRows() {
+  const rows = sendTimesList ? sendTimesList.querySelectorAll('.send-time-row') : [];
+  rows.forEach(function (row) {
+    const remove = row.querySelector('.remove-send-time');
+    if (remove) remove.disabled = rows.length <= 1;
+  });
+}
+addSendTime?.addEventListener('click', function () {
+  if (!sendTimesList) return;
+  const row = document.createElement('div');
+  row.className = 'send-time-row input-group';
+  row.innerHTML = '<input class="form-control" type="time" name="send_times" value="10:00" required>' +
+    '<button class="btn btn-outline-danger remove-send-time" type="button" title="حذف الوقت"><i class="bi bi-trash"></i></button>';
+  sendTimesList.appendChild(row);
+  syncSendTimeRows();
+  row.querySelector('input')?.focus();
+});
+sendTimesList?.addEventListener('click', function (event) {
+  const button = event.target.closest('.remove-send-time');
+  if (!button) return;
+  const rows = sendTimesList.querySelectorAll('.send-time-row');
+  if (rows.length > 1) button.closest('.send-time-row')?.remove();
+  syncSendTimeRows();
+});
+syncSendTimeRows();
+document.getElementById('frequency')?.addEventListener('change', function () {
+  const every = this.value === 'EVERY_N_DAYS';
+  document.getElementById('interval_days').disabled = !every;
+  document.getElementById('start_date').disabled = !every;
+});
+document.getElementById('frequency')?.dispatchEvent(new Event('change'));
+</script>
+{% endblock %}

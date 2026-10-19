@@ -7,12 +7,15 @@ import time
 from services.workflow_task_email import run_workflow_task_email_cycle
 from services.notification_email import send_pending_notification_emails
 from services.attendance_report_email import run_attendance_report_email_cycle
+from services.workflow_report_email import run_workflow_report_email_cycle
 
 
 _STARTED = False
 _LOCK = threading.Lock()
 _ATTENDANCE_STARTED = False
 _ATTENDANCE_LOCK = threading.Lock()
+_WORKFLOW_REPORT_STARTED = False
+_WORKFLOW_REPORT_LOCK = threading.Lock()
 
 
 def _interval_seconds() -> int:
@@ -29,7 +32,7 @@ def _run_job_step(app, name: str, callback):
     The workflow and notification outboxes use models that may be ahead of a
     long-lived SQLite database during a rolling deployment.  A failure in one
     of those queries must not prevent the independent HR attendance report
-    from being evaluated during the same poll.
+    and Masar workflow report schedules from being evaluated during the same poll.
     """
     try:
         with app.app_context():
@@ -92,14 +95,21 @@ def _attendance_worker(app) -> None:
         time.sleep(_interval_seconds())
 
 
+def _workflow_report_worker(app) -> None:
+    """Poll Masar workflow report slots independently from other mail queues."""
+    while True:
+        _run_job_step(app, "workflow report", run_workflow_report_email_cycle)
+        time.sleep(_interval_seconds())
+
+
 def start_workflow_task_email_job(app) -> None:
     """Start the email workers once per web-server process.
 
-    The attendance report worker is deliberately independent from the
-    workflow/notification outboxes, while this public entry point remains
-    unchanged for existing deployments.
+    The attendance and Masar workflow report workers are deliberately
+    independent from the workflow/notification outboxes, while this public
+    entry point remains unchanged for existing deployments.
     """
-    global _STARTED, _ATTENDANCE_STARTED
+    global _STARTED, _ATTENDANCE_STARTED, _WORKFLOW_REPORT_STARTED
 
     if getattr(app, "testing", False):
         return
@@ -120,17 +130,32 @@ def start_workflow_task_email_job(app) -> None:
             app.logger.info("Workflow task email job started (interval=%ss)", _interval_seconds())
 
     with _ATTENDANCE_LOCK:
-        if _ATTENDANCE_STARTED:
+        if not _ATTENDANCE_STARTED:
+            thread = threading.Thread(
+                target=_attendance_worker,
+                args=(app,),
+                daemon=True,
+                name="AttendanceReportEmailJob",
+            )
+            thread.start()
+            _ATTENDANCE_STARTED = True
+            app.logger.info(
+                "Attendance report email job started (interval=%ss)",
+                _interval_seconds(),
+            )
+
+    with _WORKFLOW_REPORT_LOCK:
+        if _WORKFLOW_REPORT_STARTED:
             return
         thread = threading.Thread(
-            target=_attendance_worker,
+            target=_workflow_report_worker,
             args=(app,),
             daemon=True,
-            name="AttendanceReportEmailJob",
+            name="WorkflowReportEmailJob",
         )
         thread.start()
-        _ATTENDANCE_STARTED = True
+        _WORKFLOW_REPORT_STARTED = True
         app.logger.info(
-            "Attendance report email job started (interval=%ss)",
+            "Workflow report email job started (interval=%ss)",
             _interval_seconds(),
         )

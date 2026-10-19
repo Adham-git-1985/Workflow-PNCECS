@@ -10,7 +10,7 @@ import mimetypes
 import math
 from types import SimpleNamespace
 from io import BytesIO
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from urllib.parse import quote
 
 from flask import (
@@ -126,6 +126,7 @@ from models import (
     WorkflowInstance,
     WorkflowInstanceStep,
     WorkflowStepTask,
+    WorkflowReportEmailDelivery,
     WorkflowQuickEndorsement,
     RequestEscalation,
     RequestAttachment,
@@ -198,6 +199,11 @@ from workflow.engine import (
     ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
 )
 from workflow.reports import build_employee_workflow_report
+from services.workflow_report_email import (
+    get_report_email_config,
+    save_report_email_config,
+    send_workflow_report_email_now,
+)
 from services.attendance_delay_workflow import (
     ATTENDANCE_DELAY_RESPONSE_LABEL,
     attendance_delay_participant_user_ids,
@@ -6102,6 +6108,27 @@ def work_dashboard():
 @login_required
 @perm_required("WORKFLOW_REPORTS_READ")
 def workflow_reports():
+    """Report catalog for Masar, ready for additional report cards."""
+    legacy_query = {
+        key: value
+        for key in ("q", "status", "user_id", "page")
+        if (value := request.args.get(key)) not in (None, "")
+    }
+    if legacy_query:
+        return redirect(url_for("workflow.workflow_employee_paths_report", **legacy_query))
+    can_manage_email = current_user.has_perm("WORKFLOW_REPORTS_EMAIL_MANAGE")
+    email_config = get_report_email_config() if can_manage_email else None
+    return render_template(
+        "workflow/reports_index.html",
+        can_manage_email=can_manage_email,
+        email_config=email_config,
+    )
+
+
+@workflow_bp.route("/reports/employee-workflow")
+@login_required
+@perm_required("WORKFLOW_REPORTS_READ")
+def workflow_employee_paths_report():
     """Employee workload and workflow-opening report for Masar."""
     search = (request.args.get("q") or "").strip()
     status = (request.args.get("status") or "").strip().upper()
@@ -6122,6 +6149,101 @@ def workflow_reports():
         status=status,
         selected_user_id=selected_user_id,
         **report,
+    )
+
+
+@workflow_bp.route("/reports/email-settings", methods=["GET", "POST"])
+@login_required
+@perm_required("WORKFLOW_REPORTS_EMAIL_MANAGE")
+def workflow_report_email_settings():
+    """Configure, send, and inspect Masar workflow report emails."""
+    if request.method == "POST":
+        action = (request.form.get("action") or "save").strip().lower()
+        if action in {"send_now", "test"}:
+            try:
+                result = send_workflow_report_email_now(current_user)
+                flash(
+                    f"تم إرسال تقرير مسار عند الطلب إلى {result['recipients']} مستلم/مستلمين.",
+                    "success",
+                )
+            except Exception as exc:
+                db.session.rollback()
+                flash(f"تعذر إرسال تقرير مسار: {exc}", "danger")
+            return redirect(url_for("workflow.workflow_report_email_settings"))
+
+        payload = {
+            "enabled": request.form.get("enabled"),
+            "send_times": request.form.getlist("send_times"),
+            "send_time": request.form.get("send_time"),
+            "frequency": request.form.get("frequency"),
+            "interval_days": request.form.get("interval_days"),
+            "weekdays": request.form.getlist("weekdays"),
+            "skip_weekly_holidays": request.form.get("skip_weekly_holidays"),
+            "skip_official_holidays": request.form.get("skip_official_holidays"),
+            "excluded_dates": request.form.get("excluded_dates"),
+            "recipient_user_ids": request.form.getlist("recipient_user_ids"),
+            "recipient_emails": request.form.get("recipient_emails"),
+            "start_date": request.form.get("start_date"),
+            "include_details": request.form.get("include_details"),
+            "viewer_user_id": current_user.id,
+        }
+        try:
+            save_report_email_config(payload)
+            db.session.add(AuditLog(
+                user_id=current_user.id,
+                action="WORKFLOW_REPORTS_EMAIL_SETTINGS_UPDATE",
+                note=(
+                    f"enabled={bool(payload.get('enabled'))}; "
+                    f"frequency={payload.get('frequency')}; "
+                    f"times={','.join(payload.get('send_times') or [payload.get('send_time') or ''])}"
+                ),
+                target_type="SYSTEM_SETTING",
+                created_at=datetime.utcnow(),
+            ))
+            db.session.commit()
+            flash("تم حفظ إعدادات إرسال تقارير مسار.", "success")
+        except Exception as exc:
+            db.session.rollback()
+            flash(f"تعذر حفظ إعدادات الإرسال: {exc}", "danger")
+        return redirect(url_for("workflow.workflow_report_email_settings"))
+
+    config = get_report_email_config()
+    try:
+        delivery_history = (
+            WorkflowReportEmailDelivery.query
+            .filter_by(report_key="EMPLOYEE_WORKFLOW")
+            .order_by(
+                WorkflowReportEmailDelivery.created_at.desc(),
+                WorkflowReportEmailDelivery.id.desc(),
+            )
+            .limit(100)
+            .all()
+        )
+    except Exception:
+        db.session.rollback()
+        delivery_history = []
+    users = (
+        User.query
+        .filter(User.email.isnot(None))
+        .order_by(func.coalesce(User.name, User.email).asc(), User.id.asc())
+        .all()
+    )
+    weekdays = [
+        (0, "الاثنين"),
+        (1, "الثلاثاء"),
+        (2, "الأربعاء"),
+        (3, "الخميس"),
+        (4, "الجمعة"),
+        (5, "السبت"),
+        (6, "الأحد"),
+    ]
+    return render_template(
+        "workflow/report_email_settings.html",
+        config=config,
+        delivery_history=delivery_history,
+        users=users,
+        weekdays=weekdays,
+        today=date.today().isoformat(),
     )
 
 
