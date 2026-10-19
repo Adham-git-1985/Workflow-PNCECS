@@ -1,17 +1,19 @@
 {% extends "portal/layout.html" %}
-{% block title %}إدارة إشعارات الموظفين{% endblock %}
+{% block title %}إدارة إشعارات البوابة ومسار{% endblock %}
 
 {% block content %}
 <div class="p-4 bg-white rounded-3 shadow-sm">
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
     <div>
-      <h4 class="mb-1"><i class="bi bi-bell-slash"></i> إدارة إشعارات الموظفين</h4>
-      <div class="text-muted">اختر موظفاً ثم حدّد الإشعار المطلوب حذفه من حسابه. لا يمكن تنفيذ هذه العملية إلا من السوبر أدمن.</div>
+      <h4 class="mb-1"><i class="bi bi-bell-slash"></i> إدارة إشعارات البوابة ومسار</h4>
+      <div class="text-muted">اعرض إشعارات النظامين في الصفحة نفسها، مع إبقاء إشعارات مسار للقراءة فقط وإتاحة حذف إشعارات البوابة الإدارية للسوبر أدمن.</div>
     </div>
     <div class="d-flex gap-2 flex-wrap">
-      <a class="btn btn-primary" href="{{ url_for('portal.portal_admin_notifications') }}"><i class="bi bi-building-check"></i> إدارة إشعارات البوابة الإدارية</a>
+      <a class="btn {{ 'btn-primary' if source == 'all' else 'btn-outline-primary' }}" href="{{ url_for('portal.portal_admin_notifications', source='all') }}"><i class="bi bi-layers"></i> كل الإشعارات</a>
+      <a class="btn {{ 'btn-primary' if source == 'portal' else 'btn-outline-primary' }}" href="{{ url_for('portal.portal_admin_notifications', source='portal') }}"><i class="bi bi-building-check"></i> إشعارات البوابة الإدارية</a>
+      <a class="btn {{ 'btn-primary' if source == 'workflow' else 'btn-outline-primary' }}" href="{{ url_for('portal.portal_admin_notifications', source='workflow') }}"><i class="bi bi-diagram-3"></i> إشعارات مسار</a>
       {% if current_user.has_perm('WORKFLOW_NOTIFICATIONS_DASHBOARD_READ') %}
-        <a class="btn btn-outline-primary" href="/workflow/notifications/dashboard"><i class="bi bi-diagram-3"></i> إدارة إشعارات مسار</a>
+        <a class="btn btn-outline-primary" href="/workflow/notifications/dashboard"><i class="bi bi-bar-chart-line"></i> لوحة إحصائيات مسار</a>
       {% endif %}
       <a class="btn btn-primary" href="{{ url_for('portal.portal_admin_send_notifications') }}"><i class="bi bi-send-fill"></i> إرسال إشعار</a>
       <a class="btn btn-outline-primary" href="{{ url_for('portal.portal_admin_sent_notifications') }}"><i class="bi bi-send"></i> الإشعارات المرسلة</a>
@@ -20,17 +22,18 @@
   </div>
 
   <form method="get" class="row g-2 mb-3">
+    <input type="hidden" name="source" value="{{ source }}" />
     <div class="col-md-8">
       <label class="form-label" for="q">بحث عن موظف</label>
       <input id="q" name="q" class="form-control" value="{{ q }}" placeholder="الاسم أو البريد الإلكتروني أو اسم المستخدم" />
     </div>
     <div class="col-md-4 d-flex align-items-end gap-2">
       <button class="btn btn-outline-primary" type="submit"><i class="bi bi-search"></i> بحث</button>
-      {% if q %}<a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_notifications') }}">إلغاء</a>{% endif %}
+      {% if q %}<a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_notifications', source=source) }}">إلغاء</a>{% endif %}
     </div>
   </form>
 
-  <div class="text-muted small mb-3">يعرض الجدول الموظفين الذين لديهم إشعارات ظاهرة فقط.</div>
+  <div class="text-muted small mb-3">يعرض الجدول الموظفين الذين لديهم إشعارات ظاهرة ضمن المصدر المحدد. إشعارات مسار للعرض فقط من هذه الصفحة.</div>
   {% if users %}
     <div class="table-responsive mb-4">
       <table class="table table-hover align-middle">
@@ -40,6 +43,7 @@
             <th scope="col">البريد الإلكتروني</th>
             <th scope="col">الدور</th>
             <th scope="col">الإشعارات الظاهرة</th>
+            <th scope="col">المصدر</th>
             <th scope="col"></th>
           </tr>
         </thead>
@@ -50,7 +54,16 @@
               <td>{{ user.email or '-' }}</td>
               <td>{{ user.role or '-' }}</td>
               <td><span class="badge text-bg-secondary">{{ notification_count }}</span></td>
-              <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.portal_admin_notifications', q=q, user_id=user.id) }}"><i class="bi bi-bell"></i> إدارة الإشعارات</a></td>
+              <td>
+                {% if source == 'portal' %}
+                  <span class="badge text-bg-primary">البوابة الإدارية</span>
+                {% elif source == 'workflow' %}
+                  <span class="badge text-bg-info">مسار</span>
+                {% else %}
+                  <span class="badge text-bg-secondary">البوابة + مسار</span>
+                {% endif %}
+              </td>
+              <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.portal_admin_notifications', q=q, user_id=user.id, source=source) }}"><i class="bi bi-bell"></i> عرض الإشعارات</a></td>
             </tr>
           {% endfor %}
         </tbody>
@@ -65,13 +78,14 @@
       <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
         <div>
           <h5 class="mb-1">إشعارات {{ selected_user.full_name }}</h5>
-          <div class="text-muted small">حدّد الإشعار أو الإشعارات المطلوبة فقط.</div>
+          <div class="text-muted small">إشعارات البوابة قابلة للحذف من هنا، أما إشعارات مسار فمعروضة للمتابعة فقط.</div>
         </div>
-        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.portal_admin_notifications', q=q) }}">إلغاء اختيار الموظف</a>
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.portal_admin_notifications', q=q, source=source) }}">إلغاء اختيار الموظف</a>
       </div>
       <form method="get" class="row g-2 mb-3" id="notification-search-form">
         <input type="hidden" name="q" value="{{ q }}" />
         <input type="hidden" name="user_id" value="{{ selected_user.id }}" />
+        <input type="hidden" name="source" value="{{ source }}" />
         <div class="col-md-8">
           <label class="form-label" for="notification_q">بحث داخل إشعارات الموظف</label>
           <input id="notification_q" name="notification_q" class="form-control" value="{{ notification_q }}" placeholder="نص الإشعار أو النوع" />
@@ -79,7 +93,7 @@
         <div class="col-md-4 d-flex align-items-end gap-2">
           <button class="btn btn-outline-primary" type="submit"><i class="bi bi-search"></i> بحث في الإشعارات</button>
           {% if notification_q %}
-            <a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_notifications', q=q, user_id=selected_user.id) }}">إلغاء</a>
+            <a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_notifications', q=q, user_id=selected_user.id, source=source) }}">إلغاء</a>
           {% endif %}
         </div>
       </form>
@@ -87,42 +101,65 @@
         <input type="hidden" name="target_user_id" value="{{ selected_user.id }}" />
         <input type="hidden" name="q" value="{{ q }}" />
         <input type="hidden" name="notification_q" value="{{ notification_q }}" />
+        <input type="hidden" name="source" value="{{ source }}" />
         {% if notifications %}
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
-            <button class="btn btn-sm btn-outline-primary" type="button" id="select-all-notification-button">
-              تحديد الكل
-            </button>
-            <button class="btn btn-sm btn-outline-secondary" type="button" id="clear-notification-selection">
-              إلغاء التحديد
-            </button>
-            <span class="badge text-bg-primary" id="selected-notification-count">0 محدد</span>
-            <span class="text-muted small">
-              لتحديد مجموعة متتالية: اختر الأول ثم Shift + انقر الأخير. ويمكن استخدام Ctrl+A لتحديد جميع النتائج.
-            </span>
-          </div>
+          {% if manageable_notification_count %}
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+              <button class="btn btn-sm btn-outline-primary" type="button" id="select-all-notification-button">
+                تحديد كل إشعارات البوابة
+              </button>
+              <button class="btn btn-sm btn-outline-secondary" type="button" id="clear-notification-selection">
+                إلغاء التحديد
+              </button>
+              <span class="badge text-bg-primary" id="selected-notification-count">0 محدد</span>
+              <span class="text-muted small">
+                لتحديد مجموعة متتالية: اختر الأول ثم Shift + انقر الأخير. ويمكن استخدام Ctrl+A لتحديد جميع إشعارات البوابة.
+              </span>
+            </div>
+          {% endif %}
           <div class="table-responsive">
             <table class="table table-hover align-middle">
               <thead>
                 <tr>
-                  <th scope="col" style="width: 48px;"><input class="form-check-input" type="checkbox" id="select-all-notifications" aria-label="تحديد الكل" /></th>
+                  <th scope="col" style="width: 48px;">
+                    {% if manageable_notification_count %}
+                      <input class="form-check-input" type="checkbox" id="select-all-notifications" aria-label="تحديد كل إشعارات البوابة" />
+                    {% endif %}
+                  </th>
                   <th scope="col">الإشعار</th>
                   <th scope="col">النوع</th>
+                  <th scope="col">المصدر</th>
                   <th scope="col">التاريخ</th>
                 </tr>
               </thead>
               <tbody>
                 {% for notification in notifications %}
                   <tr class="notification-row" style="cursor: pointer;">
-                    <td><input class="form-check-input notification-selector" type="checkbox" name="notification_ids" value="{{ notification.id }}" aria-label="تحديد الإشعار {{ notification.id }}" /></td>
+                    <td>
+                      {% if notification.source == 'portal' %}
+                        <input class="form-check-input notification-selector" type="checkbox" name="notification_ids" value="{{ notification.id }}" aria-label="تحديد إشعار البوابة {{ notification.id }}" />
+                      {% else %}
+                        <span class="text-muted" title="إشعار مسار للعرض فقط"><i class="bi bi-lock"></i></span>
+                      {% endif %}
+                    </td>
                     <td>{{ notification.message }}</td>
                     <td>{{ notification.type or '-' }}</td>
+                    <td>
+                      {% if notification.source == 'portal' %}
+                        <span class="badge text-bg-primary">البوابة الإدارية</span>
+                      {% else %}
+                        <span class="badge text-bg-info">مسار</span>
+                      {% endif %}
+                    </td>
                     <td>{{ notification.created_at|local_datetime if notification.created_at else '-' }}</td>
                   </tr>
                 {% endfor %}
               </tbody>
             </table>
           </div>
-          <button class="btn btn-danger" type="submit" id="delete-selected-notifications" disabled><i class="bi bi-trash"></i> حذف الإشعارات المحددة</button>
+          {% if manageable_notification_count %}
+            <button class="btn btn-danger" type="submit" id="delete-selected-notifications" disabled><i class="bi bi-trash"></i> حذف إشعارات البوابة المحددة</button>
+          {% endif %}
         {% else %}
           <div class="alert alert-light border mb-0">
             {% if notification_q %}
