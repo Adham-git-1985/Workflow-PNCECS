@@ -223,6 +223,27 @@ class WorkflowReportsTests(unittest.TestCase):
         self.assertEqual(allowed.status_code, 200)
         self.assertIn("10:00", allowed.get_data(as_text=True))
 
+    def test_employee_report_contains_separate_print_targets(self):
+        db.session.add(UserPermission(
+            user_id=self.employee.id,
+            key="WORKFLOW_REPORTS_READ",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client)
+            response = client.get(
+                f"/workflow/reports/employee-workflow?user_id={self.employee.id}"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("workflow-report-summary-print", body)
+        self.assertIn("workflow-report-details", body)
+        self.assertIn("workflow-report-details-table", body)
+        self.assertIn("wfPrintSmart", body)
+
 
 if __name__ == "__main__":
     unittest.main()
