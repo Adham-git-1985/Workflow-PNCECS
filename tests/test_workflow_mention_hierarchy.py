@@ -32,6 +32,7 @@ from workflow.routes import (
     _mention_task_user_ids,
     _mentioned_user_ids_for_request,
     _send_workflow_step_update,
+    _workflow_update_recipient_ids,
     _user_can_view_request,
     add_request_note,
     mention_search,
@@ -561,6 +562,51 @@ class WorkflowMentionHierarchyTests(unittest.TestCase):
         db.session.flush()
 
         self.assertFalse(_parallel_is_complete(instance.id, 1))
+
+    def test_parallel_update_recipients_use_pending_tasks_not_broad_resolver(self):
+        request_row = WorkflowRequest(
+            requester_id=self.department_user.id,
+            title="تحديث خطوة متزامنة",
+            status="IN_PROGRESS",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+        instance = WorkflowInstance(
+            request_id=request_row.id,
+            current_step_order=1,
+            is_completed=False,
+        )
+        db.session.add(instance)
+        db.session.flush()
+        db.session.add_all((
+            WorkflowInstanceStep(
+                instance_id=instance.id,
+                step_order=1,
+                mode="PARALLEL_SYNC",
+                approver_kind="USER",
+                approver_user_id=self.higher_user.id,
+                status="PENDING",
+            ),
+            WorkflowStepTask(
+                instance_id=instance.id,
+                request_id=request_row.id,
+                step_order=1,
+                assignee_user_id=self.lower_user.id,
+                status="PENDING",
+                response="NONE",
+            ),
+        ))
+        db.session.flush()
+
+        with patch(
+            "workflow.routes.resolve_step_approver_user_ids",
+            return_value=[self.higher_user.id],
+        ):
+            recipients = _workflow_update_recipient_ids(request_row, instance)
+
+        self.assertIn(self.department_user.id, recipients)
+        self.assertIn(self.lower_user.id, recipients)
+        self.assertNotIn(self.higher_user.id, recipients)
 
     def test_comment_from_mentioned_user_moves_it_to_follow_up(self):
         request_row = WorkflowRequest(

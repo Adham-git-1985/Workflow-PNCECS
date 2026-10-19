@@ -411,6 +411,69 @@ def _resolve_approver_users(step: WorkflowInstanceStep):
     )
 
 
+def _workflow_step_value(step, field_name, default=None):
+    """Read a routing field from either a model row or a runtime-step dict."""
+    if isinstance(step, dict):
+        return step.get(field_name, default)
+    return getattr(step, field_name, default)
+
+
+def _workflow_step_target_signature(step) -> tuple:
+    """Return the persisted approver target, excluding display-only metadata."""
+    kind = (_workflow_step_value(step, "approver_kind") or "").strip().upper()
+
+    def as_int(value):
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    return (
+        kind,
+        as_int(_workflow_step_value(step, "approver_user_id")),
+        as_int(_workflow_step_value(step, "approver_department_id")),
+        as_int(_workflow_step_value(step, "approver_directorate_id")),
+        as_int(_workflow_step_value(step, "approver_unit_id")),
+        as_int(_workflow_step_value(step, "approver_section_id")),
+        as_int(_workflow_step_value(step, "approver_division_id")),
+        as_int(_workflow_step_value(step, "approver_org_node_id")),
+        (_workflow_step_value(step, "approver_role") or "").strip().upper(),
+        as_int(_workflow_step_value(step, "approver_committee_id")),
+        (_workflow_step_value(step, "committee_delivery_mode") or "").strip().upper(),
+    )
+
+
+def _runtime_step_overrides_template_target(template: WorkflowTemplate | None, runtime_step) -> bool:
+    """Whether a runtime step replaces the target saved in its template."""
+    if not template or runtime_step is None:
+        return False
+    try:
+        runtime_order = int(_workflow_step_value(runtime_step, "step_order") or 0)
+    except (TypeError, ValueError):
+        return False
+    template_step = next(
+        (
+            row for row in (getattr(template, "steps", None) or [])
+            if int(getattr(row, "step_order", 0) or 0) == runtime_order
+        ),
+        None,
+    )
+    if not template_step:
+        return False
+    return _workflow_step_target_signature(template_step) != _workflow_step_target_signature(runtime_step)
+
+
+def _instance_step_overrides_template_target(
+    inst: WorkflowInstance | None,
+    step: WorkflowInstanceStep | None,
+) -> bool:
+    """Return whether an instance step has a correspondence/dynamic target."""
+    if not inst or not step or not getattr(inst, "template_id", None):
+        return False
+    template = db.session.get(WorkflowTemplate, int(inst.template_id))
+    return _runtime_step_overrides_template_target(template, step)
+
+
 def resolve_step_approver_user_ids(step: WorkflowInstanceStep) -> list[int]:
     """Public, normalized view of the users currently responsible for a step."""
     return sorted({int(user_id) for user_id in _resolve_approver_users(step) if user_id})
@@ -654,30 +717,44 @@ def _resolve_parallel_extra_assignees(template_id: int | None, step_order: int) 
         return []
 
 
-def resolve_template_participant_user_ids(template: WorkflowTemplate) -> set[int]:
-    """Resolve every user currently targeted by a workflow template."""
+def resolve_template_participant_user_ids(
+    template: WorkflowTemplate,
+    runtime_steps: list[dict] | None = None,
+) -> set[int]:
+    """Resolve every user targeted by a template or its frozen runtime steps.
+
+    Runtime correspondence routes may replace one broad template target with a
+    concrete directorate/user.  In that case the old parallel extras belong to
+    the template definition, not to this request, and must not widen the
+    confidentiality check or the active audience.
+    """
     participant_ids: set[int] = set()
     if not template:
         return participant_ids
 
-    for step in list(getattr(template, "steps", None) or []):
+    steps = list(runtime_steps if runtime_steps is not None else (getattr(template, "steps", None) or []))
+    for step in steps:
         participant_ids.update(_resolve_users_by_kind(
-            getattr(step, "approver_kind", None),
-            user_id=getattr(step, "approver_user_id", None),
-            role=getattr(step, "approver_role", None),
-            dept_id=getattr(step, "approver_department_id", None),
-            dir_id=getattr(step, "approver_directorate_id", None),
-            unit_id=getattr(step, "approver_unit_id", None),
-            section_id=getattr(step, "approver_section_id", None),
-            division_id=getattr(step, "approver_division_id", None),
-            org_node_id=getattr(step, "approver_org_node_id", None),
-            committee_id=getattr(step, "approver_committee_id", None),
-            committee_delivery_mode=getattr(step, "committee_delivery_mode", None),
+            _workflow_step_value(step, "approver_kind"),
+            user_id=_workflow_step_value(step, "approver_user_id"),
+            role=_workflow_step_value(step, "approver_role"),
+            dept_id=_workflow_step_value(step, "approver_department_id"),
+            dir_id=_workflow_step_value(step, "approver_directorate_id"),
+            unit_id=_workflow_step_value(step, "approver_unit_id"),
+            section_id=_workflow_step_value(step, "approver_section_id"),
+            division_id=_workflow_step_value(step, "approver_division_id"),
+            org_node_id=_workflow_step_value(step, "approver_org_node_id"),
+            committee_id=_workflow_step_value(step, "approver_committee_id"),
+            committee_delivery_mode=_workflow_step_value(step, "committee_delivery_mode"),
         ))
-        participant_ids.update(_resolve_parallel_extra_assignees(
-            getattr(template, "id", None),
-            getattr(step, "step_order", 0),
-        ))
+        # A runtime override deliberately replaces the template's broad
+        # target and its parallel extras for that step.  Other steps retain
+        # their configured extras.
+        if runtime_steps is None or not _runtime_step_overrides_template_target(template, step):
+            participant_ids.update(_resolve_parallel_extra_assignees(
+                getattr(template, "id", None),
+                _workflow_step_value(step, "step_order", 0),
+            ))
 
     return {int(user_id) for user_id in participant_ids if user_id}
 
@@ -852,10 +929,14 @@ def resolve_parallel_candidate_user_ids(
         return []
 
     assignees = _resolve_approver_users(step)
-    assignees += _resolve_parallel_extra_assignees(
-        getattr(inst, "template_id", None),
-        step.step_order,
-    )
+    # Runtime routes freeze the selected correspondence target on the
+    # instance step. Do not append the old template's broad parallel audience
+    # to that concrete target.
+    if not _instance_step_overrides_template_target(inst, step):
+        assignees += _resolve_parallel_extra_assignees(
+            getattr(inst, "template_id", None),
+            step.step_order,
+        )
     # Attendance-delay requests have a fixed audience for each special
     # parallel stage. The explicit resolver keeps new HR stages deterministic
     # and also preserves the Secretary-General audience for older in-flight

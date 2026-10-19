@@ -1928,6 +1928,179 @@ def _corr_final_reply_template() -> WorkflowTemplate | None:
     )
 
 
+def _corr_route_name_key(value: str | None) -> str:
+    normalized = unicodedata.normalize("NFKC", str(value or "")).lower()
+    for source, target in (
+        ("أ", "ا"),
+        ("إ", "ا"),
+        ("آ", "ا"),
+        ("ة", "ه"),
+        ("ى", "ي"),
+    ):
+        normalized = normalized.replace(source, target)
+    return re.sub(r"[\s_\-]+", "", normalized)
+
+
+def _corr_is_all_directorates(directorate_id: int | None) -> bool:
+    try:
+        row = db.session.get(Directorate, int(directorate_id or 0))
+    except (TypeError, ValueError):
+        row = None
+    if not row:
+        return False
+    name_key = _corr_route_name_key(
+        getattr(row, "name_ar", None) or getattr(row, "name_en", None)
+    )
+    code_key = _corr_route_name_key(getattr(row, "code", None))
+    return (
+        ("جميع" in name_key and "ادار" in name_key)
+        or ("كل" in name_key and "ادار" in name_key)
+        or ("all" in code_key and "director" in code_key)
+    )
+
+
+def _corr_is_secretariat_directorates_template(template: WorkflowTemplate | None) -> bool:
+    """Recognize the seeded Secretariat-to-directorates correspondence route."""
+    if not template:
+        return False
+    name_key = _corr_route_name_key(getattr(template, "name", None))
+    return "امان" in name_key and "ادار" in name_key
+
+
+def _corr_apply_workflow_target_from_form(item) -> bool:
+    """Persist an optional target chosen immediately before starting a route."""
+    if "workflow_target" not in request.form:
+        return True
+    raw_value = (request.form.get("workflow_target") or "").strip()
+    if not raw_value:
+        return True
+
+    target = _corr_parse_competence_value(raw_value)
+    if not target.get("kind") or not target.get("id"):
+        flash("جهة المسار المختارة غير صالحة.", "danger")
+        return False
+
+    item.competence_kind = target["kind"]
+    item.competence_id = target["id"]
+    item.competence_label = target["label"]
+    item.current_target_kind = target["kind"]
+    item.current_target_id = target["id"]
+    item.current_target_label = target["label"]
+    item.current_assignee_id = target["id"] if target["kind"] == "USER" else None
+    return True
+
+
+def _corr_workflow_runtime_steps(
+    template: WorkflowTemplate,
+    item,
+) -> list[dict] | None | bool:
+    """Freeze the selected correspondence target into the Secretariat route.
+
+    ``None`` means the template is unrelated to this special correspondence
+    route; ``False`` means the selected route is invalid and the caller should
+    stop without creating a workflow.
+    """
+    if not _corr_is_secretariat_directorates_template(template):
+        return None
+
+    target = _corr_target_for_item(item)
+    target_kind = (target.get("kind") or "").strip().upper()
+    try:
+        target_id = int(target.get("id") or 0)
+    except (TypeError, ValueError):
+        target_id = 0
+
+    supported_kinds = {
+        "USER",
+        "DIRECTORATE",
+        "DEPARTMENT",
+        "UNIT",
+        "SECTION",
+        "DIVISION",
+        "ORG_NODE",
+    }
+    if target_kind not in supported_kinds or not target_id:
+        flash(
+            "اختر جهة اختصاص صالحة قبل بدء مسار أمانة الإدارات، ويفضل اختيار الإدارة العامة المعنية.",
+            "warning",
+        )
+        return False
+    if target_kind == "DIRECTORATE" and _corr_is_all_directorates(target_id):
+        flash(
+            "لا يمكن توجيه مسار أمانة الإدارات إلى خيار جميع الإدارات. اختر الإدارة العامة المعنية بالذات.",
+            "warning",
+        )
+        return False
+
+    route_step = next(
+        (
+            step for step in (getattr(template, "steps", None) or [])
+            if (getattr(step, "mode", "") or "").strip().upper() == "PARALLEL_SYNC"
+            and (getattr(step, "approver_kind", "") or "").strip().upper() == "DIRECTORATE"
+            and _corr_is_all_directorates(getattr(step, "approver_directorate_id", None))
+        ),
+        None,
+    )
+    if not route_step:
+        flash(
+            "قالب مسار أمانة الإدارات لا يحتوي على خطوة توجيه قابلة للتخصيص.",
+            "danger",
+        )
+        return False
+
+    target_fields = (
+        "approver_user_id",
+        "approver_department_id",
+        "approver_directorate_id",
+        "approver_unit_id",
+        "approver_section_id",
+        "approver_division_id",
+        "approver_org_node_id",
+        "approver_role",
+        "approver_committee_id",
+        "committee_delivery_mode",
+    )
+    target_field_by_kind = {
+        "USER": "approver_user_id",
+        "DIRECTORATE": "approver_directorate_id",
+        "DEPARTMENT": "approver_department_id",
+        "UNIT": "approver_unit_id",
+        "SECTION": "approver_section_id",
+        "DIVISION": "approver_division_id",
+        "ORG_NODE": "approver_org_node_id",
+    }
+    runtime_steps: list[dict] = []
+    for step in getattr(template, "steps", None) or []:
+        runtime_step = {
+            field: getattr(step, field, None)
+            for field in (
+                "step_order",
+                "mode",
+                "approver_kind",
+                "approver_user_id",
+                "approver_department_id",
+                "approver_directorate_id",
+                "approver_unit_id",
+                "approver_section_id",
+                "approver_division_id",
+                "approver_org_node_id",
+                "approver_role",
+                "approver_committee_id",
+                "committee_delivery_mode",
+                "sla_days",
+            )
+        }
+        if int(getattr(step, "id", 0) or 0) == int(getattr(route_step, "id", 0) or 0):
+            runtime_step["approver_kind"] = target_kind
+            for field in target_fields:
+                runtime_step[field] = None
+            runtime_step[target_field_by_kind[target_kind]] = target_id
+            runtime_step["label"] = f"جهة الاختصاص: {target.get('label') or target_kind}"
+        runtime_steps.append(runtime_step)
+
+    return runtime_steps
+
+
 def _corr_workflow_description(kind: str, label: str, item, attachments: list[CorrAttachment]) -> str:
     party_title, party_value = _corr_item_party(kind, item)
     lines = [
@@ -2104,6 +2277,10 @@ def _start_corr_workflow(
         flash("يرجى اختيار قالب مسار فعال.", "danger")
         return None
 
+    runtime_steps = _corr_workflow_runtime_steps(template, item)
+    if runtime_steps is False:
+        return None
+
     first_step = next(
         (
             step for step in (getattr(template, "steps", None) or [])
@@ -2135,7 +2312,10 @@ def _start_corr_workflow(
             return None
 
     if (getattr(item, "confidentiality", "NORMAL") or "NORMAL").upper() == "SECRET":
-        participant_ids = resolve_template_participant_user_ids(template)
+        participant_ids = resolve_template_participant_user_ids(
+            template,
+            runtime_steps=runtime_steps,
+        )
         allowed_participant_ids = filter_confidential_correspondence_user_ids(
             item,
             participant_ids,
@@ -2217,6 +2397,7 @@ def _start_corr_workflow(
         created_by_user_id=current_user.id,
         auto_commit=False,
         initial_parallel_user_ids=initial_parallel_user_ids,
+        runtime_steps=runtime_steps,
     )
     sync_correspondence_from_workflow(
         req,
@@ -39698,6 +39879,15 @@ def _corr_competence_selected_value(item) -> str:
     return ""
 
 
+def _corr_target_selected_value(item) -> str:
+    kind = (getattr(item, "current_target_kind", None) or getattr(item, "competence_kind", None) or "").strip()
+    target_id = getattr(item, "current_target_id", None) or getattr(item, "competence_id", None)
+    try:
+        return f"{kind}:{int(target_id)}" if kind and target_id else ""
+    except (TypeError, ValueError):
+        return ""
+
+
 _CORR_MAIL_SCOPES = {"EXTERNAL", "INTERNAL"}
 _CORR_PRIORITIES = {"NORMAL", "HIGH", "URGENT"}
 _CORR_CONFIDENTIALITIES = {"NORMAL", "SECRET"}
@@ -40108,6 +40298,7 @@ def _corr_procedure_context(kind: str, item) -> dict:
             (action, CORR_ACTION_LABELS[action]) for action in _CORR_USER_ACTIONS
         ],
         "corr_competence_options": _corr_competence_options(),
+        "corr_target_selected": _corr_target_selected_value(item),
         "corr_authorized_users": _corr_authorized_users(item),
         "corr_authorized_user_ids": _corr_authorized_user_ids(item),
         "corr_confidential_user_options": _corr_confidential_user_options(),
@@ -41605,6 +41796,8 @@ def inbound_start_workflow(inbound_id: int):
     _corr_require_access(item)
     if not _corr_can_act(item):
         abort(403)
+    if not _corr_apply_workflow_target_from_form(item):
+        return redirect(url_for("portal.inbound_view", inbound_id=item.id))
     attachments = CorrAttachment.query.filter_by(inbound_id=item.id).order_by(CorrAttachment.id.asc()).all()
     try:
         req = _start_corr_workflow("IN", item, attachments, request.form.get("template_id"))
@@ -41624,6 +41817,8 @@ def outbound_start_workflow(outbound_id: int):
     _corr_require_access(item)
     if not _corr_can_act(item):
         abort(403)
+    if not _corr_apply_workflow_target_from_form(item):
+        return redirect(url_for("portal.outbound_view", outbound_id=item.id))
     attachments = CorrAttachment.query.filter_by(outbound_id=item.id).order_by(CorrAttachment.id.asc()).all()
     try:
         req = _start_corr_workflow(
