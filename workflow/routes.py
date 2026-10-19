@@ -197,6 +197,7 @@ from workflow.engine import (
     HIERARCHY_BYPASS_FOLLOWER_ACTION,
     ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
 )
+from workflow.reports import build_employee_workflow_report
 from services.attendance_delay_workflow import (
     ATTENDANCE_DELAY_RESPONSE_LABEL,
     attendance_delay_participant_user_ids,
@@ -6094,6 +6095,33 @@ def work_dashboard():
         total=total,
         page=page,
         pages=pages,
+    )
+
+
+@workflow_bp.route("/reports")
+@login_required
+@perm_required("WORKFLOW_REPORTS_READ")
+def workflow_reports():
+    """Employee workload and workflow-opening report for Masar."""
+    search = (request.args.get("q") or "").strip()
+    status = (request.args.get("status") or "").strip().upper()
+    selected_user_id = request.args.get("user_id", type=int)
+    page = request.args.get("page", type=int, default=1)
+
+    report = build_employee_workflow_report(
+        current_user,
+        search=search,
+        status=status,
+        selected_user_id=selected_user_id,
+        page=page,
+        per_page=50,
+    )
+    return render_template(
+        "workflow/reports.html",
+        q=search,
+        status=status,
+        selected_user_id=selected_user_id,
+        **report,
     )
 
 

@@ -1,0 +1,222 @@
+{% extends "layout.html" %}
+{% block title %}تقارير مسار{% endblock %}
+{% block content %}
+
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div>
+    <h3 class="mb-1"><i class="bi bi-bar-chart-line"></i> تقارير مسار</h3>
+    <div class="text-muted">تقرير تكليفات الموظفين بالمسارات وحالاتها وأوقات فتحها.</div>
+  </div>
+  {% if current_user.has_perm('WORKFLOW_DASHBOARD_READ') %}
+    <a class="btn btn-outline-secondary" href="{{ url_for('workflow.work_dashboard') }}">
+      <i class="bi bi-kanban"></i> لوحة عمل مسار
+    </a>
+  {% endif %}
+</div>
+
+<div class="row g-2 mb-3">
+  <div class="col-6 col-xl-3">
+    <div class="card h-100"><div class="card-body py-3">
+      <div class="small text-muted">الموظفون الذين لديهم مسارات</div>
+      <div class="fs-3 fw-bold">{{ total_employees }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-xl-3">
+    <div class="card h-100"><div class="card-body py-3">
+      <div class="small text-muted">المسارات</div>
+      <div class="fs-3 fw-bold">{{ total_paths }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-xl-3">
+    <div class="card h-100 border-primary"><div class="card-body py-3">
+      <div class="small text-muted">تكليفات تنتظر إجراءً</div>
+      <div class="fs-3 fw-bold text-primary">{{ active_assignments }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-xl-3">
+    <div class="card h-100 border-success"><div class="card-body py-3">
+      <div class="small text-muted">تكليفات تم فتحها</div>
+      <div class="fs-3 fw-bold text-success">{{ opened_assignments }}</div>
+    </div></div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-lg-5">
+        <label class="form-label" for="workflow-report-search">بحث</label>
+        <input id="workflow-report-search" class="form-control" type="search" name="q"
+               value="{{ q or '' }}" placeholder="اسم الموظف أو عنوان المسار أو مقدم الطلب">
+      </div>
+      <div class="col-lg-3">
+        <label class="form-label" for="workflow-report-status">حالة المسار</label>
+        <select id="workflow-report-status" class="form-select" name="status">
+          <option value="">كل الحالات</option>
+          {% for option in status_options %}
+            <option value="{{ option }}" {% if status == option %}selected{% endif %}>
+              {{ option|workflow_status_label }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-lg-2">
+        <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض التقرير</button>
+      </div>
+      <div class="col-lg-2">
+        <a class="btn btn-outline-secondary w-100" href="{{ url_for('workflow.workflow_reports') }}">مسح</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header bg-white d-flex flex-wrap align-items-center justify-content-between gap-2">
+    <div>
+      <strong>ملخص المسارات حسب الموظف</strong>
+      <span class="badge text-bg-secondary ms-2">{{ total_summary_rows }}</span>
+    </div>
+    {% if total_assignments %}
+      <div class="small text-muted">إجمالي التكليفات: {{ total_assignments }}</div>
+    {% endif %}
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>الموظف</th>
+          <th>معلومات الموظف</th>
+          <th class="text-center">كل المسارات</th>
+          <th class="text-center">بانتظار إجراء</th>
+          <th>الحالات</th>
+          <th>آخر تكليف</th>
+          <th>آخر فتح</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in summary_rows %}
+          <tr>
+            <td>
+              <div class="fw-semibold">{{ row.user.full_name }}</div>
+              <div class="small text-muted">#{{ row.user.id }}</div>
+            </td>
+            <td>
+              <div>{{ row.user.job_title or (row.user.role|ui_label) or '—' }}</div>
+              <div class="small text-muted">{{ row.department.name_ar if row.department else 'دون دائرة' }}</div>
+              <div class="small text-muted">{{ row.user.email or row.user.username or '—' }}</div>
+            </td>
+            <td class="text-center"><span class="badge text-bg-secondary fs-6">{{ row.total_paths }}</span></td>
+            <td class="text-center">
+              <span class="badge {{ 'text-bg-primary' if row.active_paths else 'text-bg-light text-dark' }} fs-6">{{ row.active_paths }}</span>
+            </td>
+            <td style="min-width:220px">
+              {% if row.total_paths %}
+                {% for option in status_options %}
+                  {% if row.status_counts.get(option) %}
+                    <span class="badge text-bg-light border text-dark me-1 mb-1">
+                      {{ option|workflow_status_label }}: {{ row.status_counts.get(option) }}
+                    </span>
+                  {% endif %}
+                {% endfor %}
+              {% else %}
+                <span class="text-muted">لا توجد مسارات</span>
+              {% endif %}
+            </td>
+            <td class="text-nowrap small">
+              {{ row.last_assigned_at|local_datetime('%Y-%m-%d %H:%M') if row.last_assigned_at else '—' }}
+            </td>
+            <td class="text-nowrap small">
+              {% if row.last_opened_at %}
+                <span class="text-success">{{ row.last_opened_at|local_datetime('%Y-%m-%d %H:%M') }}</span>
+              {% else %}
+                <span class="text-muted">لم يفتح</span>
+              {% endif %}
+            </td>
+            <td>
+              <a class="btn btn-sm btn-outline-primary text-nowrap"
+                 href="{{ url_for('workflow.workflow_reports', q=q, status=status, user_id=row.user.id) }}">
+                <i class="bi bi-list-ul"></i> التفاصيل
+              </a>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="8" class="text-center text-muted py-5">لا توجد نتائج مطابقة.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if pages > 1 %}
+    <div class="card-footer bg-white">
+      <nav aria-label="صفحات تقرير مسار">
+        <ul class="pagination pagination-sm mb-0">
+          {% for page_number in range(1, pages + 1) %}
+            <li class="page-item {{ 'active' if page_number == page else '' }}">
+              <a class="page-link" href="{{ url_for('workflow.workflow_reports', q=q, status=status, page=page_number) }}">{{ page_number }}</a>
+            </li>
+          {% endfor %}
+        </ul>
+      </nav>
+    </div>
+  {% endif %}
+</div>
+
+{% if selected_user %}
+<div class="card shadow-sm mt-3" id="workflow-report-details">
+  <div class="card-header bg-white d-flex flex-wrap align-items-center justify-content-between gap-2">
+    <div>
+      <strong>تفاصيل مسارات: {{ selected_user.full_name }}</strong>
+      <div class="small text-muted">يعرض التقرير وقت التكليف ووقت فتح الموظف للمسار.</div>
+    </div>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('workflow.workflow_reports', q=q, status=status) }}">إغلاق التفاصيل</a>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>#</th>
+          <th>المسار</th>
+          <th>الحالة</th>
+          <th>مقدم الطلب</th>
+          <th>الخطوات المكلف بها</th>
+          <th>وقت التكليف</th>
+          <th>وقت فتح الموظف</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in selected_details %}
+          <tr>
+            <td>{{ row.request.id }}</td>
+            <td style="min-width:260px">
+              <div class="fw-semibold">{{ row.request.title or '—' }}</div>
+              <div class="small text-muted">أنشئ في {{ row.request.created_at|local_datetime('%Y-%m-%d %H:%M') if row.request.created_at else '—' }}</div>
+            </td>
+            <td>
+              <span class="badge {{ 'text-bg-primary' if row.active else 'text-bg-secondary' }}">
+                {{ row.request.status|workflow_status_label }}
+              </span>
+              {% if row.active %}<div class="small text-primary mt-1">بانتظار إجراء الموظف</div>{% endif %}
+            </td>
+            <td>{{ row.request.requester.full_name if row.request.requester else '—' }}</td>
+            <td>{{ row.step_orders_label or '—' }}</td>
+            <td class="text-nowrap small">{{ row.assignment_at|local_datetime('%Y-%m-%d %H:%M') if row.assignment_at else '—' }}</td>
+            <td class="text-nowrap small">
+              {% if row.opened_at %}
+                <span class="text-success">{{ row.opened_at|local_datetime('%Y-%m-%d %H:%M') }}</span>
+              {% else %}
+                <span class="text-muted">لم يفتح</span>
+              {% endif %}
+            </td>
+            <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('workflow.view_request', request_id=row.request.id) }}">فتح المسار</a></td>
+          </tr>
+        {% else %}
+          <tr><td colspan="8" class="text-center text-muted py-5">لا توجد مسارات لهذا الموظف حسب الفلاتر الحالية.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

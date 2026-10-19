@@ -183,6 +183,7 @@ UI_LABELS_AR = {
     "UPDATE_USER": "تحديث مستخدم",
     "WORKFLOW": "مسار",
     "WORKFLOW_REQUEST": "طلب مسار",
+    "WORKFLOW_REPORTS_READ": "تقارير مسار",
     "WORKFLOW_STARTED": "بدء المسار",
     "WORKFLOW_REPLY": "رد على المسار",
     "WORKFLOW_MENTION_ACCESS": "إضافة مستخدم إلى المسار بالمنشن",

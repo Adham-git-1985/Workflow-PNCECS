@@ -34,6 +34,7 @@ PERMS: Dict[str, List[PermDef]] = {
     ],
     "مسار العمل ولوحات المتابعة": [
         PermDef("WORKFLOW_DASHBOARD_READ", "عرض لوحة عمل مسار", "الوصول إلى لوحة عمل مسار لمتابعة المهام والطلبات والمسارات.", module="WORKFLOW"),
+        PermDef("WORKFLOW_REPORTS_READ", "تقارير مسار", "عرض تقرير تكليفات الموظفين بالمسارات وحالاتها وأوقات فتحها.", module="WORKFLOW_REPORTS"),
         PermDef(
             "WORKFLOW_REOPEN_TO_STEP",
             "إعادة فتح المسار",

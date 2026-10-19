@@ -186,6 +186,13 @@
         </a>
         {% endif %}
 
+        {% if current_user.has_perm('WORKFLOW_REPORTS_READ') %}
+        <a href="{{ url_for('workflow.workflow_reports') }}"
+           class="{% if request.path.startswith('/workflow/reports') %}active{% endif %}">
+            <i class="bi bi-bar-chart-line"></i> تقارير مسار
+        </a>
+        {% endif %}
+
         {% if portal_can_view_absence_board|default(false) %}
         <a href="{{ url_for('portal.hr_absence_board') }}"
            class="{% if request.path.startswith('/portal/hr/absence-board') %}active{% endif %}">

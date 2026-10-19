@@ -398,6 +398,7 @@ def manage_permissions():
         "VIEW_ESCALATIONS",
         "CREATE_REQUEST",
         "APPROVE_REQUEST",
+        "WORKFLOW_REPORTS_READ",
         "WORKFLOW_REOPEN_TO_STEP",
         "UPLOAD_ATTACHMENT",
         "SIGN_ARCHIVE",
