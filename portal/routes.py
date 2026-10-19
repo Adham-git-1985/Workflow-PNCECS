@@ -13885,6 +13885,59 @@ _DIWAN_OFFICIAL_SYMBOLS = (
 )
 
 
+_DIWAN_SYMBOL_OVERRIDE_PREFIX = 'diwan_symbol_override_'
+
+
+def _diwan_symbol_param_names(index: int) -> tuple[str, str]:
+    """Return the query/form field names for one symbol override row."""
+    prefix = f'{_DIWAN_SYMBOL_OVERRIDE_PREFIX}{index}'
+    return f'{prefix}_enabled', f'{prefix}_value'
+
+
+def _normalize_diwan_symbol(value) -> str:
+    """Normalize a replacement to one non-whitespace character or empty."""
+    raw = str(value or '').strip()
+    if not raw:
+        return ''
+    # The official sheet is a one-character-per-day grid.  Keeping only the
+    # first code point prevents a long value from changing the sheet layout.
+    return raw[0]
+
+
+def _diwan_symbol_overrides_from_params(params) -> dict[str, str]:
+    """Read explicitly enabled symbol overrides from request parameters.
+
+    The enabled flag is deliberately separate from the value so an empty
+    value can mean "hide this symbol" rather than "leave it unchanged".
+    """
+    overrides = {}
+    for index, (source, _label) in enumerate(_DIWAN_OFFICIAL_SYMBOLS):
+        enabled_name, value_name = _diwan_symbol_param_names(index)
+        enabled = str(params.get(enabled_name, '') or '').strip().lower()
+        if enabled not in {'1', 'true', 'yes', 'on', 'checked'}:
+            continue
+        overrides[source] = _normalize_diwan_symbol(params.get(value_name, ''))
+    return overrides
+
+
+def _diwan_symbol_controls(params) -> list[dict]:
+    """Build the symbol-control rows rendered above the official export."""
+    overrides = _diwan_symbol_overrides_from_params(params)
+    controls = []
+    for index, (source, label) in enumerate(_DIWAN_OFFICIAL_SYMBOLS):
+        enabled_name, value_name = _diwan_symbol_param_names(index)
+        controls.append({
+            'index': index,
+            'symbol': source,
+            'label': label,
+            'enabled_name': enabled_name,
+            'value_name': value_name,
+            'enabled': source in overrides,
+            'value': overrides.get(source, ''),
+        })
+    return controls
+
+
 def _diwan_official_leave_symbol(leave_type) -> str:
     """Map configured HR leave types to the Diwan monthly-sheet symbols."""
     raw = ' '.join((
@@ -14188,11 +14241,31 @@ def _diwan_official_month_rows(user_ids, start: date, end: date, summaries, depa
     return sorted(rows, key=lambda row: (str(row['employee_no']), str(row['employee_name'])))
 
 
-def _export_diwan_official_attendance_xlsx(start: date, end: date, rows: list[dict]):
+def _export_diwan_official_attendance_xlsx(
+    start: date,
+    end: date,
+    rows: list[dict],
+    symbol_overrides: dict[str, str] | None = None,
+):
     """Export the official Diwan monthly attendance grid and its symbol key."""
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
+
+    allowed_symbols = {symbol for symbol, _label in _DIWAN_OFFICIAL_SYMBOLS}
+    normalized_overrides = {
+        source: _normalize_diwan_symbol(value)
+        for source, value in (symbol_overrides or {}).items()
+        if source in allowed_symbols
+    }
+    export_rows = []
+    for row in rows or []:
+        export_row = dict(row)
+        export_row['symbols'] = [
+            normalized_overrides.get(symbol, symbol)
+            for symbol in (row.get('symbols') or [])
+        ]
+        export_rows.append(export_row)
 
     workbook = Workbook()
     sheet = workbook.active
@@ -14210,7 +14283,7 @@ def _export_diwan_official_attendance_xlsx(start: date, end: date, rows: list[di
     # Keep the compact weekday labels used by the legacy monthly sheet.
     weekdays = ['اثنين', 'ثلاثاء', 'اربعاء', 'خميس', 'جمعة', 'سبت', 'احد']
     sheet.append(headers)
-    first_ministry_code = rows[0]['ministry_code'] if rows else ''
+    first_ministry_code = export_rows[0]['ministry_code'] if export_rows else ''
     sheet.append([
         start.month,
         start.year,
@@ -14247,7 +14320,7 @@ def _export_diwan_official_attendance_xlsx(start: date, end: date, rows: list[di
         cell.border = border
         cell.alignment = Alignment(horizontal='center', vertical='center', text_rotation=90)
 
-    for row in rows:
+    for row in export_rows:
         sheet.append([
             row['month'], row['year'], row['ministry_code'], row['employee_no'], row['employee_name'],
             *row['symbols'], row['notes'],
@@ -14272,7 +14345,26 @@ def _export_diwan_official_attendance_xlsx(start: date, end: date, rows: list[di
     key_sheet = workbook.create_sheet('List')
     key_sheet.sheet_view.rightToLeft = True
     key_sheet.append(['الرمز', 'التعريف'])
-    for symbol, label in _DIWAN_OFFICIAL_SYMBOLS:
+    if normalized_overrides:
+        # Keep the standard key compact while making sure a replacement symbol
+        # is documented and a hidden source symbol is not advertised.
+        symbol_labels = dict(_DIWAN_OFFICIAL_SYMBOLS)
+        effective_symbols = []
+        seen_symbols = set()
+        for source, label in _DIWAN_OFFICIAL_SYMBOLS:
+            target = normalized_overrides.get(source, source)
+            if not target or target in seen_symbols:
+                continue
+            seen_symbols.add(target)
+            if target != source and target not in symbol_labels:
+                label = f'{label} (بديل عن الرمز {source})'
+            elif target != source and source in normalized_overrides:
+                label = symbol_labels.get(target, label)
+            effective_symbols.append((target, label))
+        symbol_key = effective_symbols
+    else:
+        symbol_key = _DIWAN_OFFICIAL_SYMBOLS
+    for symbol, label in symbol_key:
         key_sheet.append([symbol, label])
     for row in key_sheet.iter_rows():
         for cell in row:
@@ -14315,6 +14407,8 @@ def hr_report_diwan():
         month = datetime.utcnow().month
 
     view = (request.args.get('view') or '').strip().lower()
+    diwan_symbol_overrides = _diwan_symbol_overrides_from_params(request.args)
+    diwan_symbol_controls = _diwan_symbol_controls(request.args)
     users = _list_hr_users(exclude_attendance_exempt=True)
     work_locations = _hr_lookup_options('WORK_LOCATION')
     appointment_types = _hr_lookup_options('APPOINTMENT_TYPE')
@@ -14433,7 +14527,12 @@ def hr_report_diwan():
             departure_totals,
         )
         return send_file(
-            _export_diwan_official_attendance_xlsx(start, end, official_rows),
+            _export_diwan_official_attendance_xlsx(
+                start,
+                end,
+                official_rows,
+                symbol_overrides=diwan_symbol_overrides,
+            ),
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             as_attachment=True,
             download_name=f'official_diwan_attendance_{year}_{month:02d}.xlsx',
@@ -15029,6 +15128,7 @@ def hr_report_diwan():
         year=year,
         month=month,
         can_export=current_user.has_perm(HR_REPORTS_EXPORT),
+        diwan_symbol_controls=diwan_symbol_controls,
         view=view,
         work_location_name=work_location_name,
         appointment_type_name=appointment_type_name,

@@ -45,7 +45,8 @@ class DiwanOfficialAttendanceReportTests(unittest.TestCase):
         self.assertIn("official_minutes", self.routes)
         self.assertIn("'شخصية {private_minutes} د'", self.routes)
         self.assertIn("'رسمية {official_minutes} د'", self.routes)
-        self.assertIn("export='official_xlsx'", self.template)
+        self.assertIn('name="export" value="official_xlsx"', self.template)
+        self.assertIn('diwan_symbol_controls', self.template)
         self.assertIn("scope_start = start - timedelta(days=start.weekday())", self.routes)
 
 
@@ -314,6 +315,40 @@ class DiwanEmergencyDutySymbolTests(unittest.TestCase):
         self.assertEqual(sheet.cell(row=3, column=6).value, '*')
         self.assertEqual(sheet.cell(row=3, column=6).fill.fgColor.rgb, '00D9EAD3')
         self.assertEqual(sheet.cell(row=2, column=sheet.max_column).value, 'ملاحظات')
+
+
+    def test_symbol_overrides_replace_cells_and_hide_symbols_from_key(self):
+        from openpyxl import load_workbook
+
+        rows = [{
+            'month': 3,
+            'year': 2026,
+            'ministry_code': '01',
+            'employee_no': '100',
+            'employee_name': 'Symbol Override Employee',
+            'symbols': ['x', 'E', '+'],
+            'notes': '',
+        }]
+        workbook = load_workbook(_export_diwan_official_attendance_xlsx(
+            date(2026, 3, 1),
+            date(2026, 3, 3),
+            rows,
+            symbol_overrides={'x': '*', 'E': ''},
+        ))
+
+        sheet = workbook['data']
+        self.assertEqual(sheet.cell(row=3, column=6).value, '*')
+        self.assertIn(sheet.cell(row=3, column=7).value, (None, ''))
+        self.assertEqual(sheet.cell(row=3, column=8).value, '+')
+        self.assertEqual(rows[0]['symbols'], ['x', 'E', '+'])
+
+        key_symbols = {
+            workbook['List'].cell(row=row_number, column=1).value
+            for row_number in range(2, workbook['List'].max_row + 1)
+        }
+        self.assertIn('*', key_symbols)
+        self.assertNotIn('x', key_symbols)
+        self.assertNotIn('E', key_symbols)
 
 
 if __name__ == '__main__':
