@@ -146,6 +146,18 @@
               <option value="{{ t.id }}" {% if item.workflow_template_id == t.id %}selected{% endif %}>{{ t.name }}</option>
             {% endfor %}
           </select>
+          <div>
+            <label class="form-label small mb-1" for="inboundWorkflowTarget">الإدارة العامة المعنية بالمسار</label>
+            <select class="form-select form-select-sm" name="workflow_target" id="inboundWorkflowTarget" data-searchable="1" data-searchable-mode="bounded">
+              <option value="">استخدم جهة الاختصاص الحالية</option>
+              {% for opt in corr_competence_options|default([]) %}
+                {% if opt.kind in ['USER', 'DIRECTORATE', 'DEPARTMENT', 'UNIT', 'SECTION', 'DIVISION', 'ORG_NODE'] %}
+                  <option value="{{ opt.value }}" {% if corr_target_selected == opt.value %}selected{% endif %}>{{ opt.label }}</option>
+                {% endif %}
+              {% endfor %}
+            </select>
+            <div class="form-text">في مسار أمانة الإدارات ستُوجَّه خطوة المسار إلى الجهة المحددة فقط، وليس إلى جميع الإدارات.</div>
+          </div>
           {% set workflow_template_preview_id = 'inboundWorkflow' %}
           {% set workflow_template_preview_select_id = 'inboundWorkflowTemplate' %}
           {% include 'portal/corr/_workflow_template_steps_preview.html' %}

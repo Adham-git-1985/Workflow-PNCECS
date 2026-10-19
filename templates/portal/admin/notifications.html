@@ -9,6 +9,10 @@
       <div class="text-muted">اختر موظفاً ثم حدّد الإشعار المطلوب حذفه من حسابه. لا يمكن تنفيذ هذه العملية إلا من السوبر أدمن.</div>
     </div>
     <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-primary" href="{{ url_for('portal.portal_admin_notifications') }}"><i class="bi bi-building-check"></i> إدارة إشعارات البوابة الإدارية</a>
+      {% if current_user.has_perm('WORKFLOW_NOTIFICATIONS_DASHBOARD_READ') %}
+        <a class="btn btn-outline-primary" href="/workflow/notifications/dashboard"><i class="bi bi-diagram-3"></i> إدارة إشعارات مسار</a>
+      {% endif %}
       <a class="btn btn-primary" href="{{ url_for('portal.portal_admin_send_notifications') }}"><i class="bi bi-send-fill"></i> إرسال إشعار</a>
       <a class="btn btn-outline-primary" href="{{ url_for('portal.portal_admin_sent_notifications') }}"><i class="bi bi-send"></i> الإشعارات المرسلة</a>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}"><i class="bi bi-arrow-right"></i> رجوع للإدارة</a>

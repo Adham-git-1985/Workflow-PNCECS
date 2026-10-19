@@ -1184,7 +1184,6 @@ def _workflow_update_recipient_ids(
             step_order=inst.current_step_order,
         ).first()
         if current_step and current_step.status == "PENDING":
-            recipient_ids.update(resolve_step_approver_user_ids(current_step))
             pending_task_ids = (
                 db.session.query(WorkflowStepTask.assignee_user_id)
                 .filter(
@@ -1195,11 +1194,20 @@ def _workflow_update_recipient_ids(
                 )
                 .all()
             )
-            recipient_ids.update(
+            pending_ids = {
                 int(user_id)
                 for (user_id,) in pending_task_ids
                 if user_id
-            )
+            }
+            if (getattr(current_step, "mode", "") or "").strip().upper() == "PARALLEL_SYNC":
+                # A parallel step is authorized to a concrete subset of its
+                # candidate pool.  Re-resolving the template target here can
+                # reintroduce an aggregate "all directorates" audience and
+                # notify managers who have no task on this request.
+                recipient_ids.update(pending_ids)
+            else:
+                recipient_ids.update(resolve_step_approver_user_ids(current_step))
+                recipient_ids.update(pending_ids)
 
     recipient_ids = filter_confidential_workflow_user_ids(req, recipient_ids)
     if not recipient_ids:
