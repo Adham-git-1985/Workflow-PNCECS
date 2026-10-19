@@ -65,9 +65,9 @@
     </div>
 
     <div class="row g-2 mb-3 open-approvals-metrics">
-      <div class="col-6 col-xl-2"><div class="card h-100"><div class="card-body py-2"><div class="small text-muted">الإجمالي</div><div class="fs-4 fw-bold">{{ total_open }}</div></div></div></div>
+      <div class="col-6 col-xl"><div class="card h-100"><div class="card-body py-2"><div class="small text-muted">الإجمالي</div><div class="fs-4 fw-bold">{{ total_open }}</div></div></div></div>
       {% for value, label in category_options %}
-      <div class="col-6 col-xl-2"><div class="card h-100"><div class="card-body py-2"><div class="small text-muted">{{ label }}</div><div class="fs-4 fw-bold">{{ counts.get(value, 0) }}</div></div></div></div>
+      <div class="col-6 col-xl"><div class="card h-100"><div class="card-body py-2"><div class="small text-muted">{{ label }}</div><div class="fs-4 fw-bold">{{ counts.get(value, 0) }}</div></div></div></div>
       {% endfor %}
     </div>
 
@@ -140,6 +140,8 @@
                   <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_work_schedule', start=row.period_start, employee_id=row.employee_id) }}">فتح الجدول</a>
                 {% elif row.kind == 'DAILY_ATTENDANCE' %}
                   <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_attendance_manual_edit', user_id=row.employee_id, day=row.day, override_id=row.request_id) }}">فتح التعديل</a>
+                {% elif row.kind == 'MATERIAL_REQUEST' %}
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_employee_request_view', request_id=row.request_id) }}">فتح طلب المواد</a>
                 {% endif %}
               </td>
             </tr>

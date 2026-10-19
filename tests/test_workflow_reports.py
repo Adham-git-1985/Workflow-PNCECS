@@ -15,6 +15,7 @@ from models import (
     HRLeaveType,
     HRPermissionRequest,
     HRPermissionType,
+    InvEmployeeRequest,
     Notification,
     User,
     UserPermission,
@@ -309,17 +310,29 @@ class WorkflowReportsTests(unittest.TestCase):
                 approval_status="PENDING",
                 created_at=submitted_at,
             ),
+            InvEmployeeRequest(
+                requester_user_id=self.employee.id,
+                items_text="A4 paper",
+                purpose="Office supplies",
+                status="SUBMITTED",
+                approval_stage="WAREHOUSE",
+                created_at=submitted_at,
+            ),
         ])
         db.session.commit()
 
         report = build_open_approval_report(self.employee, per_page=None)
 
-        self.assertEqual(report["total_open"], 5)
+        self.assertEqual(report["total_open"], 6)
         self.assertEqual(report["counts"]["LEAVE"], 1)
         self.assertEqual(report["counts"]["PERMISSION"], 1)
         self.assertEqual(report["counts"]["SCHEDULE_CHANGE"], 1)
         self.assertEqual(report["counts"]["MATERNITY_DEPARTURE"], 1)
         self.assertEqual(report["counts"]["DAILY_ATTENDANCE"], 1)
+        self.assertEqual(report["counts"]["MATERIAL_REQUEST"], 1)
+        material_row = next(row for row in report["all_rows"] if row["kind"] == "MATERIAL_REQUEST")
+        self.assertEqual(material_row["details"], "A4 paper")
+        self.assertEqual(material_row["stage_code"], "WAREHOUSE")
         self.assertEqual(report["max_rows_per_category"], 2000)
 
 

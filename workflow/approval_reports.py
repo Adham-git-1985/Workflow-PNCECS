@@ -12,6 +12,7 @@ from sqlalchemy.orm import noload
 from models import (
     HRAttendanceSchedulePlan,
     HRAttendanceSpecialCase,
+    InvEmployeeRequest,
     HRLeaveRequest,
     HRPermissionRequest,
     HRRequestApprovalStep,
@@ -26,6 +27,7 @@ OPEN_APPROVAL_CATEGORIES = (
     ("MATERNITY_DEPARTURE", "مغادرات الأمومة"),
     ("SCHEDULE_CHANGE", "طلبات تغيير جدول الدوام"),
     ("DAILY_ATTENDANCE", "تعديلات الدوام اليومية"),
+    ("MATERIAL_REQUEST", "طلبات المواد"),
 )
 
 OPEN_APPROVAL_CATEGORY_LABELS = dict(OPEN_APPROVAL_CATEGORIES)
@@ -43,6 +45,12 @@ OPEN_APPROVAL_STAGE_LABELS = {
     "GENERAL_DIRECTOR": "المدير العام",
     "ADMINISTRATIVE_AFFAIRS": "الشؤون الإدارية",
     "HR": "الشؤون البشرية",
+    "WAREHOUSE": "مدير المستودع",
+    "MATERIAL_MANAGER": "مدير المستودع / الشؤون البشرية (طلبات قديمة)",
+    "TECH_WAREHOUSE": "مدير المستودع التكنولوجي",
+    "TECH_DIRECTOR": "مدير عام التكنولوجيا والمطبوعات",
+    "ADMIN_MAINTENANCE": "مسؤول المستودع الإداري للصيانة والأثاث",
+    "ADMIN_FINANCE": "مدير عام الشؤون الإدارية والمالية",
     "SECRETARY_GENERAL": "الأمين العام",
     "MANAGER": "المدير المباشر",
     "FINAL": "الاعتماد النهائي",
@@ -243,11 +251,30 @@ def _load_rows(category: str) -> tuple[list[dict[str, Any]], dict[str, bool]]:
         )
         truncated["DAILY_ATTENDANCE"] = len(manual_rows) > OPEN_APPROVAL_REPORT_MAX_ROWS
 
+    material_rows = []
+    if "MATERIAL_REQUEST" in requested:
+        material_rows = (
+            InvEmployeeRequest.query
+            .options(
+                noload(InvEmployeeRequest.lines),
+                noload(InvEmployeeRequest.actions),
+            )
+            .filter(InvEmployeeRequest.status == "SUBMITTED")
+            .order_by(
+                InvEmployeeRequest.created_at.desc(),
+                InvEmployeeRequest.id.desc(),
+            )
+            .limit(OPEN_APPROVAL_REPORT_MAX_ROWS + 1)
+            .all()
+        )
+        truncated["MATERIAL_REQUEST"] = len(material_rows) > OPEN_APPROVAL_REPORT_MAX_ROWS
+
     leave_rows = leave_rows[:OPEN_APPROVAL_REPORT_MAX_ROWS]
     permission_rows = permission_rows[:OPEN_APPROVAL_REPORT_MAX_ROWS]
     schedule_rows = schedule_rows[:OPEN_APPROVAL_REPORT_MAX_ROWS]
     maternity_rows = maternity_rows[:OPEN_APPROVAL_REPORT_MAX_ROWS]
     manual_rows = manual_rows[:OPEN_APPROVAL_REPORT_MAX_ROWS]
+    material_rows = material_rows[:OPEN_APPROVAL_REPORT_MAX_ROWS]
 
     pending_steps = _pending_hr_steps(
         {int(row.id) for row in leave_rows if row.id},
@@ -291,6 +318,31 @@ def _load_rows(category: str) -> tuple[list[dict[str, Any]], dict[str, bool]]:
             details=details,
             note=request_row.note or "",
             day=request_row.day,
+        ))
+
+    for request_row in material_rows:
+        stage = (request_row.approval_stage or "WAREHOUSE").strip().upper()
+        if stage == "MANAGER":
+            stage = "MATERIAL_MANAGER"
+        submitted_at = _submitted_at(request_row)
+        period = submitted_at.strftime("%Y-%m-%d") if submitted_at else "—"
+        purpose = (request_row.purpose or "").strip()
+        note = (request_row.note or "").strip()
+        if purpose and note:
+            note = f"{purpose} — {note}"
+        else:
+            note = purpose or note
+        rows.append(_row(
+            kind="MATERIAL_REQUEST",
+            request_id=request_row.id,
+            employee_id=request_row.requester_user_id,
+            employee_name=_name(request_row.requester, request_row.requester_user_id),
+            status=request_row.status,
+            stage=stage,
+            submitted_at=submitted_at,
+            period=period,
+            details=request_row.items_text or "طلب مواد",
+            note=note,
         ))
 
     for request_row in maternity_rows:
