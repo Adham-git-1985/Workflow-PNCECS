@@ -2413,6 +2413,31 @@ def _handle_403(err):
     return render_template("errors/403.html"), 403
 
 
+@app.errorhandler(404)
+def _handle_404(err):
+    """Show a useful Arabic response for missing pages and deleted records."""
+    is_workflow_request = request.path.startswith("/workflow/request/")
+    if is_workflow_request:
+        page_title = "المسار غير موجود"
+        message = "هذا المسار غير موجود أو تم حذفه."
+    else:
+        page_title = "الصفحة غير موجودة"
+        message = "الصفحة المطلوبة غير موجودة أو ربما تم حذفها."
+
+    try:
+        if request.accept_mimetypes.best == "application/json" or request.path.startswith("/api"):
+            from flask import jsonify
+            return jsonify({"error": "not_found", "message": message}), 404
+    except Exception:
+        pass
+
+    return render_template(
+        "errors/404.html",
+        page_title=page_title,
+        message=message,
+    ), 404
+
+
 # ----------------------------
 # Background jobs (in-process)
 # ----------------------------
