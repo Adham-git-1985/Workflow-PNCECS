@@ -9,6 +9,12 @@ from jinja2 import ChoiceLoader, DictLoader
 
 from extensions import db
 from models import (
+    HRAttendanceSchedulePlan,
+    HRAttendanceSpecialCase,
+    HRLeaveRequest,
+    HRLeaveType,
+    HRPermissionRequest,
+    HRPermissionType,
     Notification,
     User,
     UserPermission,
@@ -19,6 +25,7 @@ from models import (
 )
 from utils.ui_labels import ui_label, workflow_status_label
 from workflow import workflow_bp
+from workflow.approval_reports import build_open_approval_report
 from workflow.reports import build_employee_workflow_report
 
 
@@ -222,6 +229,7 @@ class WorkflowReportsTests(unittest.TestCase):
 
         self.assertEqual(allowed.status_code, 200)
         self.assertIn("10:00", allowed.get_data(as_text=True))
+        self.assertIn("include_open_approvals", allowed.get_data(as_text=True))
 
     def test_employee_report_contains_separate_print_targets(self):
         db.session.add(UserPermission(
@@ -243,6 +251,76 @@ class WorkflowReportsTests(unittest.TestCase):
         self.assertIn("workflow-report-details", body)
         self.assertIn("workflow-report-details-table", body)
         self.assertIn("wfPrintSmart", body)
+
+    def test_open_approval_report_catalogs_all_pending_sources(self):
+        db.session.add(UserPermission(
+            user_id=self.employee.id,
+            key="WORKFLOW_REPORTS_READ",
+            is_allowed=True,
+        ))
+        leave_type = HRLeaveType(code="TEST_ANNUAL", name_ar="إجازة اختبار")
+        permission_type = HRPermissionType(code="TEST_PERMISSION", name_ar="مغادرة اختبار")
+        db.session.add_all([leave_type, permission_type])
+        db.session.flush()
+
+        submitted_at = datetime(2026, 10, 19, 10, 0)
+        db.session.add_all([
+            HRLeaveRequest(
+                user_id=self.employee.id,
+                leave_type_id=leave_type.id,
+                start_date="2026-10-20",
+                end_date="2026-10-21",
+                status="SUBMITTED",
+                submitted_at=submitted_at,
+            ),
+            HRPermissionRequest(
+                user_id=self.employee.id,
+                permission_type_id=permission_type.id,
+                day="2026-10-22",
+                from_time="09:00",
+                to_time="11:00",
+                status="SUBMITTED",
+                submitted_at=submitted_at,
+            ),
+            HRAttendanceSchedulePlan(
+                user_id=self.employee.id,
+                period_start="2026-10-23",
+                period_end="2026-10-29",
+                status="SUBMITTED",
+                request_type="CHANGE_REQUEST",
+                submitted_at=submitted_at,
+            ),
+            HRAttendanceSpecialCase(
+                user_id=self.employee.id,
+                day="2026-10-24",
+                kind="MATERNITY_DEPARTURE",
+                applied=False,
+                approval_status="PENDING",
+                created_at=submitted_at,
+            ),
+            HRAttendanceSpecialCase(
+                user_id=self.employee.id,
+                day="2026-10-25",
+                kind="MANUAL_ATTENDANCE",
+                start_time="08:00",
+                end_time="16:00",
+                note="تصحيح اختبار",
+                applied=False,
+                approval_status="PENDING",
+                created_at=submitted_at,
+            ),
+        ])
+        db.session.commit()
+
+        report = build_open_approval_report(self.employee, per_page=None)
+
+        self.assertEqual(report["total_open"], 5)
+        self.assertEqual(report["counts"]["LEAVE"], 1)
+        self.assertEqual(report["counts"]["PERMISSION"], 1)
+        self.assertEqual(report["counts"]["SCHEDULE_CHANGE"], 1)
+        self.assertEqual(report["counts"]["MATERNITY_DEPARTURE"], 1)
+        self.assertEqual(report["counts"]["DAILY_ATTENDANCE"], 1)
+        self.assertEqual(report["max_rows_per_category"], 2000)
 
 
 if __name__ == "__main__":

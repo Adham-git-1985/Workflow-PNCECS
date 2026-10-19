@@ -199,6 +199,7 @@ from workflow.engine import (
     ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
 )
 from workflow.reports import build_employee_workflow_report
+from workflow.approval_reports import build_open_approval_report
 from services.workflow_report_email import (
     get_report_email_config,
     save_report_email_config,
@@ -6152,6 +6153,29 @@ def workflow_employee_paths_report():
     )
 
 
+@workflow_bp.route("/reports/open-approvals")
+@login_required
+@perm_required("WORKFLOW_REPORTS_READ")
+def workflow_open_approvals_report():
+    """Open HR approvals across the Portal request and attendance flows."""
+    search = (request.args.get("q") or "").strip()
+    category = (request.args.get("category") or "").strip().upper()
+    page = request.args.get("page", type=int, default=1)
+
+    report = build_open_approval_report(
+        current_user,
+        search=search,
+        category=category,
+        page=page,
+        per_page=50,
+    )
+    return render_template(
+        "workflow/open_approvals_report.html",
+        q=search,
+        **report,
+    )
+
+
 @workflow_bp.route("/reports/email-settings", methods=["GET", "POST"])
 @login_required
 @perm_required("WORKFLOW_REPORTS_EMAIL_MANAGE")
@@ -6185,6 +6209,7 @@ def workflow_report_email_settings():
             "recipient_emails": request.form.get("recipient_emails"),
             "start_date": request.form.get("start_date"),
             "include_details": request.form.get("include_details"),
+            "include_open_approvals": request.form.get("include_open_approvals"),
             "viewer_user_id": current_user.id,
         }
         try:

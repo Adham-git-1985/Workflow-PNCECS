@@ -32,6 +32,7 @@ from services.delivery_controls import email_delivery_enabled
 from services.workflow_task_email import _mail_config, resolve_user_delivery_email
 from utils.timezone import app_timezone, format_local_datetime
 from utils.ui_labels import workflow_status_label
+from workflow.approval_reports import build_open_approval_report
 REPORT_KEY = "EMPLOYEE_WORKFLOW"
 REPORT_NAME = "تقرير موظفي ومسارات مسار"
 REPORT_FROM_NAME = "مسار"
@@ -51,6 +52,7 @@ SETTING_KEYS = {
     "recipient_emails": SETTING_PREFIX + "RECIPIENT_EMAILS",
     "start_date": SETTING_PREFIX + "START_DATE",
     "include_details": SETTING_PREFIX + "INCLUDE_DETAILS",
+    "include_open_approvals": SETTING_PREFIX + "INCLUDE_OPEN_APPROVALS",
     "viewer_user_id": SETTING_PREFIX + "VIEWER_USER_ID",
 }
 
@@ -75,6 +77,7 @@ DEFAULT_CONFIG = {
     "recipient_emails": "",
     "start_date": "",
     "include_details": "1",
+    "include_open_approvals": "1",
     "viewer_user_id": "",
 }
 
@@ -117,6 +120,7 @@ def get_report_email_config() -> dict[str, Any]:
     values["skip_weekly_holidays"] = _as_bool(values["skip_weekly_holidays"])
     values["skip_official_holidays"] = _as_bool(values["skip_official_holidays"])
     values["include_details"] = _as_bool(values["include_details"])
+    values["include_open_approvals"] = _as_bool(values["include_open_approvals"])
 
     frequency = str(values["frequency"] or "DAILY").strip().upper()
     if frequency not in {"DAILY", "EVERY_N_DAYS", "WEEKLY"}:
@@ -197,6 +201,7 @@ def save_report_email_config(payload: dict[str, Any]) -> dict[str, Any]:
         "recipient_emails": "\n".join(emails),
         "start_date": start_date.isoformat() if start_date else "",
         "include_details": "1" if _as_bool(payload.get("include_details")) else "0",
+        "include_open_approvals": "1" if _as_bool(payload.get("include_open_approvals")) else "0",
         "viewer_user_id": str(viewer_user_id or ""),
     }
     for name, key in SETTING_KEYS.items():
@@ -291,7 +296,29 @@ def _detail_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def build_workflow_report_data(viewer: User, *, include_details: bool = True) -> dict[str, Any]:
+def _open_approval_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = []
+    for row in report.get("all_rows") or report.get("rows") or []:
+        rows.append({
+            "employee": row.get("employee") or "",
+            "request_id": row.get("request_id") or "",
+            "kind": row.get("kind_label") or "",
+            "period": row.get("period") or "",
+            "details": row.get("details") or "",
+            "stage": row.get("stage") or "",
+            "status": row.get("status_label") or row.get("status") or "",
+            "submitted_at": _datetime_text(row.get("submitted_at")),
+            "note": row.get("note") or "",
+        })
+    return rows
+
+
+def build_workflow_report_data(
+    viewer: User,
+    *,
+    include_details: bool = True,
+    include_open_approvals: bool = True,
+) -> dict[str, Any]:
     # Import lazily so the standalone background worker can load this service
     # without initializing workflow.routes while that blueprint is importing.
     from workflow.reports import build_employee_workflow_report
@@ -302,9 +329,19 @@ def build_workflow_report_data(viewer: User, *, include_details: bool = True) ->
         per_page=None,
         include_all_details=include_details,
     )
+    approval_report = (
+        build_open_approval_report(viewer, per_page=None)
+        if include_open_approvals
+        else {"all_rows": [], "counts": {}, "total_open": 0, "truncated_any": False}
+    )
     return {
         "summary": _summary_rows(report),
         "details": _detail_rows(report) if include_details else [],
+        "open_approvals": _open_approval_rows(approval_report),
+        "open_approval_counts": approval_report.get("counts") or {},
+        "open_approvals_total": approval_report.get("total_open") or 0,
+        "open_approvals_truncated": bool(approval_report.get("truncated_any")),
+        "include_open_approvals": bool(include_open_approvals),
         "total_paths": report.get("total_paths") or 0,
         "total_assignments": report.get("total_assignments") or 0,
         "active_assignments": report.get("active_assignments") or 0,
@@ -361,11 +398,26 @@ def build_email_content(data: dict[str, Any]) -> tuple[str, str, str]:
     ]
     summary = data.get("summary") or []
     details = data.get("details") or []
+    approval_columns = [
+        ("employee", "الموظف"),
+        ("request_id", "#"),
+        ("kind", "نوع الطلب"),
+        ("period", "الفترة / التاريخ"),
+        ("details", "التفاصيل"),
+        ("stage", "المرحلة الحالية"),
+        ("status", "الحالة"),
+        ("submitted_at", "تاريخ التقديم"),
+        ("note", "الملاحظات"),
+    ]
+    open_approvals = data.get("open_approvals") or []
     sections = [
         ("ملخص المسارات حسب الموظف", "#2F5597", summary, summary_columns),
     ]
     if data.get("include_details"):
         sections.append(("تفاصيل المسارات", "#2F7D6D", details, detail_columns))
+
+    if data.get("include_open_approvals"):
+        sections.append(("الموافقات المفتوحة", "#B7791F", open_approvals, approval_columns))
 
     html_sections = []
     text_sections = []
@@ -445,6 +497,17 @@ def _xlsx_bytes(data: dict[str, Any]) -> bytes:
                 for row in details
             ],
             "2F7D6D",
+        )
+    if data.get("include_open_approvals"):
+        open_approvals = data.get("open_approvals") or []
+        add_sheet(
+            "الموافقات المفتوحة",
+            ["الموظف", "#", "نوع الطلب", "الفترة / التاريخ", "التفاصيل", "المرحلة الحالية", "الحالة", "تاريخ التقديم", "الملاحظات"],
+            [
+                [row.get(key, "") for key in ("employee", "request_id", "kind", "period", "details", "stage", "status", "submitted_at", "note")]
+                for row in open_approvals
+            ],
+            "B7791F",
         )
     buffer = BytesIO()
     workbook.save(buffer)
@@ -545,7 +608,11 @@ def _send_slot(local_now: datetime, config: dict[str, Any], scheduled_time: dt_t
         if not mail_config.get("ready"):
             raise RuntimeError("إعدادات SMTP غير مكتملة أو البريد غير مفعّل.")
         viewer = _report_viewer(config)
-        data = build_workflow_report_data(viewer, include_details=config["include_details"])
+        data = build_workflow_report_data(
+            viewer,
+            include_details=config["include_details"],
+            include_open_approvals=config.get("include_open_approvals", True),
+        )
         data["include_details"] = config["include_details"]
         data["scheduled_time"] = scheduled_time_text
         subject, text_body, html_body = build_email_content(data)
@@ -641,7 +708,11 @@ def send_workflow_report_email_now(viewer: User | None = None) -> dict[str, Any]
     db.session.commit()
     try:
         report_viewer = _report_viewer(config, preferred=viewer)
-        data = build_workflow_report_data(report_viewer, include_details=config["include_details"])
+        data = build_workflow_report_data(
+            report_viewer,
+            include_details=config["include_details"],
+            include_open_approvals=config.get("include_open_approvals", True),
+        )
         data["include_details"] = config["include_details"]
         data["scheduled_time"] = "عند الطلب"
         subject, text_body, html_body = build_email_content(data)

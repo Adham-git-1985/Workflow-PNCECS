@@ -32,6 +32,23 @@
     </div>
   </div>
 
+  <div class="col-12 col-xl-6">
+    <div class="card shadow-sm h-100 border-warning">
+      <div class="card-body d-flex flex-column">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <i class="bi bi-check2-square fs-3 text-warning"></i>
+          <h5 class="mb-0">تقرير الموافقات المفتوحة</h5>
+        </div>
+        <p class="text-muted mb-4">
+          الإجازات والمغادرات ومغادرات الأمومة وطلبات تغيير جدول الدوام وتعديلات الدوام اليومية التي لم تُغلق.
+        </p>
+        <a class="btn btn-warning mt-auto" href="{{ url_for('workflow.workflow_open_approvals_report') }}">
+          <i class="bi bi-box-arrow-up-left"></i> فتح التقرير
+        </a>
+      </div>
+    </div>
+  </div>
+
   {% if can_manage_email %}
   <div class="col-12 col-xl-6">
     <div class="card shadow-sm h-100 border-success">

@@ -21,6 +21,7 @@ class WorkflowReportEmailTests(unittest.TestCase):
         self.assertEqual(config["send_time"], "10:00")
         self.assertEqual(config["frequency"], "DAILY")
         self.assertEqual(config["interval_days"], 1)
+        self.assertTrue(config["include_open_approvals"])
 
     def test_cycle_runs_only_the_configured_current_minute(self):
         config = {
@@ -69,6 +70,7 @@ class WorkflowReportEmailTests(unittest.TestCase):
     def test_email_content_and_excel_attachment_include_summary_and_details(self):
         data = {
             "include_details": True,
+            "include_open_approvals": True,
             "scheduled_time": "10:00",
             "summary": [{
                 "employee": "Employee One",
@@ -92,6 +94,17 @@ class WorkflowReportEmailTests(unittest.TestCase):
                 "assignment_at": "2026-10-19 09:15",
                 "opened_at": "2026-10-19 09:30",
             }],
+            "open_approvals": [{
+                "employee": "Employee One",
+                "request_id": 11,
+                "kind": "Leaves",
+                "period": "2026-10-20 → 2026-10-21",
+                "details": "Annual leave",
+                "stage": "Direct manager",
+                "status": "Pending approval",
+                "submitted_at": "2026-10-19 10:00",
+                "note": "",
+            }],
         }
 
         subject, text_body, html_body = workflow_email.build_email_content(data)
@@ -100,7 +113,7 @@ class WorkflowReportEmailTests(unittest.TestCase):
             self.assertIn("10:00", subject)
             self.assertIn("Employee One", text_body)
             self.assertIn("Employee One", html_body)
-            self.assertGreaterEqual(len(workbook.sheetnames), 2)
+            self.assertGreaterEqual(len(workbook.sheetnames), 3)
         finally:
             workbook.close()
 
