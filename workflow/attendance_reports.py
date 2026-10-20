@@ -77,6 +77,14 @@ FINANCE_CONTEXT_TOKENS = (
     "تخطيط",
 )
 
+REPORT_GROUP_NAME_OVERRIDES = (
+    (frozenset(("دعاء", "سلامه")), "office"),
+    (frozenset(("نور", "برغوثي")), "organizations"),
+    (frozenset(("بيان", "كحله")), "organizations"),
+    (frozenset(("رحيق", "شتيه")), "organizations"),
+    (frozenset(("شوكت", "بركات")), "organizations"),
+)
+
 _ARABIC_DIGIT_TRANSLATION = str.maketrans(
     "٠١٢٣٤٥٦٧٨٩", "0123456789"
 )
@@ -225,6 +233,21 @@ def _employee_name(employee_file: EmployeeFile | None, user) -> str:
         if name:
             return name
     return _clean_value(getattr(user, "full_name", None)) or f"الموظف #{getattr(user, 'id', '')}"
+
+
+def _report_group_name_override(
+    employee_file: EmployeeFile | None,
+    user,
+) -> str | None:
+    """Apply confirmed current placement for names with ambiguous legacy titles."""
+
+    name_tokens = set(
+        _normalise_text(_employee_name(employee_file, user)).split()
+    )
+    for required_tokens, group_key in REPORT_GROUP_NAME_OVERRIDES:
+        if required_tokens.issubset(name_tokens):
+            return group_key
+    return None
 
 
 def _lookup_labels(employee_files: list[EmployeeFile]) -> dict[int, str]:
@@ -428,6 +451,9 @@ def _employee_group(
         return "other"
     if force_driver:
         return "drivers"
+    name_override = _report_group_name_override(employee_file, current_user)
+    if name_override:
+        return name_override
     department = getattr(getattr(employee_file, "department", None), "name_ar", "")
     directorate = getattr(getattr(employee_file, "directorate", None), "name_ar", "")
     section = getattr(getattr(employee_file, "section", None), "name_ar", "")

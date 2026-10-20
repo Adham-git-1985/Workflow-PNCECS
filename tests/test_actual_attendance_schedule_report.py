@@ -229,6 +229,32 @@ class ActualAttendanceScheduleReportTests(unittest.TestCase):
             ["رائف سلامة", "خلود حنتش", "رائد عصبة"],
         )
 
+    def test_confirmed_current_placements_override_ambiguous_legacy_titles(self):
+        office_user = self._add_user("دعاء عبد الله أحمد سلامة")
+        organizations_users = [
+            self._add_user("نور نبيل فهمي برغوثي"),
+            self._add_user("بيان حسين موسى كحله"),
+            self._add_user("رحيق داوود صادق شتية"),
+            self._add_user("شوكت ياسين شوكت بركات"),
+        ]
+        for user in [office_user, *organizations_users]:
+            self._add_plan(user, date(2026, 10, 18))
+        db.session.commit()
+
+        report = build_actual_attendance_report("2026-10-18")
+
+        office = next(group for group in report["groups"] if group["key"] == "office")
+        organizations = next(
+            group for group in report["groups"] if group["key"] == "organizations"
+        )
+        projects = next(group for group in report["groups"] if group["key"] == "projects")
+        self.assertEqual(office["days"][0]["names"], ["دعاء سلامة"])
+        self.assertEqual(
+            organizations["days"][0]["names"],
+            ["بيان كحله", "رحيق شتية", "شوكت بركات", "نور برغوثي"],
+        )
+        self.assertEqual(projects["days"][0]["names"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
