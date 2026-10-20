@@ -1,8 +1,10 @@
-"""Reports built from the actual daily attendance summaries.
+"""Weekly employee roster reports built from the effective attendance schedule.
 
 This module intentionally lives beside the existing Masar reports instead of
 changing the current Diwan report.  The report is a read-only weekly view of
-employees who have an actual attendance record for each working day.
+the published schedule.  A schedule plan becomes effective on its
+``period_start`` date and keeps recurring until a later published plan
+replaces it; ``period_end`` is only the stored seven-day preview boundary.
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ import re
 import unicodedata
 from datetime import date, timedelta
 
-from models import AttendanceDailySummary, EmployeeFile, HRLookupItem, User
+from models import EmployeeFile, HRAttendanceSchedulePlan, HRLookupItem, User
 
 
 WORKDAY_LABELS = {
@@ -49,6 +51,8 @@ LEADERSHIP_ROLE_CODES = frozenset(
         "SECRETARY_GENERAL_ASSISTANT",
     }
 )
+
+PUBLISHED_SCHEDULE_STATUSES = ("ADMIN_APPROVED", "FINAL_APPROVED")
 
 _ARABIC_DIGIT_TRANSLATION = str.maketrans(
     "٠١٢٣٤٥٦٧٨٩", "0123456789"
@@ -128,7 +132,13 @@ def _classify_group_from_context(
             if _clean_value(part)
         )
     )
-    titles = _normalise_text(" ".join((job_title, admin_title)))
+    titles = _normalise_text(
+        " ".join(
+            value
+            for value in (_clean_value(job_title), _clean_value(admin_title))
+            if value
+        )
+    )
     combined = " ".join(part for part in (structural, titles) if part)
 
     if "سائق" in titles or "سواق" in titles:
@@ -238,15 +248,74 @@ def _leadership_user_ids(
     return leadership_ids
 
 
-def _has_actual_attendance(row: AttendanceDailySummary) -> bool:
-    status = _clean_value(row.status).upper()
-    if status in {"ABSENT", "WEEKLY_OFF", "OFF", "HOLIDAY"}:
-        return False
-    return bool(
-        row.first_in
-        or row.last_out
-        or (row.work_minutes or 0) > 0
+def _schedule_day_for_date(plan, work_day: date):
+    """Resolve a recurring plan's stored weekday template for ``work_day``."""
+
+    if not plan:
+        return None
+    exact_key = work_day.isoformat()
+    weekday = work_day.weekday()
+    weekday_row = None
+    for row in getattr(plan, "days", None) or []:
+        if _clean_value(getattr(row, "work_date", "")) == exact_key:
+            return row
+        try:
+            row_day = date.fromisoformat(_clean_value(getattr(row, "work_date", "")))
+        except (TypeError, ValueError):
+            continue
+        if row_day.weekday() == weekday and weekday_row is None:
+            weekday_row = row
+    return weekday_row
+
+
+def _effective_schedule_days(users: list[User], days: list[date]) -> dict[str, dict[int, object]]:
+    """Return the effective published schedule row for each user and report day."""
+
+    if not users or not days:
+        return {day.isoformat(): {} for day in days}
+
+    user_ids = [int(user.id) for user in users if getattr(user, "id", None)]
+    if not user_ids:
+        return {day.isoformat(): {} for day in days}
+
+    period_end = max(days).isoformat()
+    plans = (
+        HRAttendanceSchedulePlan.query
+        .filter(HRAttendanceSchedulePlan.user_id.in_(user_ids))
+        .filter(HRAttendanceSchedulePlan.period_start <= period_end)
+        .filter(HRAttendanceSchedulePlan.status.in_(PUBLISHED_SCHEDULE_STATUSES))
+        .order_by(
+            HRAttendanceSchedulePlan.user_id.asc(),
+            HRAttendanceSchedulePlan.period_start.desc(),
+            HRAttendanceSchedulePlan.version_no.desc(),
+            HRAttendanceSchedulePlan.id.desc(),
+        )
+        .all()
     )
+    plans_by_user: dict[int, list[HRAttendanceSchedulePlan]] = {}
+    for plan in plans:
+        plans_by_user.setdefault(int(plan.user_id), []).append(plan)
+
+    result = {day.isoformat(): {} for day in days}
+    for user_id in user_ids:
+        user_plans = plans_by_user.get(user_id, [])
+        for work_day in days:
+            day_key = work_day.isoformat()
+            effective_plan = next(
+                (
+                    plan
+                    for plan in user_plans
+                    if _clean_value(getattr(plan, "period_start", "")) <= day_key
+                ),
+                None,
+            )
+            schedule_day = _schedule_day_for_date(effective_plan, work_day)
+            if not schedule_day:
+                continue
+            if _clean_value(getattr(schedule_day, "day_type", "")).upper() == "OFF":
+                continue
+            result[day_key][user_id] = schedule_day
+    return result
 
 
 def build_actual_attendance_report(
@@ -254,39 +323,22 @@ def build_actual_attendance_report(
     *,
     today: date | None = None,
 ) -> dict:
-    """Build the Sunday-to-Thursday actual attendance matrix."""
+    """Build the Sunday-to-Thursday matrix from the effective work schedule."""
 
     period_start = parse_week_start(week_start, today=today)
     period_end = period_start + timedelta(days=4)
     days = [period_start + timedelta(days=offset) for offset in range(5)]
     day_keys = [item.isoformat() for item in days]
 
-    rows = (
-        AttendanceDailySummary.query
-        .filter(AttendanceDailySummary.day >= period_start.isoformat())
-        .filter(AttendanceDailySummary.day <= period_end.isoformat())
-        .order_by(AttendanceDailySummary.day.asc(), AttendanceDailySummary.user_id.asc())
-        .all()
-    )
-    rows = [row for row in rows if _has_actual_attendance(row)]
-    user_ids = {int(row.user_id) for row in rows if row.user_id is not None}
-
-    employee_files = []
-    if user_ids:
-        employee_files = (
-            EmployeeFile.query
-            .filter(EmployeeFile.user_id.in_(user_ids))
-            .all()
-        )
-    employee_file_map = {int(item.user_id): item for item in employee_files}
-    lookup_labels = _lookup_labels(employee_files)
     all_employee_files = EmployeeFile.query.all()
     all_users = User.query.all()
-    all_lookup_labels = _lookup_labels(all_employee_files)
+    employee_file_map = {int(item.user_id): item for item in all_employee_files}
+    lookup_labels = _lookup_labels(all_employee_files)
+    schedule_days = _effective_schedule_days(all_users, days)
     leadership_user_ids = _leadership_user_ids(
         all_users,
         all_employee_files,
-        all_lookup_labels,
+        lookup_labels,
     )
 
     all_group_keys = [key for key, _label in REPORT_GROUPS]
@@ -296,23 +348,27 @@ def build_actual_attendance_report(
     }
     member_maps[OTHER_GROUP[0]] = {day_key: {} for day_key in day_keys}
 
-    for row in rows:
-        day_key = _clean_value(row.day)
-        if day_key not in day_keys:
-            continue
-        user_id = int(row.user_id)
-        employee_file = employee_file_map.get(user_id)
-        user = getattr(row, "user", None)
-        full_name = _employee_name(employee_file, user)
-        entry = {
-            "user_id": user_id,
-            "name": _short_employee_name(full_name),
-            "full_name": full_name,
-            "status": _clean_value(row.status).upper() or "OK",
-        }
-        group_key = _employee_group(employee_file, lookup_labels)
-        member_maps.setdefault(group_key, {key: {} for key in day_keys})
-        member_maps[group_key][day_key][user_id] = entry
+    user_by_id = {
+        int(user.id): user
+        for user in all_users
+        if getattr(user, "id", None)
+    }
+    for day_key in day_keys:
+        for user_id in schedule_days[day_key]:
+            employee_file = employee_file_map.get(user_id)
+            user = user_by_id.get(user_id)
+            full_name = _employee_name(employee_file, user)
+            entry = {
+                "user_id": user_id,
+                "name": _short_employee_name(full_name),
+                "full_name": full_name,
+                "status": _clean_value(
+                    getattr(schedule_days[day_key][user_id], "day_type", "")
+                ).upper() or "WORK",
+            }
+            group_key = _employee_group(employee_file, lookup_labels)
+            member_maps.setdefault(group_key, {key: {} for key in day_keys})
+            member_maps[group_key][day_key][user_id] = entry
 
     labels = dict(REPORT_GROUPS)
     if any(member_maps[OTHER_GROUP[0]][key] for key in day_keys):
@@ -415,5 +471,5 @@ def build_actual_attendance_report(
         "total_counts": total_counts,
         "leadership_rows": leadership_rows,
         "total_attendance": sum(total_counts),
-        "has_data": bool(rows),
+        "has_data": any(schedule_days[day_key] for day_key in day_keys),
     }

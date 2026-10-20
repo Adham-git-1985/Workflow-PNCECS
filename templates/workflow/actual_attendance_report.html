@@ -141,7 +141,7 @@
   <section id="actual-attendance-print" class="actual-attendance-print">
     <div class="actual-attendance-print-heading">
       <h1>تقرير الدوام الفعلي الأسبوعي</h1>
-      <p>الموظفون الذين لديهم سجل حضور فعلي في جدول الدوام، موزعون حسب الجهة.</p>
+      <p>الموظفون المدرجون في جدول الدوام الساري، موزعون حسب الجهة.</p>
       <div>الفترة: {{ period_start.strftime('%d/%m/%Y') }} — {{ period_end.strftime('%d/%m/%Y') }}</div>
     </div>
 
@@ -155,7 +155,7 @@
           <div class="col-md-3 col-lg-2"><button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض الأسبوع</button></div>
           <div class="col-md-3 col-lg-2"><a class="btn btn-outline-secondary w-100" href="{{ url_for('workflow.workflow_actual_attendance_report') }}">الأسبوع الحالي</a></div>
           <div class="col-12 col-lg text-muted small align-self-center">
-            المصدر: جدول الدوام الفعلي. الحالات الغائبة والعطلة الأسبوعية لا تظهر ضمن قوائم الحضور.
+            المصدر: جدول الدوام الساري. أيام العطلة لا تظهر ضمن قوائم الدوام.
           </div>
         </form>
       </div>
@@ -163,14 +163,14 @@
 
     {% if not has_data %}
     <div class="alert alert-info no-print">
-      لا توجد سجلات حضور فعلي في الفترة المحددة. يمكنك اختيار أسبوع آخر من حقل التاريخ أعلاه.
+      لا توجد خطط دوام معتمدة في الفترة المحددة. يمكنك اختيار أسبوع آخر من حقل التاريخ أعلاه.
     </div>
     {% endif %}
 
     <div class="card shadow-sm mb-3">
       <div class="card-header bg-white">
-        <strong>الحضور الفعلي حسب الجهة</strong>
-        <span class="badge text-bg-secondary">{{ total_attendance }} سجل حضور</span>
+        <strong>جدول الدوام حسب الجهة</strong>
+        <span class="badge text-bg-secondary">{{ total_attendance }} موظف مجدول</span>
       </div>
       <div class="table-responsive">
         <table class="table mb-0 actual-attendance-table" dir="rtl">
