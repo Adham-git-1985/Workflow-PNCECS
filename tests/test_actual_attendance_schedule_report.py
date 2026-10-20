@@ -211,6 +211,24 @@ class ActualAttendanceScheduleReportTests(unittest.TestCase):
         drivers = next(group for group in report["groups"] if group["key"] == "drivers")
         self.assertIn("إياد صافي", drivers["days"][0]["names"])
 
+    def test_leadership_footer_prioritizes_raef_then_khaloud(self):
+        raef = self._add_user("رائف عزات زهدي سلامة")
+        raef.role = "ASSISTANT_SECRETARY_GENERAL"
+        khaloud = self._add_user("خلود احمد يوسف حنتش")
+        khaloud.role = "DIRECTORATE_HEAD"
+        director = self._add_user("رائد سامي احمد عصبة")
+        director.role = "DIRECTORATE_HEAD"
+        for user in (raef, khaloud, director):
+            self._add_plan(user, date(2026, 10, 18))
+        db.session.commit()
+
+        report = build_actual_attendance_report("2026-10-18")
+
+        self.assertEqual(
+            [row["names"][0] for row in report["leadership_rows"]],
+            ["رائف سلامة", "خلود حنتش", "رائد عصبة"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

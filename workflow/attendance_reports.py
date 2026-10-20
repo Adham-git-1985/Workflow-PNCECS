@@ -487,6 +487,33 @@ def _leadership_user_ids(
     return leadership_ids
 
 
+def _leadership_priority_user_ids(
+    users: list[User],
+    employee_files: list[EmployeeFile],
+) -> dict[int, int]:
+    """Return the requested leading positions for the leadership footer."""
+
+    employee_file_map = {int(item.user_id): item for item in employee_files}
+    priority_tokens = (
+        (0, frozenset(("رائف", "سلامه"))),
+        (1, frozenset(("خلود", "حنتش"))),
+    )
+    priority_by_user_id = {}
+    for user in users:
+        user_id = getattr(user, "id", None)
+        if not user_id:
+            continue
+        employee_file = employee_file_map.get(int(user_id))
+        name_tokens = set(
+            _normalise_text(_employee_name(employee_file, user)).split()
+        )
+        for priority, required_tokens in priority_tokens:
+            if required_tokens.issubset(name_tokens):
+                priority_by_user_id[int(user_id)] = priority
+                break
+    return priority_by_user_id
+
+
 def _schedule_day_for_date(plan, work_day: date):
     """Resolve a recurring plan's stored weekday template for ``work_day``."""
 
@@ -587,6 +614,10 @@ def build_actual_attendance_report(
         all_users,
         all_employee_files,
         lookup_labels,
+    )
+    leadership_priority_by_user_id = _leadership_priority_user_ids(
+        all_users,
+        all_employee_files,
     )
 
     all_group_keys = [key for key, _label in REPORT_GROUPS]
@@ -696,12 +727,37 @@ def build_actual_attendance_report(
             )
         ordered_day_people[day_key] = ordered_entries
 
+    # Preserve the existing leadership order for all other directors, while
+    # keeping Raef first and Khaloud immediately after him when she is on the
+    # schedule for that day.
+    leadership_base_rank = {}
+    for day_key in day_keys:
+        for entry in ordered_day_people[day_key]:
+            user_id = entry["user_id"]
+            if (
+                user_id in leadership_user_ids
+                and user_id not in leadership_base_rank
+            ):
+                leadership_base_rank[user_id] = len(leadership_base_rank)
+
+    def leadership_sort_key(entry):
+        user_id = entry["user_id"]
+        priority = leadership_priority_by_user_id.get(user_id)
+        return (
+            0 if priority is not None else 1,
+            priority if priority is not None else 0,
+            leadership_base_rank.get(user_id, len(leadership_base_rank)),
+        )
+
     leadership_day_people = {
-        day_key: [
-            entry
-            for entry in ordered_day_people[day_key]
-            if entry["user_id"] in leadership_user_ids
-        ]
+        day_key: sorted(
+            (
+                entry
+                for entry in ordered_day_people[day_key]
+                if entry["user_id"] in leadership_user_ids
+            ),
+            key=leadership_sort_key,
+        )
         for day_key in day_keys
     }
     max_leadership_rows = max(
