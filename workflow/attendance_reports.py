@@ -286,11 +286,25 @@ def build_actual_attendance_report(
                     "count": len(entries),
                 }
             )
+        row_count = max((item["count"] for item in group_days), default=0) or 1
+        matrix_rows = [
+            {
+                "names": [
+                    day["names"][row_index]
+                    if row_index < len(day["names"])
+                    else ""
+                    for day in group_days
+                ]
+            }
+            for row_index in range(row_count)
+        ]
         groups.append(
             {
                 "key": group_key,
                 "label": labels[group_key],
                 "days": group_days,
+                "rows": matrix_rows,
+                "row_count": row_count,
                 "total": sum(item["count"] for item in group_days),
             }
         )
