@@ -10,7 +10,10 @@ from models import (
     HRAttendanceSchedulePlan,
     User,
 )
-from workflow.attendance_reports import build_actual_attendance_report
+from workflow.attendance_reports import (
+    _classify_group_from_context,
+    build_actual_attendance_report,
+)
 
 
 class ActualAttendanceScheduleReportTests(unittest.TestCase):
@@ -50,7 +53,8 @@ class ActualAttendanceScheduleReportTests(unittest.TestCase):
         db.session.add(EmployeeFile(user_id=user.id, full_name_quad=name))
         return user
 
-    def _add_plan(self, user, start_day, *, off_offsets=()):
+    def _add_plan(self, user, start_day, *, off_offsets=(), day_types=None):
+        day_types = day_types or {}
         plan = HRAttendanceSchedulePlan(
             user_id=user.id,
             period_start=start_day.isoformat(),
@@ -67,7 +71,10 @@ class ActualAttendanceScheduleReportTests(unittest.TestCase):
                 HRAttendanceScheduleDay(
                     plan_id=plan.id,
                     work_date=work_day.isoformat(),
-                    day_type="OFF" if offset in off_offsets else "WORK",
+                    day_type=day_types.get(
+                        offset,
+                        "OFF" if offset in off_offsets else "WORK",
+                    ),
                 )
             )
         return plan
@@ -86,6 +93,19 @@ class ActualAttendanceScheduleReportTests(unittest.TestCase):
             ["Schedule Employee"],
         )
 
+    def test_remote_days_do_not_appear_as_in_office_attendance(self):
+        user = self._add_user()
+        self._add_plan(
+            user,
+            date(2026, 10, 18),
+            day_types={1: "REMOTE", 3: "REMOTE"},
+        )
+        db.session.commit()
+
+        report = build_actual_attendance_report("2026-10-18")
+
+        self.assertEqual(report["total_counts"], [1, 0, 1, 0, 1])
+
     def test_plan_continues_after_period_end_until_a_later_plan_starts(self):
         user = self._add_user()
         self._add_plan(user, date(2026, 10, 18))
@@ -100,6 +120,26 @@ class ActualAttendanceScheduleReportTests(unittest.TestCase):
 
         replaced_report = build_actual_attendance_report("2026-11-01")
         self.assertEqual(replaced_report["total_counts"], [1, 1, 0, 1, 1])
+
+    def test_current_hierarchy_labels_map_the_report_groups(self):
+        self.assertEqual(
+            _classify_group_from_context(
+                org_context=("قسم الشؤون الادارية", "دائرة الموارد البشرية", "الإدارة العامة للشؤون الإدارية والمالية"),
+            ),
+            "finance",
+        )
+        self.assertEqual(
+            _classify_group_from_context(
+                org_context=("مستشار لشؤون 48", "الامين العام"),
+            ),
+            "advisor_48",
+        )
+        self.assertEqual(
+            _classify_group_from_context(
+                org_context=("دائرة التدقيق والمتابعة من منظور النوع الاجتماعي",),
+            ),
+            "social",
+        )
 
 
 if __name__ == "__main__":

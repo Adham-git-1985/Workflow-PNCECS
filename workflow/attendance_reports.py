@@ -13,7 +13,14 @@ import re
 import unicodedata
 from datetime import date, timedelta
 
-from models import EmployeeFile, HRAttendanceSchedulePlan, HRLookupItem, User
+from models import (
+    EmployeeFile,
+    HRAttendanceSchedulePlan,
+    HRLookupItem,
+    OrgNode,
+    OrgNodeAssignment,
+    User,
+)
 
 
 WORKDAY_LABELS = {
@@ -122,13 +129,14 @@ def _classify_group_from_context(
     division: str = "",
     job_title: str = "",
     admin_title: str = "",
+    org_context: tuple[str, ...] = (),
 ) -> str:
     """Map the employee-file placement/title to the report's visual sections."""
 
     structural = _normalise_text(
         " ".join(
             part
-            for part in (department, directorate, section, division)
+            for part in (department, directorate, section, division, *org_context)
             if _clean_value(part)
         )
     )
@@ -147,7 +155,15 @@ def _classify_group_from_context(
         return "messengers"
     if "مستشار" in combined and "48" in combined:
         return "advisor_48"
-    if any(token in combined for token in ("نوع اجتماعي", "تنوع اجتماعي", "تطوير وادماج")):
+    if any(
+        token in combined
+        for token in (
+            "نوع اجتماعي",
+            "النوع الاجتماعي",
+            "تنوع اجتماعي",
+            "تطوير وادماج",
+        )
+    ):
         return "social"
     if any(token in combined for token in ("قانون", "استشار")):
         return "legal"
@@ -159,7 +175,19 @@ def _classify_group_from_context(
         return "organizations"
     if any(token in combined for token in ("علاقات", "اعلام", "اتصالات")):
         return "relations"
-    if any(token in combined for token in ("شؤون ماليه", "موارد وشؤون ماليه", "شؤون اداريه", "تخطيط", "موارد بشريه")):
+    if any(
+        token in combined
+        for token in (
+            "الشؤون الماليه",
+            "الشؤون الاداريه",
+            "الاداره العامه للشؤون الاداريه والماليه",
+            "موارد وشؤون ماليه",
+            "الموارد والشؤون الماليه",
+            "موارد بشريه",
+            "الموارد البشريه",
+            "تخطيط",
+        )
+    ):
         return "finance"
     if any(token in structural for token in ("مكتب الامين العام", "الامانه العامه")):
         return "office"
@@ -194,17 +222,100 @@ def _lookup_labels(employee_files: list[EmployeeFile]) -> dict[int, str]:
     }
 
 
-def _employee_group(employee_file: EmployeeFile | None, lookup_labels: dict[int, str]) -> str:
-    if not employee_file:
+def _dynamic_org_contexts(users: list[User]) -> dict[int, tuple[str, ...]]:
+    """Return each user's current dynamic-node names and their ancestors."""
+
+    user_ids = [int(user.id) for user in users if getattr(user, "id", None)]
+    contexts: dict[int, list[str]] = {user_id: [] for user_id in user_ids}
+    if not user_ids:
+        return {}
+
+    assignments = (
+        OrgNodeAssignment.query
+        .filter(OrgNodeAssignment.user_id.in_(user_ids))
+        .order_by(
+            OrgNodeAssignment.user_id.asc(),
+            OrgNodeAssignment.is_primary.desc(),
+            OrgNodeAssignment.id.asc(),
+        )
+        .all()
+    )
+    assigned_user_ids = set()
+
+    def add_node_chain(user_id: int, node) -> None:
+        seen_node_ids = set()
+        while node is not None:
+            node_id = getattr(node, "id", None)
+            if node_id in seen_node_ids:
+                break
+            if node_id is not None:
+                seen_node_ids.add(node_id)
+            label = _clean_value(getattr(node, "name_ar", ""))
+            if label and label not in contexts[user_id]:
+                contexts[user_id].append(label)
+            node = getattr(node, "parent", None)
+
+    for assignment in assignments:
+        user_id = int(assignment.user_id)
+        assigned_user_ids.add(user_id)
+        assignment_title = _clean_value(getattr(assignment, "title", ""))
+        if assignment_title and assignment_title not in contexts[user_id]:
+            contexts[user_id].append(assignment_title)
+        add_node_chain(user_id, getattr(assignment, "node", None))
+
+    # Older records may keep only users.org_node_id without an assignment row.
+    # Include that node as a fallback so the report still follows the current
+    # hierarchy instead of an orphaned EmployeeFile foreign key.
+    fallback_node_ids = {
+        int(user.org_node_id)
+        for user in users
+        if getattr(user, "id", None)
+        and int(user.id) not in assigned_user_ids
+        and getattr(user, "org_node_id", None)
+    }
+    if fallback_node_ids:
+        fallback_nodes = (
+            OrgNode.query
+            .filter(OrgNode.id.in_(fallback_node_ids))
+            .all()
+        )
+        nodes_by_id = {int(node.id): node for node in fallback_nodes}
+        for user in users:
+            if not getattr(user, "id", None) or int(user.id) in assigned_user_ids:
+                continue
+            node = nodes_by_id.get(int(getattr(user, "org_node_id", 0) or 0))
+            if node is not None:
+                add_node_chain(int(user.id), node)
+
+    return {user_id: tuple(labels) for user_id, labels in contexts.items()}
+
+
+def _employee_group(
+    employee_file: EmployeeFile | None,
+    lookup_labels: dict[int, str],
+    *,
+    user: User | None = None,
+    org_context: tuple[str, ...] = (),
+) -> str:
+    # The closest node and its first two parents describe the employee's
+    # actual placement.  Farther ancestors can be broad support branches
+    # (for example, an information-systems label above the finance directorate)
+    # and must not override that placement.
+    effective_org_context = org_context[:3]
+    current_user = user or getattr(employee_file, "user", None)
+    if not employee_file and not current_user:
         return "other"
     department = getattr(getattr(employee_file, "department", None), "name_ar", "")
     directorate = getattr(getattr(employee_file, "directorate", None), "name_ar", "")
     section = getattr(getattr(employee_file, "section", None), "name_ar", "")
     division = getattr(getattr(employee_file, "division", None), "name_ar", "")
-    job_title = lookup_labels.get(employee_file.job_title_lookup_id, "")
-    if not job_title:
-        job_title = getattr(getattr(employee_file, "user", None), "job_title", "")
-    admin_title = lookup_labels.get(employee_file.admin_title_lookup_id, "")
+    job_title_lookup_id = getattr(employee_file, "job_title_lookup_id", None)
+    job_title = lookup_labels.get(job_title_lookup_id, "")
+    user_job_title = getattr(current_user, "job_title", "")
+    if user_job_title and user_job_title not in job_title:
+        job_title = " ".join(part for part in (job_title, user_job_title) if part)
+    admin_title_lookup_id = getattr(employee_file, "admin_title_lookup_id", None)
+    admin_title = lookup_labels.get(admin_title_lookup_id, "")
     return _classify_group_from_context(
         department=department,
         directorate=directorate,
@@ -212,6 +323,7 @@ def _employee_group(employee_file: EmployeeFile | None, lookup_labels: dict[int,
         division=division,
         job_title=job_title,
         admin_title=admin_title,
+        org_context=effective_org_context,
     )
 
 
@@ -312,7 +424,10 @@ def _effective_schedule_days(users: list[User], days: list[date]) -> dict[str, d
             schedule_day = _schedule_day_for_date(effective_plan, work_day)
             if not schedule_day:
                 continue
-            if _clean_value(getattr(schedule_day, "day_type", "")).upper() == "OFF":
+            # The report is the in-office weekly roster.  Remote and off days
+            # must not be treated as attendance, otherwise every user appears
+            # on every weekday and the leadership rows stop varying by day.
+            if _clean_value(getattr(schedule_day, "day_type", "")).upper() != "WORK":
                 continue
             result[day_key][user_id] = schedule_day
     return result
@@ -334,6 +449,7 @@ def build_actual_attendance_report(
     all_users = User.query.all()
     employee_file_map = {int(item.user_id): item for item in all_employee_files}
     lookup_labels = _lookup_labels(all_employee_files)
+    dynamic_org_contexts = _dynamic_org_contexts(all_users)
     schedule_days = _effective_schedule_days(all_users, days)
     leadership_user_ids = _leadership_user_ids(
         all_users,
@@ -366,7 +482,12 @@ def build_actual_attendance_report(
                     getattr(schedule_days[day_key][user_id], "day_type", "")
                 ).upper() or "WORK",
             }
-            group_key = _employee_group(employee_file, lookup_labels)
+            group_key = _employee_group(
+                employee_file,
+                lookup_labels,
+                user=user,
+                org_context=dynamic_org_contexts.get(user_id, ()),
+            )
             member_maps.setdefault(group_key, {key: {} for key in day_keys})
             member_maps[group_key][day_key][user_id] = entry
 

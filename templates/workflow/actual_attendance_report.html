@@ -141,7 +141,7 @@
   <section id="actual-attendance-print" class="actual-attendance-print">
     <div class="actual-attendance-print-heading">
       <h1>تقرير الدوام الفعلي الأسبوعي</h1>
-      <p>الموظفون المدرجون في جدول الدوام الساري، موزعون حسب الجهة.</p>
+      <p>الموظفون المدرجون في جدول الدوام الساري للحضور الحضوري، موزعون حسب الجهة.</p>
       <div>الفترة: {{ period_start.strftime('%d/%m/%Y') }} — {{ period_end.strftime('%d/%m/%Y') }}</div>
     </div>
 
@@ -155,7 +155,7 @@
           <div class="col-md-3 col-lg-2"><button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض الأسبوع</button></div>
           <div class="col-md-3 col-lg-2"><a class="btn btn-outline-secondary w-100" href="{{ url_for('workflow.workflow_actual_attendance_report') }}">الأسبوع الحالي</a></div>
           <div class="col-12 col-lg text-muted small align-self-center">
-            المصدر: جدول الدوام الساري. أيام العطلة لا تظهر ضمن قوائم الدوام.
+            المصدر: جدول الدوام الساري. يظهر الحضور الحضوري فقط؛ أيام العمل عن بُعد والعطلة لا تظهر.
           </div>
         </form>
       </div>
