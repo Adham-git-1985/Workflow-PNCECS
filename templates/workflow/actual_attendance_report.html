@@ -57,7 +57,7 @@
   .actual-attendance-table .number-cell { width: 25%; }
 
   @media print {
-    @page { size: A4 portrait; margin: 4mm; }
+    @page { size: A4 landscape; margin: 4mm; }
     *, *::before, *::after {
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
@@ -92,6 +92,7 @@
     .actual-attendance-print .table-responsive { overflow: visible !important; }
     .actual-attendance-print table {
       width: 100% !important;
+      height: calc(100vh - 8mm) !important;
       min-width: 0 !important;
       table-layout: fixed;
       font-size: 6.8pt !important;
