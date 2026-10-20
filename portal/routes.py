@@ -14073,6 +14073,7 @@ _DIWAN_OFFICIAL_SYMBOLS = (
     ('W', 'إجازة بدون راتب'),
     ('M', 'إجازة أمومة'),
     ('A', 'حادث عمل'),
+    ('-', 'غياب بدون إذن'),
     ('T', 'إجازة طارئة'),
     ('R', 'مهمة عمل'),
     ('P', 'إيقاف عن العمل'),
@@ -14170,7 +14171,7 @@ def _diwan_official_leave_symbol(leave_type) -> str:
         ('B', ('مرافقة زوج', 'مرافقه زوج', 'ambassador spouse')),
         ('K', ('كورونا', 'covid', 'corona')),
         ('Y', ('ابوة', 'ابوه', 'paternity')),
-        ('L', ('سنوي', 'annual', 'personal')),
+        ('L', ('سنوي', 'سنوية', 'خارجية', 'annual', 'personal', 'overseas', 'external')),
     )
     for symbol, keywords in mappings:
         if any(keyword in compact or keyword in raw for keyword in keywords):
@@ -14260,7 +14261,7 @@ def _diwan_official_month_rows(user_ids, start: date, end: date, summaries, depa
 
     special_by_key: dict[tuple[int, str], str] = {}
     special_symbols = {
-        'PRESENT': '+', 'ABSENT': '', 'MISSION': 'R', 'HOLIDAY': 'v',
+        'PRESENT': '+', 'ABSENT': '-', 'MISSION': 'R', 'HOLIDAY': 'v',
         'OFF': 'F', 'LEAVE': 'L', 'SUSPENDED': 'P',
     }
     special_rows = (
@@ -14354,7 +14355,7 @@ def _diwan_official_month_rows(user_ids, start: date, end: date, summaries, depa
                 symbol = '*'
                 missing_attendance = True
             elif (summary.status or '').upper() == 'ABSENT':
-                symbol = ''
+                symbol = '-'
                 missing_attendance = True
             elif (summary.status or '').upper() == 'INCOMPLETE' or not summary.first_in or not summary.last_out:
                 # The Diwan key reserves x for lateness.  A partial clocking
@@ -14511,6 +14512,7 @@ def _export_diwan_official_attendance_xlsx(
     symbol_fills = {
         '+': PatternFill('solid', fgColor='E2F0D9'),
         '*': PatternFill('solid', fgColor='D9EAD3'),
+        '-': PatternFill('solid', fgColor='F4CCCC'),
         'x': PatternFill('solid', fgColor='FFF2CC'),
         'E': PatternFill('solid', fgColor='FCE4D6'),
         'F': PatternFill('solid', fgColor='E7E6E6'),

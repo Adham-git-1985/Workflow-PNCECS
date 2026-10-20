@@ -1,6 +1,7 @@
 import unittest
 from datetime import date, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from flask import Flask
 
@@ -14,7 +15,11 @@ from models import (
     WorkPolicy,
     WorkSchedule,
 )
-from portal.routes import _diwan_official_month_rows, _export_diwan_official_attendance_xlsx
+from portal.routes import (
+    _diwan_official_leave_symbol,
+    _diwan_official_month_rows,
+    _export_diwan_official_attendance_xlsx,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -34,7 +39,7 @@ class DiwanOfficialAttendanceReportTests(unittest.TestCase):
         self.assertIn("sheet.title = 'data'", self.routes)
         self.assertIn("key_sheet = workbook.create_sheet('List')", self.routes)
         self.assertIn("download_name=f'official_diwan_attendance_{year}_{month:02d}.xlsx'", self.routes)
-        for symbol in ('L', 'W', 'M', 'S', 'F', 'v', '+', 'x', 'E', '*'):
+        for symbol in ('L', 'W', 'M', 'S', 'F', 'v', '+', 'x', 'E', '*', '-'):
             with self.subTest(symbol=symbol):
                 self.assertIn(f"('{symbol}',", self.routes)
         self.assertIn("cell['symbol'] = '*'", self.routes)
@@ -74,6 +79,15 @@ class DiwanEmergencyDutySymbolTests(unittest.TestCase):
         db.session.remove()
         db.drop_all()
         db.create_all()
+
+    def test_external_leave_uses_the_annual_leave_symbol(self):
+        leave_type = SimpleNamespace(
+            code='O',
+            name_ar='إجازة خارجية',
+            name_en='overseas leave',
+        )
+
+        self.assertEqual(_diwan_official_leave_symbol(leave_type), 'L')
 
     def test_flexible_two_day_hybrid_policy_marks_remaining_workdays_as_emergency_duty(self):
         user = User(
@@ -232,9 +246,9 @@ class DiwanEmergencyDutySymbolTests(unittest.TestCase):
             {},
         )
 
-        self.assertEqual(rows[0]['symbols'], ['*', 'x', 'E', '', '*', 'F', 'F', 'v'])
+        self.assertEqual(rows[0]['symbols'], ['*', 'x', 'E', '-', '*', 'F', 'F', 'v'])
 
-    def test_only_actual_lateness_uses_x_and_absence_is_blank(self):
+    def test_only_actual_lateness_uses_x_and_absence_uses_dash(self):
         user = User(
             email='diwan-symbol-meanings@example.test',
             name='Diwan Symbol Meanings',
@@ -274,7 +288,7 @@ class DiwanEmergencyDutySymbolTests(unittest.TestCase):
             {},
         )
 
-        self.assertEqual(rows[0]['symbols'], ['+', 'E', ''])
+        self.assertEqual(rows[0]['symbols'], ['+', 'E', '-'])
         from openpyxl import load_workbook
 
         workbook = load_workbook(_export_diwan_official_attendance_xlsx(
@@ -285,12 +299,12 @@ class DiwanEmergencyDutySymbolTests(unittest.TestCase):
         sheet = workbook['data']
         self.assertEqual(sheet.cell(row=3, column=6).value, '+')
         self.assertEqual(sheet.cell(row=3, column=7).value, 'E')
-        self.assertIn(sheet.cell(row=3, column=8).value, (None, ''))
+        self.assertEqual(sheet.cell(row=3, column=8).value, '-')
         key_symbols = {
             workbook['List'].cell(row=row_number, column=1).value
             for row_number in range(2, workbook['List'].max_row + 1)
         }
-        self.assertNotIn('-', key_symbols)
+        self.assertIn('-', key_symbols)
 
     def test_emergency_duty_symbol_is_written_to_the_exported_workbook(self):
         from openpyxl import load_workbook
