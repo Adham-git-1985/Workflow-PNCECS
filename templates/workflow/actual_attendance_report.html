@@ -205,13 +205,11 @@
               <th>الإجمالي الكلي</th>
               {% for count in total_counts %}<td>{{ count }}</td>{% endfor %}
             </tr>
-            {% for row in grand_total_rows %}
+            {% for row in leadership_rows %}
             <tr class="grand-name-row">
               <th class="number-cell">{{ row.number }}</th>
               {% for name in row.names %}<td>{{ name }}</td>{% endfor %}
             </tr>
-            {% else %}
-            <tr class="grand-name-row"><th class="number-cell">1</th><td colspan="5" class="text-center text-muted">لا توجد أسماء حضور في الفترة المحددة.</td></tr>
             {% endfor %}
           </tbody>
         </table>

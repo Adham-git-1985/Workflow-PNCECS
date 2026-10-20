@@ -11,7 +11,7 @@ import re
 import unicodedata
 from datetime import date, timedelta
 
-from models import AttendanceDailySummary, EmployeeFile, HRLookupItem
+from models import AttendanceDailySummary, EmployeeFile, HRLookupItem, User
 
 
 WORKDAY_LABELS = {
@@ -37,6 +37,18 @@ REPORT_GROUPS = (
 )
 
 OTHER_GROUP = ("other", "جهات أخرى / غير مصنفة")
+
+LEADERSHIP_ROLE_CODES = frozenset(
+    {
+        "DIRECTORATE_HEAD",
+        "GENERAL_DIRECTOR",
+        "GENERAL_ADMINISTRATION",
+        "GENERAL_DIRECTORATE",
+        "ASSISTANT_SECRETARY_GENERAL",
+        "ASSISTANT_TO_SECRETARY_GENERAL",
+        "SECRETARY_GENERAL_ASSISTANT",
+    }
+)
 
 _ARABIC_DIGIT_TRANSLATION = str.maketrans(
     "٠١٢٣٤٥٦٧٨٩", "0123456789"
@@ -193,6 +205,39 @@ def _employee_group(employee_file: EmployeeFile | None, lookup_labels: dict[int,
     )
 
 
+def _leadership_user_ids(
+    users: list[User],
+    employee_files: list[EmployeeFile],
+    lookup_labels: dict[int, str],
+) -> set[int]:
+    """Return general-director and assistant-secretary users for the footer rows."""
+
+    employee_file_map = {int(item.user_id): item for item in employee_files}
+    leadership_ids = set()
+    for user in users:
+        user_id = getattr(user, "id", None)
+        if not user_id:
+            continue
+        role = _clean_value(getattr(user, "role", "")).upper()
+        employee_file = employee_file_map.get(int(user_id))
+        title_values = [_clean_value(getattr(user, "job_title", ""))]
+        if employee_file:
+            title_values.extend(
+                (
+                    _clean_value(lookup_labels.get(employee_file.job_title_lookup_id, "")),
+                    _clean_value(lookup_labels.get(employee_file.admin_title_lookup_id, "")),
+                )
+            )
+        combined_title = _normalise_text(" ".join(title_values))
+        if (
+            role in LEADERSHIP_ROLE_CODES
+            or "مدير عام" in combined_title
+            or "مساعد الامين العام" in combined_title
+        ):
+            leadership_ids.add(int(user_id))
+    return leadership_ids
+
+
 def _has_actual_attendance(row: AttendanceDailySummary) -> bool:
     status = _clean_value(row.status).upper()
     if status in {"ABSENT", "WEEKLY_OFF", "OFF", "HOLIDAY"}:
@@ -235,6 +280,14 @@ def build_actual_attendance_report(
         )
     employee_file_map = {int(item.user_id): item for item in employee_files}
     lookup_labels = _lookup_labels(employee_files)
+    all_employee_files = EmployeeFile.query.all()
+    all_users = User.query.all()
+    all_lookup_labels = _lookup_labels(all_employee_files)
+    leadership_user_ids = _leadership_user_ids(
+        all_users,
+        all_employee_files,
+        all_lookup_labels,
+    )
 
     all_group_keys = [key for key, _label in REPORT_GROUPS]
     member_maps = {
@@ -321,18 +374,29 @@ def build_actual_attendance_report(
             )
         ordered_day_people[day_key] = ordered_entries
 
-    max_total_rows = max((len(items) for items in ordered_day_people.values()), default=0)
-    grand_total_rows = [
+    leadership_day_people = {
+        day_key: [
+            entry
+            for entry in ordered_day_people[day_key]
+            if entry["user_id"] in leadership_user_ids
+        ]
+        for day_key in day_keys
+    }
+    max_leadership_rows = max(
+        (len(items) for items in leadership_day_people.values()),
+        default=0,
+    )
+    leadership_rows = [
         {
             "number": index + 1,
             "names": [
-                ordered_day_people[day_key][index]["name"]
-                if index < len(ordered_day_people[day_key])
+                leadership_day_people[day_key][index]["name"]
+                if index < len(leadership_day_people[day_key])
                 else ""
                 for day_key in day_keys
             ],
         }
-        for index in range(max_total_rows)
+        for index in range(max_leadership_rows)
     ]
     total_counts = [len(ordered_day_people[day_key]) for day_key in day_keys]
 
@@ -349,7 +413,7 @@ def build_actual_attendance_report(
         ],
         "groups": groups,
         "total_counts": total_counts,
-        "grand_total_rows": grand_total_rows,
+        "leadership_rows": leadership_rows,
         "total_attendance": sum(total_counts),
         "has_data": bool(rows),
     }
