@@ -66,6 +66,17 @@ LEADERSHIP_ROLE_CODES = frozenset(
 
 PUBLISHED_SCHEDULE_STATUSES = ("ADMIN_APPROVED", "FINAL_APPROVED")
 
+FINANCE_CONTEXT_TOKENS = (
+    "الشؤون الماليه",
+    "الشؤون الاداريه",
+    "الاداره العامه للشؤون الاداريه والماليه",
+    "موارد وشؤون ماليه",
+    "الموارد والشؤون الماليه",
+    "موارد بشريه",
+    "الموارد البشريه",
+    "تخطيط",
+)
+
 _ARABIC_DIGIT_TRANSLATION = str.maketrans(
     "٠١٢٣٤٥٦٧٨٩", "0123456789"
 )
@@ -135,6 +146,7 @@ def _classify_group_from_context(
     job_title: str = "",
     admin_title: str = "",
     org_context: tuple[str, ...] = (),
+    finance_context: tuple[str, ...] | None = None,
 ) -> str:
     """Map the employee-file placement/title to the report's visual sections."""
 
@@ -142,6 +154,19 @@ def _classify_group_from_context(
         " ".join(
             part
             for part in (department, directorate, section, division, *org_context)
+            if _clean_value(part)
+        )
+    )
+    finance_structural = _normalise_text(
+        " ".join(
+            part
+            for part in (
+                department,
+                directorate,
+                section,
+                division,
+                *(finance_context if finance_context is not None else org_context),
+            )
             if _clean_value(part)
         )
     )
@@ -160,19 +185,7 @@ def _classify_group_from_context(
         return "messengers"
     if "مستشار" in combined and "48" in combined:
         return "advisor_48"
-    if any(
-        token in combined
-        for token in (
-            "الشؤون الماليه",
-            "الشؤون الاداريه",
-            "الاداره العامه للشؤون الاداريه والماليه",
-            "موارد وشؤون ماليه",
-            "الموارد والشؤون الماليه",
-            "موارد بشريه",
-            "الموارد البشريه",
-            "تخطيط",
-        )
-    ):
+    if any(token in finance_structural for token in FINANCE_CONTEXT_TOKENS):
         return "finance"
     if any(
         token in combined
@@ -186,7 +199,10 @@ def _classify_group_from_context(
         return "social"
     if any(token in combined for token in ("قانون", "استشار")):
         return "legal"
-    if any(token in combined for token in ("مشاريع", "مشروع", "برامج")):
+    # Structural placement wins over a broad job title.  Khaloud's title
+    # mentions projects, but her current primary directorate is organizations;
+    # Adham's project branch, on the other hand, is present in the hierarchy.
+    if any(token in structural for token in ("مشاريع", "مشروع", "برامج")):
         return "projects"
     # A specialized directorate is a stronger placement signal than a job
     # title such as "information systems" inside that directorate.
@@ -264,6 +280,10 @@ def _dynamic_org_contexts(users: list[User]) -> dict[int, tuple[str, ...]]:
 
     for assignment in assignments:
         user_id = int(assignment.user_id)
+        # The primary assignment is the current placement.  A user may also
+        # retain historical/secondary assignments that must not override it.
+        if user_id in assigned_user_ids:
+            continue
         assigned_user_ids.add(user_id)
         assignment_title = _clean_value(getattr(assignment, "title", ""))
         if assignment_title and assignment_title not in contexts[user_id]:
@@ -385,6 +405,11 @@ def _transport_driver_user_ids(
     return driver_user_ids
 
 
+def _is_finance_context(value: str) -> bool:
+    normalized = _normalise_text(value)
+    return any(token in normalized for token in FINANCE_CONTEXT_TOKENS)
+
+
 def _employee_group(
     employee_file: EmployeeFile | None,
     lookup_labels: dict[int, str],
@@ -392,12 +417,12 @@ def _employee_group(
     user: User | None = None,
     org_context: tuple[str, ...] = (),
     force_driver: bool = False,
+    finance_context: tuple[str, ...] | None = None,
 ) -> str:
-    # The closest node and its first two parents describe the employee's
-    # actual placement.  Farther ancestors can be broad support branches
-    # (for example, an information-systems label above the finance directorate)
-    # and must not override that placement.
-    effective_org_context = org_context[:3]
+    # The context is the current primary node followed by its ancestors.  A
+    # specific current node can therefore take precedence over a broad parent
+    # branch (for example, organizations over the assistant's projects branch).
+    effective_org_context = org_context
     current_user = user or getattr(employee_file, "user", None)
     if not employee_file and not current_user:
         return "other"
@@ -422,6 +447,10 @@ def _employee_group(
         job_title=job_title,
         admin_title=admin_title,
         org_context=effective_org_context,
+        finance_context=(
+            (department, directorate, section, division)
+            + tuple(finance_context or ())
+        ),
     )
 
 
@@ -576,6 +605,17 @@ def build_actual_attendance_report(
         for user_id in schedule_days[day_key]:
             employee_file = employee_file_map.get(user_id)
             user = user_by_id.get(user_id)
+            dynamic_context = dynamic_org_contexts.get(user_id, ())
+            legacy_context = user_legacy_contexts.get(user_id, ())
+            legacy_finance_context = tuple(
+                label for label in legacy_context if _is_finance_context(label)
+            )
+            if dynamic_context:
+                group_context = dynamic_context + legacy_finance_context
+                group_finance_context = dynamic_context[:2] + legacy_finance_context
+            else:
+                group_context = legacy_context
+                group_finance_context = legacy_context
             full_name = _employee_name(employee_file, user)
             entry = {
                 "user_id": user_id,
@@ -589,10 +629,8 @@ def build_actual_attendance_report(
                 employee_file,
                 lookup_labels,
                 user=user,
-                org_context=(
-                    user_legacy_contexts.get(user_id, ())
-                    + dynamic_org_contexts.get(user_id, ())
-                ),
+                org_context=group_context,
+                finance_context=group_finance_context,
                 force_driver=user_id in transport_driver_user_ids,
             )
             member_maps.setdefault(group_key, {key: {} for key in day_keys})

@@ -153,6 +153,28 @@ class ActualAttendanceScheduleReportTests(unittest.TestCase):
         )
         self.assertEqual(
             _classify_group_from_context(
+                org_context=(
+                    "قسم تكنولوجيا الرقمية",
+                    "دائرة الاتصالات وتكنولوجيا المعلومات",
+                    "الادارة العامة للدوائر المتخصصة",
+                    "مساعد الامين العام للمنظمات والبرامج والمشاريع (الادارات التخصصية)",
+                ),
+            ),
+            "projects",
+        )
+        self.assertEqual(
+            _classify_group_from_context(
+                job_title="مساعد الأمين العام للمنظمات والبرامج والمشاريع والإدارات التخصصية",
+                org_context=(
+                    "مدير عام الإدارة العامة للمنظمات",
+                    "الإدارة العامة للمنظمات",
+                    "الأمين العام",
+                ),
+            ),
+            "organizations",
+        )
+        self.assertEqual(
+            _classify_group_from_context(
                 directorate="الإدارة العامة للشؤون الإدارية والمالية",
                 org_context=("مكتب الأمين العام",),
             ),
