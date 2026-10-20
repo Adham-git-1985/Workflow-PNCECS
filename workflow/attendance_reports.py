@@ -14,11 +14,16 @@ import unicodedata
 from datetime import date, timedelta
 
 from models import (
+    Department,
+    Directorate,
+    Division,
     EmployeeFile,
     HRAttendanceSchedulePlan,
     HRLookupItem,
     OrgNode,
     OrgNodeAssignment,
+    Section,
+    TransportDriver,
     User,
 )
 
@@ -158,26 +163,6 @@ def _classify_group_from_context(
     if any(
         token in combined
         for token in (
-            "نوع اجتماعي",
-            "النوع الاجتماعي",
-            "تنوع اجتماعي",
-            "تطوير وادماج",
-        )
-    ):
-        return "social"
-    if any(token in combined for token in ("قانون", "استشار")):
-        return "legal"
-    if any(token in combined for token in ("مشاريع", "مشروع", "برامج")):
-        return "projects"
-    if any(token in combined for token in ("مطبوعات", "معلوماتيه", "معلومات")):
-        return "publications"
-    if any(token in combined for token in ("منظمات", "متخصص", "الكسو", "اليونسكو", "الايسيسكو")):
-        return "organizations"
-    if any(token in combined for token in ("علاقات", "اعلام", "اتصالات")):
-        return "relations"
-    if any(
-        token in combined
-        for token in (
             "الشؤون الماليه",
             "الشؤون الاداريه",
             "الاداره العامه للشؤون الاداريه والماليه",
@@ -189,6 +174,28 @@ def _classify_group_from_context(
         )
     ):
         return "finance"
+    if any(
+        token in combined
+        for token in (
+            "نوع اجتماعي",
+            "النوع الاجتماعي",
+            "تنوع اجتماعي",
+            "تطوير وادماج",
+        )
+    ):
+        return "social"
+    if any(token in combined for token in ("قانون", "استشار")):
+        return "legal"
+    if any(token in combined for token in ("مشاريع", "مشروع", "برامج")):
+        return "projects"
+    # A specialized directorate is a stronger placement signal than a job
+    # title such as "information systems" inside that directorate.
+    if any(token in combined for token in ("منظمات", "متخصص", "الكسو", "اليونسكو", "الايسيسكو")):
+        return "organizations"
+    if any(token in combined for token in ("مطبوعات", "معلوماتيه", "معلومات")):
+        return "publications"
+    if any(token in combined for token in ("علاقات", "اعلام", "اتصالات")):
+        return "relations"
     if any(token in structural for token in ("مكتب الامين العام", "الامانه العامه")):
         return "office"
     if any(token in titles for token in ("امين عام", "سكرتير", "سكرتيره")):
@@ -290,12 +297,101 @@ def _dynamic_org_contexts(users: list[User]) -> dict[int, tuple[str, ...]]:
     return {user_id: tuple(labels) for user_id, labels in contexts.items()}
 
 
+def _user_legacy_contexts(users: list[User]) -> dict[int, tuple[str, ...]]:
+    """Resolve the current fixed-table placement stored directly on users."""
+
+    directorate_ids = {
+        int(user.directorate_id)
+        for user in users
+        if getattr(user, "directorate_id", None)
+    }
+    department_ids = {
+        int(user.department_id)
+        for user in users
+        if getattr(user, "department_id", None)
+    }
+    section_ids = {
+        int(user.section_id)
+        for user in users
+        if getattr(user, "section_id", None)
+    }
+    division_ids = {
+        int(user.division_id)
+        for user in users
+        if getattr(user, "division_id", None)
+    }
+    directorates = {
+        int(item.id): _clean_value(item.name_ar)
+        for item in Directorate.query.filter(Directorate.id.in_(directorate_ids)).all()
+    } if directorate_ids else {}
+    departments = {
+        int(item.id): _clean_value(item.name_ar)
+        for item in Department.query.filter(Department.id.in_(department_ids)).all()
+    } if department_ids else {}
+    sections = {
+        int(item.id): _clean_value(item.name_ar)
+        for item in Section.query.filter(Section.id.in_(section_ids)).all()
+    } if section_ids else {}
+    divisions = {
+        int(item.id): _clean_value(item.name_ar)
+        for item in Division.query.filter(Division.id.in_(division_ids)).all()
+    } if division_ids else {}
+
+    result: dict[int, tuple[str, ...]] = {}
+    for user in users:
+        if not getattr(user, "id", None):
+            continue
+        labels = []
+        for lookup, value in (
+            (departments, getattr(user, "department_id", None)),
+            (directorates, getattr(user, "directorate_id", None)),
+            (sections, getattr(user, "section_id", None)),
+            (divisions, getattr(user, "division_id", None)),
+        ):
+            label = lookup.get(int(value)) if value else ""
+            if label and label not in labels:
+                labels.append(label)
+        result[int(user.id)] = tuple(labels)
+    return result
+
+
+def _transport_driver_user_ids(
+    users: list[User],
+    employee_files: list[EmployeeFile],
+) -> set[int]:
+    """Match active transport drivers even when the driver row lacks user_id."""
+
+    active_drivers = TransportDriver.query.filter(TransportDriver.status == "ACTIVE").all()
+    if not active_drivers:
+        return set()
+    employee_file_map = {int(item.user_id): item for item in employee_files}
+    driver_user_ids = {
+        int(row.user_id)
+        for row in active_drivers
+        if getattr(row, "user_id", None)
+    }
+    for user in users:
+        employee_file = employee_file_map.get(int(user.id)) if getattr(user, "id", None) else None
+        employee_tokens = set(
+            _normalise_text(_employee_name(employee_file, user)).split()
+        )
+        if not employee_tokens:
+            continue
+        for driver in active_drivers:
+            driver_tokens = set(_normalise_text(getattr(driver, "name", "")).split())
+            if driver_tokens and driver_tokens.issubset(employee_tokens):
+                driver_user_ids.add(int(user.id))
+                break
+    return driver_user_ids
+
+
 def _employee_group(
     employee_file: EmployeeFile | None,
     lookup_labels: dict[int, str],
     *,
     user: User | None = None,
     org_context: tuple[str, ...] = (),
+    force_driver: bool = False,
 ) -> str:
     # The closest node and its first two parents describe the employee's
     # actual placement.  Farther ancestors can be broad support branches
@@ -305,6 +401,8 @@ def _employee_group(
     current_user = user or getattr(employee_file, "user", None)
     if not employee_file and not current_user:
         return "other"
+    if force_driver:
+        return "drivers"
     department = getattr(getattr(employee_file, "department", None), "name_ar", "")
     directorate = getattr(getattr(employee_file, "directorate", None), "name_ar", "")
     section = getattr(getattr(employee_file, "section", None), "name_ar", "")
@@ -449,7 +547,12 @@ def build_actual_attendance_report(
     all_users = User.query.all()
     employee_file_map = {int(item.user_id): item for item in all_employee_files}
     lookup_labels = _lookup_labels(all_employee_files)
+    user_legacy_contexts = _user_legacy_contexts(all_users)
     dynamic_org_contexts = _dynamic_org_contexts(all_users)
+    transport_driver_user_ids = _transport_driver_user_ids(
+        all_users,
+        all_employee_files,
+    )
     schedule_days = _effective_schedule_days(all_users, days)
     leadership_user_ids = _leadership_user_ids(
         all_users,
@@ -486,7 +589,11 @@ def build_actual_attendance_report(
                 employee_file,
                 lookup_labels,
                 user=user,
-                org_context=dynamic_org_contexts.get(user_id, ()),
+                org_context=(
+                    user_legacy_contexts.get(user_id, ())
+                    + dynamic_org_contexts.get(user_id, ())
+                ),
+                force_driver=user_id in transport_driver_user_ids,
             )
             member_maps.setdefault(group_key, {key: {} for key in day_keys})
             member_maps[group_key][day_key][user_id] = entry

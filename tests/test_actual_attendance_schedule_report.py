@@ -5,9 +5,12 @@ from flask import Flask
 
 from extensions import db
 from models import (
+    Directorate,
     EmployeeFile,
     HRAttendanceScheduleDay,
     HRAttendanceSchedulePlan,
+    Organization,
+    TransportDriver,
     User,
 )
 from workflow.attendance_reports import (
@@ -140,6 +143,51 @@ class ActualAttendanceScheduleReportTests(unittest.TestCase):
             ),
             "social",
         )
+        self.assertEqual(
+            _classify_group_from_context(
+                directorate="الإدارة العامة المتخصصة",
+                job_title="مبرمج",
+                admin_title="ق. أ. مدير دائرة المعلومات",
+            ),
+            "organizations",
+        )
+        self.assertEqual(
+            _classify_group_from_context(
+                directorate="الإدارة العامة للشؤون الإدارية والمالية",
+                org_context=("مكتب الأمين العام",),
+            ),
+            "finance",
+        )
+
+    def test_current_user_directorate_assignment_is_used_when_employee_file_is_stale(self):
+        organization = Organization(name_ar="Test Organization")
+        db.session.add(organization)
+        db.session.flush()
+        directorate = Directorate(
+            organization_id=organization.id,
+            name_ar="الإدارة العامة للشؤون الإدارية والمالية",
+        )
+        db.session.add(directorate)
+        user = self._add_user("شروق زياد شله")
+        user.directorate_id = directorate.id
+        self._add_plan(user, date(2026, 10, 18))
+        db.session.commit()
+
+        report = build_actual_attendance_report("2026-10-18")
+
+        finance = next(group for group in report["groups"] if group["key"] == "finance")
+        self.assertIn("شروق شله", finance["days"][0]["names"])
+
+    def test_active_transport_driver_name_matches_an_unlinked_user(self):
+        user = self._add_user("إياد مراد جميل دار صافي")
+        self._add_plan(user, date(2026, 10, 18))
+        db.session.add(TransportDriver(name="اياد صافي", status="ACTIVE"))
+        db.session.commit()
+
+        report = build_actual_attendance_report("2026-10-18")
+
+        drivers = next(group for group in report["groups"] if group["key"] == "drivers")
+        self.assertIn("إياد صافي", drivers["days"][0]["names"])
 
 
 if __name__ == "__main__":
