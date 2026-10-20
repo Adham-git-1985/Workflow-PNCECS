@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from urllib.parse import parse_qs, unquote, urlparse
 
-from sqlalchemy import func, or_
+from sqlalchemy import exists, func, insert, or_
 
 from extensions import db
 from models import (
@@ -154,48 +154,80 @@ def _matches_scope(
 
 
 def populate_cycle_entries(cycle: InvFixedAssetCycle) -> int:
+    """Create the expected entry rows for a cycle without hydrating the catalog.
+
+    The old implementation loaded every fixed asset and every joined lookup
+    relationship into Python, then loaded the complete previous-cycle entry
+    objects again.  That made opening a committee increasingly expensive as
+    the asset register grew.  This path only selects the scalar fields needed
+    for scope matching and baseline calculation, and lets SQLite skip entries
+    that already exist through correlated ``EXISTS`` predicates.
+    """
     if cycle.id is None:
         db.session.flush()
 
-    existing_asset_ids = {
-        asset_id
-        for (asset_id,) in (
-            db.session.query(InvFixedAssetEntry.asset_id)
-            .filter(InvFixedAssetEntry.cycle_id == cycle.id)
+    previous_entries = {}
+    previous_cycle_id = cycle.previous_cycle_id
+    if previous_cycle_id:
+        previous_rows = (
+            db.session.query(
+                InvFixedAssetEntry.asset_id,
+                InvFixedAssetEntry.expected_warehouse_id,
+                InvFixedAssetEntry.expected_room_id,
+                InvFixedAssetEntry.expected_custodian_user_id,
+                InvFixedAssetEntry.expected_condition,
+                InvFixedAssetEntry.expected_lifecycle_status,
+                InvFixedAssetEntry.observed_warehouse_id,
+                InvFixedAssetEntry.observed_room_id,
+                InvFixedAssetEntry.observed_custodian_user_id,
+                InvFixedAssetEntry.observed_condition,
+                InvFixedAssetEntry.observed_lifecycle_status,
+                InvFixedAssetEntry.result_status,
+                InvFixedAssetEntry.scanned_at,
+            )
+            .filter(InvFixedAssetEntry.cycle_id == previous_cycle_id)
             .all()
         )
-    }
+        previous_entries = {row.asset_id: row for row in previous_rows}
 
-    previous_entries = {}
-    if cycle.previous_cycle_id:
-        previous_entries = {
-            entry.asset_id: entry
-            for entry in (
-                InvFixedAssetEntry.query
-                .filter(InvFixedAssetEntry.cycle_id == cycle.previous_cycle_id)
-                .all()
-            )
-        }
-
-    assets = (
-        InvFixedAsset.query
-        .filter(InvFixedAsset.is_active.is_(True))
-        .filter(InvFixedAsset.lifecycle_status != "DISPOSED")
-        .order_by(InvFixedAsset.id.asc())
-        .all()
+    existing_entry = exists().where(
+        InvFixedAssetEntry.cycle_id == cycle.id,
+        InvFixedAssetEntry.asset_id == InvFixedAsset.id,
     )
+    previous_entry_exists = None
+    if previous_cycle_id:
+        previous_entry_exists = exists().where(
+            InvFixedAssetEntry.cycle_id == previous_cycle_id,
+            InvFixedAssetEntry.asset_id == InvFixedAsset.id,
+        )
 
-    candidates = {asset.id: asset for asset in assets}
-    if cycle.previous_cycle_id:
-        for asset_id, previous_entry in previous_entries.items():
-            asset = previous_entry.asset
-            if asset and asset.lifecycle_status != "DISPOSED":
-                candidates.setdefault(asset_id, asset)
+    assets_query = (
+        db.session.query(
+            InvFixedAsset.id.label("id"),
+            InvFixedAsset.warehouse_id,
+            InvFixedAsset.room_id,
+            InvFixedAsset.custodian_user_id,
+            InvFixedAsset.asset_condition,
+            InvFixedAsset.lifecycle_status,
+        )
+        .filter(InvFixedAsset.lifecycle_status != "DISPOSED")
+        .filter(~existing_entry)
+    )
+    if previous_entry_exists is None:
+        assets_query = assets_query.filter(InvFixedAsset.is_active.is_(True))
+    else:
+        # Keep assets from the previous cycle even if they were archived after
+        # that cycle; this preserves the recovery/missing-asset workflow.
+        assets_query = assets_query.filter(
+            or_(InvFixedAsset.is_active.is_(True), previous_entry_exists)
+        )
+
+    assets = assets_query.order_by(InvFixedAsset.id.asc()).all()
 
     added = 0
-    for asset in candidates.values():
-        if asset.id in existing_asset_ids:
-            continue
+    entry_rows = []
+    now = datetime.utcnow()
+    for asset in assets:
         previous_entry = previous_entries.get(asset.id)
         if not _matches_scope(cycle, asset, previous_entry):
             continue
@@ -209,38 +241,43 @@ def populate_cycle_entries(cycle: InvFixedAssetCycle) -> int:
                 else "NOT_IN_PREVIOUS"
             )
 
-        db.session.add(InvFixedAssetEntry(
-            cycle_id=cycle.id,
-            asset_id=asset.id,
-            was_expected=True,
-            previous_result_status=previous_result,
-            expected_warehouse_id=expected_warehouse_id,
-            expected_room_id=expected_room_id,
-            expected_custodian_user_id=_previous_expected_value(
+        entry_rows.append({
+            "cycle_id": cycle.id,
+            "asset_id": asset.id,
+            "was_expected": True,
+            "previous_result_status": previous_result,
+            "expected_warehouse_id": expected_warehouse_id,
+            "expected_room_id": expected_room_id,
+            "expected_custodian_user_id": _previous_expected_value(
                 previous_entry,
                 "observed_custodian_user_id",
                 "expected_custodian_user_id",
                 asset.custodian_user_id,
             ),
-            expected_condition=_previous_expected_value(
+            "expected_condition": _previous_expected_value(
                 previous_entry,
                 "observed_condition",
                 "expected_condition",
                 asset.asset_condition,
             ),
-            expected_lifecycle_status=_previous_expected_value(
+            "expected_lifecycle_status": _previous_expected_value(
                 previous_entry,
                 "observed_lifecycle_status",
                 "expected_lifecycle_status",
                 asset.lifecycle_status,
             ),
-            result_status="PENDING",
-            scan_count=0,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-        ))
+            "result_status": "PENDING",
+            "scan_count": 0,
+            "created_at": now,
+            "updated_at": now,
+        })
         added += 1
 
+    if entry_rows:
+        # These rows are a derived snapshot, not objects the caller needs to
+        # mutate in this transaction.  One executemany keeps a large opening
+        # cycle from constructing thousands of ORM instances and flush events.
+        db.session.execute(insert(InvFixedAssetEntry), entry_rows)
     return added
 
 

@@ -29,9 +29,9 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 from PIL import Image
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import noload
+from sqlalchemy.orm import joinedload, load_only, noload
 
 from extensions import db
 from models import (
@@ -269,14 +269,161 @@ def _audit(action: str, note: str, target_type: str, target_id: int | None):
     ))
 
 
-def _choices() -> dict:
-    return {
-        "items": InvItem.query.filter(InvItem.is_active.is_(True)).order_by(InvItem.name.asc()).all(),
-        "categories": InvItemCategory.query.filter(InvItemCategory.is_active.is_(True)).order_by(InvItemCategory.name.asc()).all(),
-        "warehouses": InvWarehouse.query.filter(InvWarehouse.is_active.is_(True)).order_by(InvWarehouse.name.asc()).all(),
-        "rooms": InvRoom.query.filter(InvRoom.is_active.is_(True)).order_by(InvRoom.name.asc()).all(),
-        "users": User.query.order_by(func.coalesce(User.name, User.username, User.email).asc(), User.id.asc()).all(),
+def _user_choices() -> list[User]:
+    """Load only the columns needed by fixed-asset selectors.
+
+    ``User.permissions`` and ``User.employee_file`` are select-in relationships.
+    Loading every user for a committee/custodian selector used to hydrate both
+    collections for the whole organization, even though the form only renders
+    the user's display name and username.
+    """
+    return (
+        User.query
+        .options(
+            load_only(User.id, User.name, User.username, User.email),
+            noload(User.permissions),
+            noload(User.employee_file),
+        )
+        .order_by(func.coalesce(User.name, User.username, User.email).asc(), User.id.asc())
+        .all()
+    )
+
+
+def _choices(*, include_items: bool = False, include_categories: bool = True, include_users: bool = True) -> dict:
+    """Return only the lookup lists required by the current fixed-asset page.
+
+    Item catalogs can be very large.  Callers that only need warehouse/room or
+    committee selectors must not pay the cost of loading the catalog (or the
+    user's eager relationships) just to render a form.
+    """
+    choices = {
+        "items": [],
+        "categories": [],
+        "warehouses": InvWarehouse.query
+        .filter(InvWarehouse.is_active.is_(True))
+        .order_by(InvWarehouse.name.asc())
+        .all(),
+        "rooms": InvRoom.query
+        .filter(InvRoom.is_active.is_(True))
+        .order_by(InvRoom.name.asc())
+        .all(),
+        "users": _user_choices() if include_users else [],
     }
+    if include_items:
+        choices["items"] = (
+            InvItem.query
+            .options(noload(InvItem.attributes))
+            .filter(InvItem.is_active.is_(True))
+            .order_by(InvItem.name.asc())
+            .all()
+        )
+    if include_categories:
+        choices["categories"] = (
+            InvItemCategory.query
+            .filter(InvItemCategory.is_active.is_(True))
+            .order_by(InvItemCategory.name.asc())
+            .all()
+        )
+    return choices
+
+
+def _selected_item(item_id: int | None) -> InvItem | None:
+    """Load one selected item without hydrating its attribute collection."""
+    if not item_id:
+        return None
+    return (
+        InvItem.query
+        .options(noload(InvItem.attributes))
+        .filter(InvItem.id == item_id)
+        .first()
+    )
+
+
+def _cycle_entry_load_options() -> list:
+    """Keep the committee table query focused on fields it actually renders."""
+    asset_loader = (
+        joinedload(InvFixedAssetEntry.asset)
+        .load_only(
+            InvFixedAsset.id,
+            InvFixedAsset.asset_tag,
+            InvFixedAsset.name,
+            InvFixedAsset.serial_number,
+        )
+        .options(
+            noload(InvFixedAsset.item),
+            noload(InvFixedAsset.category),
+            noload(InvFixedAsset.warehouse),
+            noload(InvFixedAsset.room),
+            noload(InvFixedAsset.custodian),
+            noload(InvFixedAsset.created_by),
+            noload(InvFixedAsset.updated_by),
+        )
+    )
+    user_fields = (User.id, User.name, User.username, User.email)
+    user_options = (noload(User.permissions), noload(User.employee_file))
+    return [
+        asset_loader,
+        noload(InvFixedAssetEntry.scans),
+        joinedload(InvFixedAssetEntry.expected_warehouse).load_only(
+            InvWarehouse.id,
+            InvWarehouse.name,
+            InvWarehouse.code,
+        ),
+        joinedload(InvFixedAssetEntry.expected_room)
+        .load_only(InvRoom.id, InvRoom.name, InvRoom.code)
+        .options(noload(InvRoom.unit)),
+        joinedload(InvFixedAssetEntry.expected_custodian)
+        .load_only(*user_fields)
+        .options(*user_options),
+        joinedload(InvFixedAssetEntry.observed_warehouse).load_only(
+            InvWarehouse.id,
+            InvWarehouse.name,
+            InvWarehouse.code,
+        ),
+        joinedload(InvFixedAssetEntry.observed_room)
+        .load_only(InvRoom.id, InvRoom.name, InvRoom.code)
+        .options(noload(InvRoom.unit)),
+        joinedload(InvFixedAssetEntry.observed_custodian)
+        .load_only(*user_fields)
+        .options(*user_options),
+        joinedload(InvFixedAssetEntry.scanned_by)
+        .load_only(*user_fields)
+        .options(*user_options),
+    ]
+
+
+def _cycle_scan_load_options() -> list:
+    """Avoid loading unused asset/organization relationships in scan history."""
+    scan_asset_loader = (
+        joinedload(InvFixedAssetScanLog.asset)
+        .load_only(
+            InvFixedAsset.id,
+            InvFixedAsset.asset_tag,
+            InvFixedAsset.name,
+        )
+        .options(
+            noload(InvFixedAsset.item),
+            noload(InvFixedAsset.category),
+            noload(InvFixedAsset.warehouse),
+            noload(InvFixedAsset.room),
+            noload(InvFixedAsset.custodian),
+            noload(InvFixedAsset.created_by),
+            noload(InvFixedAsset.updated_by),
+        )
+    )
+    scan_user_loader = (
+        joinedload(InvFixedAssetScanLog.scanned_by)
+        .load_only(User.id, User.name, User.username, User.email)
+        .options(noload(User.permissions), noload(User.employee_file))
+    )
+    return [
+        noload(InvFixedAssetScanLog.cycle),
+        scan_asset_loader,
+        scan_user_loader,
+        noload(InvFixedAssetScanLog.observed_warehouse),
+        noload(InvFixedAssetScanLog.observed_room),
+        noload(InvFixedAssetScanLog.observed_custodian),
+    ]
 
 
 def _system_setting(key: str, default: str) -> str:
@@ -639,30 +786,27 @@ def fixed_asset_mobile_device_revoke(device_id: int):
 
 def _next_asset_tag() -> str:
     prefix = re.sub(r"[^A-Za-z0-9_-]", "", _system_setting("INV_FIXED_ASSET_PREFIX", "FA")) or "FA"
-    existing = {
-        row.asset_tag.casefold()
-        for row in InvFixedAsset.query.with_entities(InvFixedAsset.asset_tag).all()
-        if row.asset_tag
-    }
-    sequence = len(existing) + 1
+    # Counting is enough to choose a first candidate and avoids materializing
+    # every historical tag into Python.  The existence check below handles
+    # gaps and preserves the old case-insensitive uniqueness behavior.
+    sequence = int(db.session.query(func.count(InvFixedAsset.id)).scalar() or 0) + 1
     while True:
         candidate = f"{prefix.upper()}-{sequence:06d}"
-        if candidate.casefold() not in existing:
+        if not db.session.query(InvFixedAsset.id).filter(
+            func.lower(InvFixedAsset.asset_tag) == candidate.casefold()
+        ).first():
             return candidate
         sequence += 1
 
 
 def _next_cycle_code() -> str:
     prefix = f"FA-INV-{date.today().year}"
-    existing = {
-        row.code.casefold()
-        for row in InvFixedAssetCycle.query.with_entities(InvFixedAssetCycle.code).all()
-        if row.code
-    }
-    sequence = len(existing) + 1
+    sequence = int(db.session.query(func.count(InvFixedAssetCycle.id)).scalar() or 0) + 1
     while True:
         candidate = f"{prefix}-{sequence:03d}"
-        if candidate.casefold() not in existing:
+        if not db.session.query(InvFixedAssetCycle.id).filter(
+            func.lower(InvFixedAssetCycle.code) == candidate.casefold()
+        ).first():
             return candidate
         sequence += 1
 
@@ -782,6 +926,61 @@ def _filtered_assets(args):
     return query, selected
 
 
+def _item_lookup_label(item: InvItem) -> str:
+    """Build a compact item label without loading the full attribute list."""
+    base = (item.name or "").strip() or (item.code or "").strip() or str(item.id)
+    variant = (item.variant or "").strip()
+    code = (item.code or "").strip()
+    if variant:
+        base = f"{base} — {variant}"
+    if code and code not in base:
+        base = f"{base} ({code})"
+    return base
+
+
+@portal_bp.route("/inventory/fixed-assets/lookups/items")
+@login_required
+@_perm_any(STORE_READ, STORE_MANAGE)
+def fixed_asset_item_lookup():
+    """Return a small, server-filtered item list for the asset form."""
+    search = (request.args.get("q") or "").strip()
+    if len(search) < 2:
+        return jsonify([])
+
+    like = f"%{search}%"
+    prefix = f"{search}%"
+    filters = [
+        InvItem.name.ilike(like),
+        InvItem.code.ilike(like),
+        InvItem.variant.ilike(like),
+    ]
+    numeric_id = _optional_int(search)
+    if numeric_id is not None:
+        filters.append(InvItem.id == numeric_id)
+
+    rows = (
+        InvItem.query
+        .options(noload(InvItem.attributes))
+        .filter(InvItem.is_active.is_(True))
+        .filter(or_(*filters))
+        .order_by(
+            case(
+                (InvItem.name.ilike(prefix), 0),
+                (InvItem.code.ilike(prefix), 1),
+                else_=2,
+            ),
+            InvItem.name.asc(),
+            InvItem.id.asc(),
+        )
+        .limit(30)
+        .all()
+    )
+    return jsonify([
+        {"id": item.id, "label": _item_lookup_label(item)}
+        for item in rows
+    ])
+
+
 def _style_worksheet(worksheet, widths: dict[int, int] | None = None):
     worksheet.sheet_view.rightToLeft = True
     worksheet.freeze_panes = "A2"
@@ -880,7 +1079,7 @@ def fixed_asset_list():
         selected=selected,
         can_manage=current_user.has_perm(STORE_MANAGE),
         can_export=current_user.has_perm(STORE_EXPORT) or current_user.has_perm(STORE_MANAGE),
-        **_choices(),
+        **_choices(include_items=False, include_users=False),
     )
 
 
@@ -920,11 +1119,18 @@ def fixed_asset_new():
                 key: value for key, value in request.form.items()
                 if key in {"asset_tag", "name", "serial_number", "manufacturer", "model", "description", "acquisition_date", "note"}
             })
+    selected_item_id = (
+        _optional_int(request.form.get("item_id"))
+        if request.method == "POST"
+        else asset.item_id
+    )
+    selected_item = _selected_item(selected_item_id)
     return render_template(
         "portal/inventory/fixed_assets/asset_form.html",
         asset=asset,
+        selected_item=selected_item,
         is_new=True,
-        **_choices(),
+        **_choices(include_items=False),
     )
 
 
@@ -1000,11 +1206,18 @@ def fixed_asset_edit(asset_id: int):
             if new_image_filename:
                 _delete_fixed_asset_image(new_image_filename)
             flash(str(exc) if isinstance(exc, ValueError) else "رقم الأصل مستخدم مسبقاً.", "danger")
+    selected_item_id = (
+        _optional_int(request.form.get("item_id"))
+        if request.method == "POST"
+        else asset.item_id
+    )
+    selected_item = _selected_item(selected_item_id)
     return render_template(
         "portal/inventory/fixed_assets/asset_form.html",
         asset=asset,
+        selected_item=selected_item,
         is_new=False,
-        **_choices(),
+        **_choices(include_items=False),
     )
 
 
@@ -1556,7 +1769,7 @@ def fixed_asset_cycle_new():
             db.session.rollback()
             flash(str(exc) if isinstance(exc, ValueError) else "تعذر إنشاء الدورة بسبب بيانات مكررة.", "danger")
 
-    choices = _choices()
+    choices = _choices(include_items=False, include_categories=False)
     return render_template(
         "portal/inventory/fixed_assets/cycle_form.html",
         form=form_values,
@@ -1665,7 +1878,7 @@ def fixed_asset_cycle_edit(cycle_id: int):
         previous_cycles=previous_cycles,
         committees=Committee.query.filter_by(is_active=True).order_by(Committee.name_ar.asc()).all(),
         is_edit=True,
-        **_choices(),
+        **_choices(include_items=False, include_categories=False),
     )
 
 
@@ -1680,7 +1893,12 @@ def fixed_asset_cycle_view(cycle_id: int):
         abort(403)
     status = (request.args.get("status") or "").strip().upper()
     search = (request.args.get("q") or "").strip()
-    query = InvFixedAssetEntry.query.filter(InvFixedAssetEntry.cycle_id == cycle.id).join(InvFixedAsset)
+    query = (
+        InvFixedAssetEntry.query
+        .options(*_cycle_entry_load_options())
+        .filter(InvFixedAssetEntry.cycle_id == cycle.id)
+        .join(InvFixedAsset)
+    )
     if status in INVENTORY_RESULT_LABELS:
         query = query.filter(InvFixedAssetEntry.result_status == status)
     if search:
@@ -1699,6 +1917,7 @@ def fixed_asset_cycle_view(cycle_id: int):
     entries = pagination.items
     recent_scans = (
         InvFixedAssetScanLog.query
+        .options(*_cycle_scan_load_options())
         .filter(InvFixedAssetScanLog.cycle_id == cycle.id)
         .order_by(InvFixedAssetScanLog.scanned_at.desc())
         .limit(15)
@@ -1832,7 +2051,7 @@ def fixed_asset_cycle_scan(cycle_id: int):
         recent_scans=recent_scans,
         initial_code=normalize_asset_identifier(request.args.get("code")),
         mobile_mode=mobile_mode,
-        **_choices(),
+        **_choices(include_items=False, include_categories=False),
     )
 
 

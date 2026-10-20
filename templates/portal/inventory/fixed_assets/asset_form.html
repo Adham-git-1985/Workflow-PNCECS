@@ -11,7 +11,16 @@
     <div class="row g-3">
       <div class="col-md-4"><label class="form-label">رقم الأصل</label><input class="form-control" name="asset_tag" maxlength="80" value="{{ request.form.get('asset_tag', asset.asset_tag or '') }}" required><div class="form-text">رقم فريد يُطبع على الملصق.</div></div>
       <div class="col-md-8"><label class="form-label">اسم الأصل</label><input class="form-control" name="name" maxlength="255" value="{{ request.form.get('name', asset.name or '') }}" required></div>
-      <div class="col-md-6"><label class="form-label">ربط بصنف المستودع</label><select class="form-select" name="item_id"><option value="">بدون ربط</option>{% set selected_item = request.form.get('item_id', asset.item_id or '')|string %}{% for item in items %}<option value="{{ item.id }}" {% if selected_item == item.id|string %}selected{% endif %}>{{ item.label }}</option>{% endfor %}</select></div>
+      <div class="col-md-6">
+        <label class="form-label" for="assetItemSearch">ربط بصنف المستودع</label>
+        {% set selected_item_id = request.form.get('item_id', asset.item_id or '')|string %}
+        <div class="position-relative">
+          <input class="form-control" type="search" id="assetItemSearch" autocomplete="off" placeholder="ابحث بالاسم أو الكود (حرفان على الأقل)" value="{{ selected_item.label if selected_item else '' }}">
+          <input type="hidden" name="item_id" id="assetItemId" value="{{ selected_item_id }}">
+          <div id="assetItemResults" class="list-group position-absolute w-100 shadow-sm" style="z-index:1050;max-height:240px;overflow:auto;display:none"></div>
+        </div>
+        <div class="form-text">لا تُحمّل القائمة الكاملة؛ اكتب جزءًا من اسم الصنف أو كوده ثم اختر النتيجة.</div>
+      </div>
       <div class="col-md-6"><label class="form-label">التصنيف</label><select class="form-select" name="category_id"><option value="">بدون تصنيف</option>{% set selected_category = request.form.get('category_id', asset.category_id or '')|string %}{% for category in categories %}<option value="{{ category.id }}" {% if selected_category == category.id|string %}selected{% endif %}>{{ category.name }}</option>{% endfor %}</select></div>
       <div class="col-md-4"><label class="form-label">الرقم التسلسلي</label><input class="form-control" name="serial_number" maxlength="200" value="{{ request.form.get('serial_number', asset.serial_number or '') }}"></div>
       <div class="col-md-4"><label class="form-label">الشركة المصنعة</label><input class="form-control" name="manufacturer" maxlength="150" value="{{ request.form.get('manufacturer', asset.manufacturer or '') }}"></div>
@@ -51,6 +60,81 @@
     previewUrl = URL.createObjectURL(file);
     previewImage.src = previewUrl;
     preview.classList.remove('d-none');
+  });
+})();
+
+(() => {
+  const search = document.getElementById('assetItemSearch');
+  const hidden = document.getElementById('assetItemId');
+  const results = document.getElementById('assetItemResults');
+  if (!search || !hidden || !results) return;
+
+  const lookupUrl = {{ url_for('portal.fixed_asset_item_lookup')|tojson }};
+  let timer = null;
+  let controller = null;
+
+  function hideResults() {
+    results.replaceChildren();
+    results.style.display = 'none';
+  }
+
+  function showResults(rows) {
+    results.replaceChildren();
+    if (!rows.length) {
+      const empty = document.createElement('div');
+      empty.className = 'list-group-item text-muted';
+      empty.textContent = 'لا توجد أصناف مطابقة.';
+      results.appendChild(empty);
+    } else {
+      rows.forEach(row => {
+        const option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'list-group-item list-group-item-action text-end';
+        option.textContent = row.label;
+        option.dataset.id = row.id;
+        option.dataset.label = row.label;
+        results.appendChild(option);
+      });
+    }
+    results.style.display = 'block';
+  }
+
+  async function lookup(value) {
+    const query = value.trim();
+    if (query.length < 2) {
+      hideResults();
+      return;
+    }
+    if (controller) controller.abort();
+    controller = new AbortController();
+    try {
+      const response = await fetch(`${lookupUrl}?q=${encodeURIComponent(query)}`, {
+        headers: {Accept: 'application/json'},
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error('lookup failed');
+      showResults(await response.json());
+    } catch (error) {
+      if (error.name !== 'AbortError') hideResults();
+    }
+  }
+
+  search.addEventListener('input', () => {
+    hidden.value = '';
+    clearTimeout(timer);
+    timer = setTimeout(() => lookup(search.value), 250);
+  });
+
+  results.addEventListener('click', event => {
+    const option = event.target.closest('button[data-id]');
+    if (!option) return;
+    hidden.value = option.dataset.id || '';
+    search.value = option.dataset.label || '';
+    hideResults();
+  });
+
+  document.addEventListener('click', event => {
+    if (!results.contains(event.target) && event.target !== search) hideResults();
   });
 })();
 </script>

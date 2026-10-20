@@ -321,6 +321,37 @@ class User(db.Model, UserMixin):
         if key == "HR_PAYSLIP_VIEW":
             return _cache_result(True)
 
+        def _eval(perms_list) -> bool:
+            if key in perms_list:
+                return True
+            actions = ("READ", "CREATE", "UPDATE", "DELETE")
+            for act in actions:
+                suffix = "_" + act
+                if key.endswith(suffix):
+                    base = key[: -len(suffix)]
+                    return f"{base}_MANAGE" in perms_list
+            if key.endswith("_MANAGE"):
+                base = key[: -len("_MANAGE")]
+                return all(f"{base}_{act}" in perms_list for act in actions)
+            return False
+
+        role_raw = (getattr(self, "role", "") or "").strip()
+        effective_permission_cache = _request_authorization_cache(
+            "_effective_permission_keys"
+        )
+        effective_cache_key = (
+            (cache_key[0], role_raw)
+            if effective_permission_cache is not None and cache_key is not None
+            else None
+        )
+        effective_permissions = (
+            effective_permission_cache.get(effective_cache_key)
+            if effective_permission_cache is not None and effective_cache_key is not None
+            else None
+        )
+        if effective_permissions is not None:
+            return _cache_result(_eval(effective_permissions))
+
         perms = [
             (p.key or "").strip().upper()
             for p in (self.permissions or [])
@@ -330,7 +361,6 @@ class User(db.Model, UserMixin):
         # Merge ROLE permissions (RolePermission) so role-based permissions are honored
         # This keeps template checks (current_user.has_perm) and perm_required consistent with /admin/permissions.
         try:
-            role_raw = (getattr(self, "role", "") or "").strip()
             role = role_raw.lower()
             if role:
                 role_variants = role_storage_variants(role_raw) or {role}
@@ -412,21 +442,10 @@ class User(db.Model, UserMixin):
         except Exception:
             pass
 
-        def _eval(perms_list: list[str]) -> bool:
-            if key in perms_list:
-                return True
-            actions = ("READ", "CREATE", "UPDATE", "DELETE")
-            for act in actions:
-                suffix = "_" + act
-                if key.endswith(suffix):
-                    base = key[: -len(suffix)]
-                    return f"{base}_MANAGE" in perms_list
-            if key.endswith("_MANAGE"):
-                base = key[: -len("_MANAGE")]
-                return all(f"{base}_{act}" in perms_list for act in actions)
-            return False
-
-        return _cache_result(_eval(perms))
+        effective_permissions = frozenset(perms)
+        if effective_permission_cache is not None and effective_cache_key is not None:
+            effective_permission_cache[effective_cache_key] = effective_permissions
+        return _cache_result(_eval(effective_permissions))
 
     def has_role(self, role_name):
         """Return True if the user has the given role.
