@@ -200,6 +200,7 @@ from workflow.engine import (
 )
 from workflow.reports import build_employee_workflow_report
 from workflow.approval_reports import build_open_approval_report
+from workflow.attendance_reports import build_actual_attendance_report
 from services.workflow_report_email import (
     get_report_email_config,
     save_report_email_config,
@@ -6182,6 +6183,15 @@ def workflow_open_approvals_report():
         q=search,
         **report,
     )
+
+
+@workflow_bp.route("/reports/actual-attendance")
+@login_required
+@perm_required("WORKFLOW_REPORTS_READ")
+def workflow_actual_attendance_report():
+    """Weekly matrix built from the actual daily attendance table."""
+    report = build_actual_attendance_report(request.args.get("week_start"))
+    return render_template("workflow/actual_attendance_report.html", **report)
 
 
 @workflow_bp.route("/reports/email-settings", methods=["GET", "POST"])
