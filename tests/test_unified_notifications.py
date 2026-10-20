@@ -389,6 +389,54 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
             user_id=self.user.id,
         ).first())
 
+    def test_super_admin_can_view_portal_and_masar_notifications_in_one_screen(self):
+        portal_notification = Notification(
+            user_id=self.other_user.id,
+            message="Merged portal notification",
+            source="portal",
+            is_read=False,
+        )
+        workflow_notification = Notification(
+            user_id=self.other_user.id,
+            message="Merged Masar notification",
+            source="workflow",
+            is_read=False,
+        )
+        db.session.add_all((portal_notification, workflow_notification))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, self.user.id)
+            merged_response = client.get(
+                "/portal/admin/notifications",
+                query_string={"user_id": self.other_user.id, "source": "all"},
+            )
+            portal_response = client.get(
+                "/portal/admin/notifications",
+                query_string={"user_id": self.other_user.id, "source": "portal"},
+            )
+            workflow_response = client.get(
+                "/portal/admin/notifications",
+                query_string={"user_id": self.other_user.id, "source": "workflow"},
+            )
+
+        self.assertEqual(merged_response.status_code, 200)
+        merged_body = merged_response.get_data(as_text=True)
+        self.assertIn(portal_notification.message, merged_body)
+        self.assertIn(workflow_notification.message, merged_body)
+        self.assertIn("البوابة الإدارية", merged_body)
+        self.assertIn("مسار", merged_body)
+
+        self.assertEqual(portal_response.status_code, 200)
+        portal_body = portal_response.get_data(as_text=True)
+        self.assertIn(portal_notification.message, portal_body)
+        self.assertNotIn(workflow_notification.message, portal_body)
+
+        self.assertEqual(workflow_response.status_code, 200)
+        workflow_body = workflow_response.get_data(as_text=True)
+        self.assertIn(workflow_notification.message, workflow_body)
+        self.assertNotIn(portal_notification.message, workflow_body)
+
     def test_non_super_admin_cannot_manage_employee_notifications(self):
         with self.app.test_client() as client:
             self._login(client, self.other_user.id)
