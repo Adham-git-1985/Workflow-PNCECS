@@ -1845,6 +1845,19 @@ class RequestEscalation(db.Model):
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    __table_args__ = (
+        # The admin list is ordered by this pair on every page load.
+        db.Index("ix_request_escalation_created_id", "created_at", "id"),
+        # Request/step views filter by request_id and optionally step_order.
+        db.Index(
+            "ix_request_escalation_request_step_created",
+            "request_id",
+            "step_order",
+            "created_at",
+            "id",
+        ),
+    )
+
     request = db.relationship("WorkflowRequest", backref="escalations")
     from_user = db.relationship("User", foreign_keys=[from_user_id], lazy="joined")
     to_user = db.relationship("User", foreign_keys=[to_user_id], lazy="joined")

@@ -36,6 +36,7 @@ from services.workflow_request_views import (
 )
 from utils.ui_labels import ui_label
 from sqlalchemy import case
+from sqlalchemy.orm import joinedload, load_only
 from io import BytesIO
 
 import os
@@ -76,6 +77,9 @@ DASHBOARD_CACHE = {
 }
 
 DASHBOARD_TTL_SECONDS = 30
+
+ESCALATIONS_PAGE_SIZE = 50
+ESCALATIONS_EXPORT_MAX_ROWS = 10000
 
 
 ESCALATION_ROLE_MAP = {
@@ -603,30 +607,75 @@ def admin_requests_export_excel():
 @login_required
 @role_perm_required("VIEW_ESCALATIONS")
 def escalations():
-
     now = datetime.utcnow()
     esc_deadline = now - timedelta(
         days=get_sla_days() + get_escalation_days()
     )
 
-    # 1) SLA-overdue (legacy definition)
-    escalated_requests = WorkflowRequest.query.filter(
-        WorkflowRequest.status.notin_(["APPROVED", "REJECTED", "CLOSED"]),
-        WorkflowRequest.created_at < esc_deadline
-    ).order_by(WorkflowRequest.created_at.asc()).all()
+    page_size = ESCALATIONS_PAGE_SIZE
+    alerts_page = max(request.args.get("alerts_page", type=int, default=1), 1)
+    overdue_page = max(request.args.get("overdue_page", type=int, default=1), 1)
 
-    # 2) Full escalation log (manual + system) stored in RequestEscalation
-    manual_escalations = (
-        RequestEscalation.query
-        .order_by(RequestEscalation.created_at.desc(), RequestEscalation.id.desc())
-        .limit(500)
+    # 1) SLA-overdue (legacy definition)
+    overdue_rows = (
+        WorkflowRequest.query
+        .options(load_only(
+            WorkflowRequest.id,
+            WorkflowRequest.title,
+            WorkflowRequest.status,
+            WorkflowRequest.created_at,
+            WorkflowRequest.current_role,
+        ))
+        .filter(
+            WorkflowRequest.status.notin_(["APPROVED", "REJECTED", "CLOSED"]),
+            WorkflowRequest.created_at < esc_deadline,
+        )
+        .order_by(WorkflowRequest.created_at.asc(), WorkflowRequest.id.asc())
+        .offset((overdue_page - 1) * page_size)
+        .limit(page_size + 1)
         .all()
     )
+    overdue_has_next = len(overdue_rows) > page_size
+    escalated_requests = overdue_rows[:page_size]
+
+    # 2) Full escalation log (manual + system) stored in RequestEscalation
+    escalation_rows = (
+        RequestEscalation.query
+        .options(
+            load_only(
+                RequestEscalation.id,
+                RequestEscalation.request_id,
+                RequestEscalation.from_user_id,
+                RequestEscalation.to_user_id,
+                RequestEscalation.category,
+                RequestEscalation.description,
+                RequestEscalation.step_order,
+                RequestEscalation.targets,
+                RequestEscalation.created_at,
+                RequestEscalation.alert_level,
+            ),
+            joinedload(RequestEscalation.from_user).load_only(User.id, User.email),
+            joinedload(RequestEscalation.to_user).load_only(User.id, User.email),
+        )
+        .order_by(RequestEscalation.created_at.desc(), RequestEscalation.id.desc())
+        .offset((alerts_page - 1) * page_size)
+        .limit(page_size + 1)
+        .all()
+    )
+    alerts_has_next = len(escalation_rows) > page_size
+    manual_escalations = escalation_rows[:page_size]
 
     return render_template(
         "admin/escalations.html",
         requests=escalated_requests,
         escalations=manual_escalations,
+        alerts_page=alerts_page,
+        alerts_has_prev=alerts_page > 1,
+        alerts_has_next=alerts_has_next,
+        overdue_page=overdue_page,
+        overdue_has_prev=overdue_page > 1,
+        overdue_has_next=overdue_has_next,
+        page_size=page_size,
     )
 
 
@@ -643,15 +692,46 @@ def escalations_export_excel():
     now = datetime.utcnow()
     esc_deadline = now - timedelta(days=get_sla_days() + get_escalation_days())
 
-    escalated_requests = WorkflowRequest.query.filter(
-        WorkflowRequest.status.notin_(["APPROVED", "REJECTED", "CLOSED"]),
-        WorkflowRequest.created_at < esc_deadline
-    ).order_by(WorkflowRequest.created_at.asc()).all()
+    escalated_requests = (
+        WorkflowRequest.query
+        .options(load_only(
+            WorkflowRequest.id,
+            WorkflowRequest.title,
+            WorkflowRequest.status,
+            WorkflowRequest.created_at,
+            WorkflowRequest.current_role,
+        ))
+        .filter(
+            WorkflowRequest.status.notin_(["APPROVED", "REJECTED", "CLOSED"]),
+            WorkflowRequest.created_at < esc_deadline,
+        )
+        .order_by(WorkflowRequest.created_at.asc(), WorkflowRequest.id.asc())
+        .all()
+    )
 
     # Sheet 1: Escalation log
-    limit = request.args.get("limit", type=int) or 10000
+    requested_limit = request.args.get(
+        "limit", type=int, default=ESCALATIONS_EXPORT_MAX_ROWS
+    )
+    limit = min(max(requested_limit, 1), ESCALATIONS_EXPORT_MAX_ROWS)
     escalation_log = (
         RequestEscalation.query
+        .options(
+            load_only(
+                RequestEscalation.id,
+                RequestEscalation.request_id,
+                RequestEscalation.from_user_id,
+                RequestEscalation.to_user_id,
+                RequestEscalation.category,
+                RequestEscalation.description,
+                RequestEscalation.step_order,
+                RequestEscalation.targets,
+                RequestEscalation.created_at,
+                RequestEscalation.alert_level,
+            ),
+            joinedload(RequestEscalation.from_user).load_only(User.id, User.email),
+            joinedload(RequestEscalation.to_user).load_only(User.id, User.email),
+        )
         .order_by(RequestEscalation.created_at.desc(), RequestEscalation.id.desc())
         .limit(limit)
         .all()
