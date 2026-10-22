@@ -6942,6 +6942,128 @@ def meeting_new():
     return render_template("portal/meetings/form.html", form=form, users=users)
 
 
+@portal_bp.route("/meetings/<int:meeting_id>/edit", methods=["GET", "POST"])
+@login_required
+@_perm(PORTAL_MEETINGS_MANAGE)
+def meeting_edit(meeting_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    _meeting_require_manager(row)
+
+    form = {
+        "title": row.title or "",
+        "description": row.description or "",
+        "location": row.location or "",
+        "start_at": row.start_at.strftime("%Y-%m-%dT%H:%M") if row.start_at else "",
+        "end_at": row.end_at.strftime("%Y-%m-%dT%H:%M") if row.end_at else "",
+        "reminder_minutes_before": str(row.reminder_minutes_before or 0),
+    }
+
+    if request.method == "POST":
+        form.update({
+            "title": (request.form.get("title") or "").strip(),
+            "description": (request.form.get("description") or "").strip(),
+            "location": (request.form.get("location") or "").strip(),
+            "start_at": (request.form.get("start_at") or "").strip(),
+            "end_at": (request.form.get("end_at") or "").strip(),
+            "reminder_minutes_before": (
+                request.form.get("reminder_minutes_before")
+                or str(row.reminder_minutes_before or 0)
+            ).strip(),
+        })
+        start_at = _parse_dt_local(form["start_at"])
+        end_at = _parse_dt_local(form["end_at"])
+        try:
+            reminder_minutes = max(0, int(form["reminder_minutes_before"] or 0))
+        except Exception:
+            reminder_minutes = 0
+
+        if not form["title"]:
+            flash("عنوان الاجتماع مطلوب.", "danger")
+            return render_template("portal/meetings/form.html", form=form, editing=True, meeting_id=row.id)
+        if not start_at:
+            flash("موعد بداية الاجتماع مطلوب.", "danger")
+            return render_template("portal/meetings/form.html", form=form, editing=True, meeting_id=row.id)
+        if form["end_at"] and not end_at:
+            flash("صيغة موعد نهاية الاجتماع غير صحيحة.", "warning")
+            return render_template("portal/meetings/form.html", form=form, editing=True, meeting_id=row.id)
+        if end_at and end_at <= start_at:
+            flash("وقت نهاية الاجتماع يجب أن يكون بعد وقت البداية.", "warning")
+            return render_template("portal/meetings/form.html", form=form, editing=True, meeting_id=row.id)
+
+        old_start_at = row.start_at
+        old_end_at = row.end_at
+        old_reminder_minutes = row.reminder_minutes_before
+        old_title = row.title
+        old_description = row.description
+        old_location = row.location
+        schedule_changed = start_at != old_start_at or end_at != old_end_at
+        details_changed = (
+            form["title"][:200] != old_title
+            or (form["description"] or None) != old_description
+            or (form["location"] or None) != old_location
+        )
+
+        row.title = form["title"][:200]
+        row.description = form["description"] or None
+        row.location = form["location"] or None
+        row.start_at = start_at
+        row.end_at = end_at
+        row.reminder_minutes_before = reminder_minutes
+        if schedule_changed:
+            # A rescheduled meeting must be eligible for its reminder again.
+            row.reminder_sent_at = None
+
+        try:
+            changes = []
+            if schedule_changed:
+                changes.append(f"when={_meeting_when_label(row)}")
+            if details_changed:
+                changes.append("details=updated")
+            if reminder_minutes != old_reminder_minutes:
+                changes.append(f"reminder_minutes={reminder_minutes}")
+            _portal_audit(
+                "MEETING_UPDATE",
+                note=f"meeting_id={row.id} " + " ".join(changes),
+                target_type="PORTAL_MEETING",
+                target_id=row.id,
+            )
+
+            if schedule_changed or details_changed:
+                recipient_ids = [
+                    uid for uid in _meeting_audience_user_ids(row)
+                    if int(uid) != int(getattr(current_user, "id", 0) or 0)
+                ]
+                intro = (
+                    "تم تعديل موعد الاجتماع التالي."
+                    if schedule_changed
+                    else "تم تحديث بيانات الاجتماع التالي."
+                )
+                _meeting_notify_users(
+                    recipient_ids,
+                    f"تحديث اجتماع: {row.title} - {_meeting_when_label(row)}",
+                    level="INFO",
+                    subject=f"تحديث اجتماع: {row.title}",
+                    body=_meeting_message_body(row, intro),
+                    sender_id=getattr(current_user, "id", None),
+                    link_url=notification_target_path("PORTAL_MEETING", row.id),
+                )
+
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception("Failed to update meeting %s", meeting_id)
+            flash("تعذر تحديث الاجتماع.", "danger")
+            return render_template("portal/meetings/form.html", form=form, editing=True, meeting_id=row.id)
+
+        if schedule_changed:
+            flash("تم تعديل موعد الاجتماع وإشعار المشاركين.", "success")
+        else:
+            flash("تم تحديث بيانات الاجتماع.", "success")
+        return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+    return render_template("portal/meetings/form.html", form=form, editing=True, meeting_id=row.id)
+
+
 @portal_bp.route("/meetings/<int:meeting_id>")
 @login_required
 def meeting_view(meeting_id: int):

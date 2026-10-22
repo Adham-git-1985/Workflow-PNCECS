@@ -1,12 +1,16 @@
 {% extends "portal/layout.html" %}
-{% block title %}اجتماع جديد{% endblock %}
+{% set editing = editing|default(false) %}
+{% block title %}{{ 'تعديل الاجتماع' if editing else 'اجتماع جديد' }}{% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
   <div>
-    <h4 class="mb-1"><i class="bi bi-plus-circle"></i> اجتماع جديد</h4>
+    <h4 class="mb-1"><i class="bi bi-{{ 'pencil-square' if editing else 'plus-circle' }}"></i> {{ 'تعديل الاجتماع' if editing else 'اجتماع جديد' }}</h4>
+    {% if editing %}
+      <div class="text-muted small">يمكن تغيير الموعد أو أي من بيانات الاجتماع، وسيتم إشعار المشاركين عند تغيير الموعد.</div>
+    {% endif %}
   </div>
-  <a class="btn btn-outline-secondary" href="{{ url_for('portal.meetings_dashboard') }}">
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.meeting_view', meeting_id=meeting_id) if editing else url_for('portal.meetings_dashboard') }}">
     <i class="bi bi-arrow-right"></i> رجوع
   </a>
 </div>
@@ -23,10 +27,18 @@
           <label class="form-label">الوصف</label>
           <textarea class="form-control" name="description" rows="4">{{ form.description }}</textarea>
         </div>
-        <div class="mb-3">
-          <label class="form-label">الأجندة الأولية</label>
-          <textarea class="form-control" name="agenda_lines" rows="6" placeholder="بند في كل سطر">{{ form.agenda_lines }}</textarea>
-        </div>
+        {% if not editing %}
+          <div class="mb-3">
+            <label class="form-label">الأجندة الأولية</label>
+            <textarea class="form-control" name="agenda_lines" rows="6" placeholder="بند في كل سطر">{{ form.agenda_lines }}</textarea>
+          </div>
+        {% endif %}
+        {% if editing %}
+          <div class="alert alert-info mb-0">
+            <i class="bi bi-info-circle"></i>
+            سيبقى المشاركون والأجندة والمرفقات كما هي. استخدم أدواتها في صفحة الاجتماع لتعديلها.
+          </div>
+        {% endif %}
       </div>
     </div>
 
@@ -55,12 +67,14 @@
       </div>
 
       <div class="p-3 bg-white rounded-3 shadow-sm">
+        {% if not editing %}
         {% set participant_picker_id = 'newMeetingParticipantPicker' %}
         {% set participant_selected_ids = form.participant_ids %}
         {% include 'portal/meetings/_participant_picker.html' %}
+        {% endif %}
         <div class="d-grid mt-3">
           <button class="btn btn-primary" type="submit">
-            <i class="bi bi-check2"></i> حفظ الاجتماع
+            <i class="bi bi-check2"></i> {{ 'حفظ التعديلات' if editing else 'حفظ الاجتماع' }}
           </button>
         </div>
       </div>

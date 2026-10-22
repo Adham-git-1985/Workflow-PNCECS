@@ -143,7 +143,8 @@ class MeetingVisibilityTests(unittest.TestCase):
         self._login(client, self.invitee.id)
         invitation_view = client.get(f"/portal/meetings/{self.meeting.id}")
         self.assertEqual(invitation_view.status_code, 200)
-        self.assertIn("الداعي: Organizer".encode("utf-8"), invitation_view.data)
+        self.assertIn("منشئ الاجتماع".encode("utf-8"), invitation_view.data)
+        self.assertIn(b">Organizer</div>", invitation_view.data)
         self.assertIn(self.meeting.title.encode("utf-8"), client.get("/portal/").data)
 
         for user in (self.outsider, self.meetings_admin):
@@ -241,6 +242,55 @@ class MeetingVisibilityTests(unittest.TestCase):
         self.assertIn(delete_url.encode("utf-8"), view.data)
         self.assertEqual(client.post(delete_url).status_code, 302)
         self.assertIsNone(db.session.get(PortalMeeting, self.meeting.id))
+
+    def test_organizer_can_edit_meeting_schedule_and_notify_participants(self):
+        client = self.app.test_client()
+        self._login(client, self.organizer.id)
+
+        edit_url = f"/portal/meetings/{self.meeting.id}/edit"
+        edit_form = client.get(edit_url)
+        self.assertEqual(edit_form.status_code, 200)
+        self.assertIn(b'name="start_at"', edit_form.data)
+        self.assertIn(b"pencil-square", edit_form.data)
+
+        new_start = datetime.utcnow() + timedelta(days=3, hours=2)
+        new_end = new_start + timedelta(hours=1)
+        response = client.post(
+            edit_url,
+            data={
+                "title": "Private strategy meeting",
+                "description": "Updated details",
+                "location": "Conference room B",
+                "start_at": new_start.strftime("%Y-%m-%dT%H:%M"),
+                "end_at": new_end.strftime("%Y-%m-%dT%H:%M"),
+                "reminder_minutes_before": "30",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+
+        updated = db.session.get(PortalMeeting, self.meeting.id)
+        self.assertEqual(updated.start_at, new_start.replace(second=0, microsecond=0))
+        self.assertEqual(updated.end_at, new_end.replace(second=0, microsecond=0))
+        self.assertEqual(updated.location, "Conference room B")
+        self.assertEqual(updated.reminder_minutes_before, 30)
+        self.assertIsNone(updated.reminder_sent_at)
+
+        notification = Notification.query.filter_by(
+            user_id=self.invitee.id,
+            link_url=f"/portal/meetings/{self.meeting.id}",
+        ).filter(Notification.message.like("%Private strategy meeting%")).one()
+        self.assertEqual(notification.email_delivery_mode, "MEETING")
+
+    def test_only_the_organizer_can_edit_a_meeting(self):
+        client = self.app.test_client()
+        edit_url = f"/portal/meetings/{self.meeting.id}/edit"
+
+        self._login(client, self.invitee.id)
+        self.assertEqual(client.get(edit_url).status_code, 403)
+        self.assertEqual(client.post(edit_url).status_code, 403)
+
+        self._login(client, self.meetings_admin.id)
+        self.assertEqual(client.get(edit_url).status_code, 403)
 
     def test_participant_picker_uses_searchable_checkboxes(self):
         client = self.app.test_client()
