@@ -450,13 +450,17 @@ class TransportReadyFormsTests(unittest.TestCase):
         with self.app.test_client() as client:
             self._login(client, self.transport_manager.id)
 
-            listing = client.get("/portal/transport/permits?status=SUBMITTED")
-            self.assertEqual(listing.status_code, 200)
-            listing_body = listing.get_data(as_text=True)
-            self.assertIn(
-                f"/portal/transport/permits/{self.pending_transport_permit.id}/action",
-                listing_body,
-            )
+            for listing_url in (
+                "/portal/transport/permits",
+                "/portal/transport/permits?status=SUBMITTED",
+            ):
+                listing = client.get(listing_url)
+                self.assertEqual(listing.status_code, 200)
+                listing_body = listing.get_data(as_text=True)
+                self.assertIn(
+                    f"/portal/transport/permits/{self.pending_transport_permit.id}/action",
+                    listing_body,
+                )
 
             tasks = client.get("/portal/transport/movement-tasks")
             self.assertEqual(tasks.status_code, 200)

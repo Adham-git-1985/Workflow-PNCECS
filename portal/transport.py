@@ -268,6 +268,13 @@ def _can_process_movement(row: TransportPermit) -> bool:
         return False
     if row.requester_user_id == actor.id:
         return False
+
+    # An explicitly assigned transport manager can process every submitted
+    # movement request, regardless of which workflow stage currently owns it.
+    # This permission drives both the list action and the detail-page forms.
+    if _has_transport_permission(actor, "TRANSPORT_MANAGER_APPROVE"):
+        return True
+
     if row.approval_stage == "MANAGER":
         return actor.id in _movement_manager_ids(row) or _has_transport_permission(actor, "TRANSPORT_APPROVE")
     if row.approval_stage == "TRANSPORT":
@@ -1372,7 +1379,7 @@ def transport_permits():
     actionable_permit_ids = {
         item.id
         for item in items
-        if _can_process_movement(item)
+        if item.status == "SUBMITTED" and _can_process_movement(item)
     }
     can_update = current_user.has_perm("TRANSPORT_UPDATE")
     return render_template(
