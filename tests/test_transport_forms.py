@@ -432,6 +432,7 @@ class TransportReadyFormsTests(unittest.TestCase):
         self.assertNotIn('name="driver_id"', body)
         self.assertNotIn(f"/transport/permits/{self.employee_permit.id}/approve", body)
         self.assertNotIn(f"/transport/permits/{self.employee_permit.id}/reject", body)
+        self.assertNotIn(f"/transport/permits/{self.employee_permit.id}/action", body)
 
     def test_reject_endpoint_accepts_direct_get_and_post_from_detail(self):
         with self.app.test_client() as client:
@@ -499,6 +500,10 @@ class TransportReadyFormsTests(unittest.TestCase):
             )
             self.assertIn(
                 f"/portal/transport/permits/{self.pending_transport_permit.id}/reject",
+                detail_view_body,
+            )
+            self.assertIn(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}/action",
                 detail_view_body,
             )
 
