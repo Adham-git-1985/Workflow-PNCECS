@@ -39477,7 +39477,19 @@ def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
             maternity_minutes = _maternity_departure_allowance_minutes(user_id, day_str)
             if maternity_minutes:
                 evening_intervals.append((en_min - maternity_minutes, en_min))
-            early_leave_minutes = max(0, _uncovered_attendance_minutes(actual_out, en_min, evening_intervals) - end_grace_minutes)
+            uncovered_early = _uncovered_attendance_minutes(
+                actual_out,
+                en_min,
+                evening_intervals,
+            )
+            # The grace period is a threshold, not a deduction from the
+            # measured early departure.  With a 15:00 end and 15 minutes'
+            # grace, 14:45 is zero while 14:30 is 30 minutes early.
+            early_leave_minutes = (
+                uncovered_early
+                if uncovered_early > end_grace_minutes
+                else 0
+            )
 
             thr = schedule.overtime_threshold_minutes
             thr = int(thr) if (thr is not None) else 0
