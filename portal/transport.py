@@ -277,6 +277,24 @@ def _record_movement_action(row: TransportPermit, action: str, note: str | None 
     ))
 
 
+def _latest_movement_approval_by_current_user(row: TransportPermit):
+    """Return the latest approval recorded by the signed-in user, if any."""
+    current_user_id = getattr(current_user, "id", None)
+    if not current_user_id:
+        return None
+
+    actions = [
+        action
+        for action in (row.actions or [])
+        if action.actor_user_id == current_user_id and action.action == "APPROVED"
+    ]
+    return max(
+        actions,
+        key=lambda action: (action.created_at or datetime.min, action.id or 0),
+        default=None,
+    )
+
+
 def _movement_recipient_ids(row: TransportPermit) -> list[int]:
     if row.approval_stage == "MANAGER":
         return _movement_manager_ids(row)
@@ -1389,13 +1407,27 @@ def transport_permit_view(permit_id: int):
     if row.requester_user_id != current_user.id and not can_manage and not _can_process_movement(row) and not _can_edit_movement(row) and not _can_view_movement(row):
         abort(403)
     can_approve = _can_process_movement(row)
+    current_user_approval = (
+        _latest_movement_approval_by_current_user(row)
+        if row.status == "SUBMITTED"
+        else None
+    )
     can_update = _can_edit_movement(row)
     vehicles = []
     drivers = []
     if can_approve and row.approval_stage == "TRANSPORT":
         vehicles = TransportVehicle.query.filter(TransportVehicle.status == "ACTIVE").order_by(TransportVehicle.plate_no.asc()).all()
         drivers = TransportDriver.query.filter(TransportDriver.status == "ACTIVE").order_by(TransportDriver.name.asc()).all()
-    return render_template("portal/transport/permit_view.html", item=row, can_approve=can_approve, can_update=can_update, vehicles=vehicles, drivers=drivers, stage_labels=_MOVEMENT_STAGES)
+    return render_template(
+        "portal/transport/permit_view.html",
+        item=row,
+        can_approve=can_approve,
+        can_update=can_update,
+        vehicles=vehicles,
+        drivers=drivers,
+        stage_labels=_MOVEMENT_STAGES,
+        current_user_approval=current_user_approval,
+    )
 
 
 @portal_bp.route("/transport/permits/<int:permit_id>/action")
@@ -1449,13 +1481,30 @@ def transport_permit_approve(permit_id: int):
         return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
 
     decision_note = (request.form.get("decision_note") or "").strip() or None
+    approved_stage = row.approval_stage
     if row.approval_stage == "TRANSPORT":
         vehicle_id = _to_int(request.form.get("vehicle_id") or "")
         driver_id = _to_int(request.form.get("driver_id") or "")
         if not driver_id:
             flash("يجب تعيين سائق قبل تحويل الطلب للاعتماد النهائي.", "danger")
             return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
-        row.vehicle_id, row.driver_id = vehicle_id, driver_id
+        vehicle = None
+        if vehicle_id:
+            vehicle = TransportVehicle.query.filter(
+                TransportVehicle.id == vehicle_id,
+                TransportVehicle.status == "ACTIVE",
+            ).first()
+            if not vehicle:
+                flash("السيارة المختارة غير متاحة.", "danger")
+                return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
+        driver = TransportDriver.query.filter(
+            TransportDriver.id == driver_id,
+            TransportDriver.status == "ACTIVE",
+        ).first()
+        if not driver:
+            flash("السائق المختار غير متاح.", "danger")
+            return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
+        row.vehicle_id, row.driver_id = (vehicle.id if vehicle else None), driver.id
     _record_movement_action(row, "APPROVED", decision_note)
     if row.approval_stage == "MANAGER":
         row.approval_stage = "TRANSPORT"
@@ -1468,18 +1517,34 @@ def transport_permit_approve(permit_id: int):
         row.decided_at = datetime.utcnow()
         row.decision_note = decision_note
 
-    if row.status == "SUBMITTED":
-        _notify_next_movement_stage(row)
-    else:
-        _send_movement_alert(row, [row.requester_user_id], f"تمت الموافقة والاعتماد النهائي على طلب الحركة #{row.id}.")
-
     _audit("TRANSPORT_PERMIT_APPROVE", f"اعتماد إذن حركة: #{row.id}", target_type="TRANSPORT_PERMIT", target_id=row.id)
     db.session.commit()
-    flash("تمت المتابعة وتحويل طلب الحركة للمرحلة التالية.", "success")
+
+    # Notifications are useful but must not make an already-recorded approval
+    # fail with a server error when a legacy notification table is mid-upgrade.
+    try:
+        if row.status == "SUBMITTED":
+            _notify_next_movement_stage(row)
+        else:
+            _send_movement_alert(row, [row.requester_user_id], f"تمت الموافقة والاعتماد النهائي على طلب الحركة #{row.id}.")
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to send transport permit approval notifications for permit %s", row.id)
+
+    if row.status == "SUBMITTED":
+        next_stage = _MOVEMENT_STAGES.get(row.approval_stage, row.approval_stage)
+        flash(
+            f"تم اعتماد طلب الحركة من قبلك في مرحلة {_MOVEMENT_STAGES.get(approved_stage, approved_stage)}. "
+            f"يستمر مسار الاعتماد لدى {next_stage} لاستكمال بقية السلسلة.",
+            "success",
+        )
+    else:
+        flash("تم الاعتماد النهائي لطلب الحركة.", "success")
     return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
 
 
-@portal_bp.route("/transport/permits/<int:permit_id>/reject", methods=["POST"])
+@portal_bp.route("/transport/permits/<int:permit_id>/reject", methods=["GET", "POST"])
 @login_required
 def transport_permit_reject(permit_id: int):
     row = TransportPermit.query.get_or_404(permit_id)
@@ -1487,16 +1552,27 @@ def transport_permit_reject(permit_id: int):
         flash("لا يمكن رفض هذا الإذن بهذه الحالة.", "warning")
         return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
 
+    # This endpoint is normally a POST form target.  A direct GET should still
+    # land on the same decision controls instead of returning a method error.
+    if request.method == "GET":
+        return redirect(url_for("portal.transport_permit_view", permit_id=permit_id) + "#decision")
+
     decision_note = (request.form.get("decision_note") or "").strip() or None
     row.status = "REJECTED"
     row.approver_user_id = current_user.id
     row.decided_at = datetime.utcnow()
     row.decision_note = decision_note
     _record_movement_action(row, "REJECTED", decision_note)
-    _send_movement_alert(row, [row.requester_user_id], f"تم تعليق طلب الحركة #{row.id}." + (f" الملاحظة: {decision_note}" if decision_note else ""))
-
     _audit("TRANSPORT_PERMIT_REJECT", f"رفض إذن حركة: #{row.id}", target_type="TRANSPORT_PERMIT", target_id=row.id)
     db.session.commit()
+
+    try:
+        _send_movement_alert(row, [row.requester_user_id], f"تم رفض طلب الحركة #{row.id}." + (f" الملاحظة: {decision_note}" if decision_note else ""))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to send transport permit rejection notifications for permit %s", row.id)
+
     flash("تم رفض إذن الحركة.", "success")
     return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
 

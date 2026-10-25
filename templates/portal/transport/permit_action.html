@@ -11,8 +11,8 @@
     <label class="form-label">السائق *</label><select class="form-select mb-3" name="driver_id" required><option value="">اختر السائق</option>{% for driver in drivers %}<option value="{{ driver.id }}">{{ driver.name }}</option>{% endfor %}</select>
     {% endif %}
     <label class="form-label">ملاحظة</label><textarea class="form-control" name="decision_note" rows="3"></textarea>
-    <button class="btn btn-success mt-3" type="submit">متابعة الطلب</button>
+    <button class="btn btn-success mt-3" type="submit">اعتماد وإرسال للمرحلة التالية</button>
   </form>
-  <form method="post" action="{{ url_for('portal.transport_permit_reject', permit_id=item.id) }}" class="mt-3"><label class="form-label">سبب التعليق</label><textarea class="form-control" name="decision_note" rows="2"></textarea><button class="btn btn-outline-danger mt-2" type="submit">تعليق الطلب</button></form>
+  <form method="post" action="{{ url_for('portal.transport_permit_reject', permit_id=item.id) }}" class="mt-3"><label class="form-label">سبب الرفض (اختياري)</label><textarea class="form-control" name="decision_note" rows="2"></textarea><button class="btn btn-outline-danger mt-2" type="submit">رفض الطلب</button></form>
 </div>
 {% endblock %}

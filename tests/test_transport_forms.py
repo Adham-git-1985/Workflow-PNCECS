@@ -129,6 +129,11 @@ class TransportReadyFormsTests(unittest.TestCase):
             key="TRANSPORT_UPDATE",
             is_allowed=True,
         ))
+        db.session.add(UserPermission(
+            user_id=self.transport_manager.id,
+            key="TRANSPORT_MANAGER_APPROVE",
+            is_allowed=True,
+        ))
 
         maintenance_type = HRLookupItem(
             category="TRANSPORT_MAINT_TYPE",
@@ -415,7 +420,33 @@ class TransportReadyFormsTests(unittest.TestCase):
         self.assertNotIn(f"/transport/permits/{self.employee_permit.id}/approve", body)
         self.assertNotIn(f"/transport/permits/{self.employee_permit.id}/reject", body)
 
+    def test_reject_endpoint_accepts_direct_get_and_post_from_detail(self):
+        with self.app.test_client() as client:
+            self._login(client, self.transport_manager.id)
+
+            direct_get = client.get(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}/reject"
+            )
+            self.assertEqual(direct_get.status_code, 302)
+            self.assertIn("#decision", direct_get.headers["Location"])
+
+            response = client.post(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}/reject",
+                data={"decision_note": "لا تتوفر مركبة"},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        db.session.refresh(self.pending_transport_permit)
+        self.assertEqual(self.pending_transport_permit.status, "REJECTED")
+        self.assertEqual(self.pending_transport_permit.approver_user_id, self.transport_manager.id)
+
     def test_transport_manager_can_open_and_approve_transport_stage(self):
+        UserPermission.query.filter_by(
+            user_id=self.transport_manager.id,
+            key="TRANSPORT_UPDATE",
+        ).delete()
+        db.session.commit()
+
         with self.app.test_client() as client:
             self._login(client, self.transport_manager.id)
 
@@ -434,6 +465,22 @@ class TransportReadyFormsTests(unittest.TestCase):
                 tasks.get_data(as_text=True),
             )
 
+            detail_view = client.get(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}"
+            )
+            self.assertEqual(detail_view.status_code, 200)
+            detail_view_body = detail_view.get_data(as_text=True)
+            self.assertIn('name="vehicle_id"', detail_view_body)
+            self.assertIn('name="driver_id"', detail_view_body)
+            self.assertIn(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}/approve",
+                detail_view_body,
+            )
+            self.assertIn(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}/reject",
+                detail_view_body,
+            )
+
             detail = client.get(
                 f"/portal/transport/permits/{self.pending_transport_permit.id}/action"
             )
@@ -444,8 +491,14 @@ class TransportReadyFormsTests(unittest.TestCase):
                 f"/portal/transport/permits/{self.pending_transport_permit.id}/approve",
                 data={"driver_id": str(self.driver.id), "decision_note": "تم تعيين السائق"},
             )
+            self.assertEqual(response.status_code, 302)
 
-        self.assertEqual(response.status_code, 302)
+            after_approval = client.get(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}"
+            )
+            self.assertEqual(after_approval.status_code, 200)
+            self.assertIn("تم اعتماد طلب الحركة من قبلك", after_approval.get_data(as_text=True))
+
         db.session.refresh(self.pending_transport_permit)
         self.assertEqual(self.pending_transport_permit.approval_stage, "ADMIN")
         self.assertEqual(self.pending_transport_permit.status, "SUBMITTED")
