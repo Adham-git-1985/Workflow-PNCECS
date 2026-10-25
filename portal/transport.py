@@ -16,6 +16,7 @@ from sqlalchemy import inspect, or_
 from . import portal_bp
 from extensions import db
 from utils.perms import perm_required
+from utils.permissions import get_authorization_user
 from utils.role_codes import canonical_role_key
 from services.transport_forms import (
     build_maintenance_request_pdf,
@@ -147,6 +148,24 @@ def _can_request_movement() -> bool:
     return current_user.is_authenticated
 
 
+def _movement_actor() -> User:
+    """Return the identity whose transport permissions apply to this request.
+
+    A delegated/acting session displays the selected working identity while
+    Flask-Login keeps ``current_user`` as the technical account.  Movement
+    approval checks must use the selected identity; otherwise a requester
+    acting on behalf of an authorized transport manager is incorrectly
+    blocked by the requester guard below.
+    """
+    try:
+        actor = get_authorization_user()
+        if actor is not None and getattr(actor, "id", None):
+            return actor
+    except Exception:
+        pass
+    return current_user
+
+
 def _assigned_transport_approver_ids(permission: str) -> list[int]:
     permission = (permission or "").strip().upper()
     if not permission:
@@ -209,27 +228,29 @@ def _movement_manager_ids(row: TransportPermit) -> list[int]:
 
 
 def _can_process_movement(row: TransportPermit) -> bool:
+    actor = _movement_actor()
     if row.status != "SUBMITTED":
         return False
-    if row.requester_user_id == current_user.id:
+    if row.requester_user_id == actor.id:
         return False
     if row.approval_stage == "MANAGER":
-        return current_user.id in _movement_manager_ids(row) or current_user.has_perm("TRANSPORT_APPROVE")
+        return actor.id in _movement_manager_ids(row) or actor.has_perm("TRANSPORT_APPROVE")
     if row.approval_stage == "TRANSPORT":
         configured_manager = _to_int(_get_setting("TRANSPORT_MANAGER_USER_ID"))
         configured_director = _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID"))
-        return current_user.id == configured_manager or (
-            not configured_manager and current_user.id == configured_director
-        ) or current_user.has_perm("TRANSPORT_MANAGER_APPROVE") or current_user.has_perm("TRANSPORT_UPDATE") or (
-            not _has_transport_manager() and current_user.has_perm("TRANSPORT_DIRECTOR_APPROVE")
-        ) or current_user.has_perm("TRANSPORT_APPROVE")
+        return actor.id == configured_manager or (
+            not configured_manager and actor.id == configured_director
+        ) or actor.has_perm("TRANSPORT_MANAGER_APPROVE") or actor.has_perm("TRANSPORT_UPDATE") or (
+            not _has_transport_manager() and actor.has_perm("TRANSPORT_DIRECTOR_APPROVE")
+        ) or actor.has_perm("TRANSPORT_APPROVE")
     if row.approval_stage == "ADMIN":
         configured_admin = _to_int(_get_setting("TRANSPORT_ADMIN_USER_ID"))
-        return current_user.id == configured_admin or current_user.has_perm("TRANSPORT_ADMIN_APPROVE") or current_user.has_perm("TRANSPORT_APPROVE")
+        return actor.id == configured_admin or actor.has_perm("TRANSPORT_ADMIN_APPROVE") or actor.has_perm("TRANSPORT_APPROVE")
     return False
 
 
 def _can_edit_movement(row: TransportPermit) -> bool:
+    actor = _movement_actor()
     if row.status not in ("DRAFT", "SUBMITTED"):
         return False
     configured_ids = {
@@ -237,33 +258,35 @@ def _can_edit_movement(row: TransportPermit) -> bool:
         _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID")),
         _to_int(_get_setting("TRANSPORT_ADMIN_USER_ID")),
     }
-    return row.requester_user_id == current_user.id or current_user.id in configured_ids or current_user.has_perm("TRANSPORT_UPDATE") or current_user.has_perm("TRANSPORT_APPROVE")
+    return row.requester_user_id == actor.id or actor.id in configured_ids or actor.has_perm("TRANSPORT_UPDATE") or actor.has_perm("TRANSPORT_APPROVE")
 
 
 def _can_view_movement(row: TransportPermit) -> bool:
+    actor = _movement_actor()
     configured_ids = {
         _to_int(_get_setting("TRANSPORT_MANAGER_USER_ID")),
         _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID")),
         _to_int(_get_setting("TRANSPORT_ADMIN_USER_ID")),
     }
-    if current_user.id in configured_ids or row.approver_user_id == current_user.id:
+    if actor.id in configured_ids or row.approver_user_id == actor.id:
         return True
-    return any(action.actor_user_id == current_user.id for action in row.actions or [])
+    return any(action.actor_user_id == actor.id for action in row.actions or [])
 
 
 def _can_read_movement_requests() -> bool:
+    actor = _movement_actor()
     configured_ids = {
         _to_int(_get_setting("TRANSPORT_MANAGER_USER_ID")),
         _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID")),
         _to_int(_get_setting("TRANSPORT_ADMIN_USER_ID")),
     }
     return (
-        current_user.id in configured_ids
-        or current_user.has_perm("TRANSPORT_READ")
-        or current_user.has_perm("TRANSPORT_APPROVE")
-        or current_user.has_perm("TRANSPORT_MANAGER_APPROVE")
-        or current_user.has_perm("TRANSPORT_DIRECTOR_APPROVE")
-        or current_user.has_perm("TRANSPORT_ADMIN_APPROVE")
+        actor.id in configured_ids
+        or actor.has_perm("TRANSPORT_READ")
+        or actor.has_perm("TRANSPORT_APPROVE")
+        or actor.has_perm("TRANSPORT_MANAGER_APPROVE")
+        or actor.has_perm("TRANSPORT_DIRECTOR_APPROVE")
+        or actor.has_perm("TRANSPORT_ADMIN_APPROVE")
     )
 
 
@@ -272,21 +295,21 @@ def _record_movement_action(row: TransportPermit, action: str, note: str | None 
         permit_id=row.id,
         stage=row.approval_stage,
         action=action,
-        actor_user_id=current_user.id,
+        actor_user_id=_movement_actor().id,
         note=note,
     ))
 
 
 def _latest_movement_approval_by_current_user(row: TransportPermit):
     """Return the latest approval recorded by the signed-in user, if any."""
-    current_user_id = getattr(current_user, "id", None)
-    if not current_user_id:
+    actor_id = getattr(_movement_actor(), "id", None)
+    if not actor_id:
         return None
 
     actions = [
         action
         for action in (row.actions or [])
-        if action.actor_user_id == current_user_id and action.action == "APPROVED"
+        if action.actor_user_id == actor_id and action.action == "APPROVED"
     ]
     return max(
         actions,
@@ -792,7 +815,8 @@ def transport_movement_permit_docx(permit_id: int):
 
 
 def _send_movement_alert(row: TransportPermit, recipient_ids: list[int], message: str) -> None:
-    recipient_ids = sorted({user_id for user_id in recipient_ids if user_id and user_id != current_user.id})
+    actor = _movement_actor()
+    recipient_ids = sorted({user_id for user_id in recipient_ids if user_id and user_id != actor.id})
     if not recipient_ids:
         return
     link_url = url_for("portal.transport_permit_view", permit_id=row.id)
@@ -807,7 +831,7 @@ def _send_movement_alert(row: TransportPermit, recipient_ids: list[int], message
             created_at=datetime.utcnow(),
         ))
     internal_message = Message(
-        sender_id=current_user.id,
+        sender_id=actor.id,
         subject=f"طلب حركة #{row.id} بانتظار الإجراء",
         body=f"{message}\nافتح الطلب مباشرة: {link_url}",
         target_kind="USER",
@@ -1403,8 +1427,9 @@ def transport_permit_new():
 @login_required
 def transport_permit_view(permit_id: int):
     row = TransportPermit.query.get_or_404(permit_id)
-    can_manage = current_user.has_perm("TRANSPORT_READ") or current_user.has_perm("TRANSPORT_APPROVE")
-    if row.requester_user_id != current_user.id and not can_manage and not _can_process_movement(row) and not _can_edit_movement(row) and not _can_view_movement(row):
+    actor = _movement_actor()
+    can_manage = actor.has_perm("TRANSPORT_READ") or actor.has_perm("TRANSPORT_APPROVE")
+    if row.requester_user_id != actor.id and not can_manage and not _can_process_movement(row) and not _can_edit_movement(row) and not _can_view_movement(row):
         abort(403)
     can_approve = _can_process_movement(row)
     current_user_approval = (
@@ -1513,7 +1538,7 @@ def transport_permit_approve(permit_id: int):
     else:
         row.status = "APPROVED"
         row.approval_stage = "DONE"
-        row.approver_user_id = current_user.id
+        row.approver_user_id = _movement_actor().id
         row.decided_at = datetime.utcnow()
         row.decision_note = decision_note
 
@@ -1559,7 +1584,7 @@ def transport_permit_reject(permit_id: int):
 
     decision_note = (request.form.get("decision_note") or "").strip() or None
     row.status = "REJECTED"
-    row.approver_user_id = current_user.id
+    row.approver_user_id = _movement_actor().id
     row.decided_at = datetime.utcnow()
     row.decision_note = decision_note
     _record_movement_action(row, "REJECTED", decision_note)
