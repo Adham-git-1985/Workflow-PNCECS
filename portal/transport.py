@@ -16,7 +16,7 @@ from sqlalchemy import inspect, or_
 from . import portal_bp
 from extensions import db
 from utils.perms import perm_required
-from utils.permissions import get_authorization_user
+from utils.permissions import get_authorization_user, get_effective_user
 from utils.role_codes import canonical_role_key
 from services.transport_forms import (
     build_maintenance_request_pdf,
@@ -153,16 +153,29 @@ def _movement_actor() -> User:
 
     A delegated/acting session displays the selected working identity while
     Flask-Login keeps ``current_user`` as the technical account.  Movement
-    approval checks must use the selected identity; otherwise a requester
-    acting on behalf of an authorized transport manager is incorrectly
-    blocked by the requester guard below.
+    approval checks must use the same effective identity shown in the page;
+    otherwise a requester acting on behalf of an authorized transport manager
+    is incorrectly blocked by the requester guard below.
     """
-    try:
-        actor = get_authorization_user()
-        if actor is not None and getattr(actor, "id", None):
+    candidates = []
+    for resolver in (get_authorization_user, get_effective_user):
+        try:
+            actor = resolver()
+            if actor is not None and getattr(actor, "id", None):
+                candidates.append(actor)
+        except Exception:
+            continue
+
+    # Prefer a selected identity over the technical Flask-Login account.  The
+    # two resolvers intentionally cover both the newer acting context and the
+    # legacy delegation context; whichever one has loaded the selected user
+    # must be allowed to drive the approval decision.
+    current_id = getattr(current_user, "id", None)
+    for actor in candidates:
+        if getattr(actor, "id", None) != current_id:
             return actor
-    except Exception:
-        pass
+    if candidates:
+        return candidates[0]
     return current_user
 
 

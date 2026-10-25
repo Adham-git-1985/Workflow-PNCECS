@@ -247,3 +247,21 @@ class TransportApprovalRoutingTests(unittest.TestCase):
             login_user(self.requester)
             self.assertTrue(_can_process_movement(self.permit))
             logout_user()
+
+    def test_effective_working_identity_can_process_requester_session(self):
+        """Approval follows the identity displayed by the application shell."""
+        db.session.add(UserPermission(
+            user_id=self.transport_manager.id,
+            key="TRANSPORT_MANAGER_APPROVE",
+            is_allowed=True,
+        ))
+        self.permit.approval_stage = "TRANSPORT"
+        db.session.commit()
+
+        with self.app.test_request_context(), patch(
+            "portal.transport.get_effective_user",
+            return_value=self.transport_manager,
+        ):
+            login_user(self.requester)
+            self.assertTrue(_can_process_movement(self.permit))
+            logout_user()
