@@ -357,6 +357,7 @@ from services.workflow_confidentiality import (
 )
 from services.correspondence_workflow import (
     correspondence_target_user_ids,
+    filter_correspondence_notification_user_ids,
     sync_correspondence_from_workflow,
 )
 from services.circulars import (
@@ -40402,13 +40403,14 @@ def _corr_apply_confidentiality_form(item, *, is_new: bool = False) -> set[int]:
 
 def _corr_notification_recipient_ids(item, candidate_ids: set[int]) -> set[int]:
     recipients = {int(user_id) for user_id in candidate_ids if user_id}
-    if (getattr(item, "confidentiality", "NORMAL") or "NORMAL").upper() != "SECRET":
-        return recipients
     allowed = _corr_authorized_user_ids(item)
-    for user_id in (getattr(item, "created_by_id", None), getattr(item, "current_assignee_id", None)):
-        if user_id:
-            allowed.add(int(user_id))
-    return recipients.intersection(allowed)
+    return filter_correspondence_notification_user_ids(
+        recipients,
+        confidentiality=getattr(item, "confidentiality", None),
+        created_by_user_id=getattr(item, "created_by_id", None),
+        current_assignee_user_id=getattr(item, "current_assignee_id", None),
+        authorized_user_ids=allowed,
+    )
 
 
 def _corr_notify_new_authorizations(item, before: set[int], after: set[int]) -> None:

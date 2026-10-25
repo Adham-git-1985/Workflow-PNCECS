@@ -9,6 +9,7 @@ from sqlalchemy import inspect
 
 from extensions import db
 from models import CorrConfidentialAccess, InboundMail, Notification, OutboundMail, SystemSetting
+from services.correspondence_workflow import filter_correspondence_notification_user_ids
 from utils.notification_links import notification_target_path
 
 
@@ -52,13 +53,14 @@ def _recipient_ids(item) -> set[int]:
     except Exception:
         pass
 
+    authorized_user_ids = set()
     if (getattr(item, "confidentiality", "NORMAL") or "NORMAL").upper() == "SECRET":
         parent_filter = (
             CorrConfidentialAccess.inbound_id == item.id
             if isinstance(item, InboundMail)
             else CorrConfidentialAccess.outbound_id == item.id
         )
-        allowed = {
+        authorized_user_ids = {
             int(row[0])
             for row in (
                 db.session.query(CorrConfidentialAccess.user_id)
@@ -67,11 +69,13 @@ def _recipient_ids(item) -> set[int]:
             )
             if row[0]
         }
-        for user_id in (item.current_assignee_id, item.created_by_id):
-            if user_id:
-                allowed.add(int(user_id))
-        recipients.intersection_update(allowed)
-    return recipients
+    return filter_correspondence_notification_user_ids(
+        recipients,
+        confidentiality=getattr(item, "confidentiality", None),
+        created_by_user_id=getattr(item, "created_by_id", None),
+        current_assignee_user_id=getattr(item, "current_assignee_id", None),
+        authorized_user_ids=authorized_user_ids,
+    )
 
 
 def check_correspondence_deadlines(today: date | None = None) -> int:

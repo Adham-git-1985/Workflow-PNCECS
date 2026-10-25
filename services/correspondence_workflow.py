@@ -34,6 +34,7 @@ from models import (
     WorkflowInstanceStep,
     WorkflowRequest,
 )
+from services.correspondence_procedure import can_access_correspondence
 
 
 _CORRESPONDENCE_TARGET_QUERY_CHUNK_SIZE = 400
@@ -54,6 +55,61 @@ def _correspondence_target_key(target: dict | None) -> tuple[str, int] | None:
     except (TypeError, ValueError):
         return None
     return kind, target_id
+
+
+def filter_correspondence_notification_user_ids(
+    user_ids: Iterable[int] | None,
+    *,
+    confidentiality: str | None = None,
+    created_by_user_id: int | None = None,
+    current_assignee_user_id: int | None = None,
+    authorized_user_ids: Iterable[int] | None = None,
+) -> set[int]:
+    """Keep only users who can actually open a correspondence notification.
+
+    Routing targets describe an audience, but membership in that audience is
+    not itself a correspondence permission. Apply the same access policy as
+    the correspondence views before creating a notification, so a user does
+    not receive a link that will immediately return 403.
+    """
+    candidate_ids = {
+        int(user_id)
+        for user_id in (user_ids or ())
+        if user_id
+    }
+    if not candidate_ids:
+        return set()
+
+    authorized_ids = {
+        int(user_id)
+        for user_id in (authorized_user_ids or ())
+        if user_id
+    }
+    try:
+        users = User.query.filter(User.id.in_(candidate_ids)).all()
+    except Exception:
+        # Do not emit a notification when the authorization lookup is not
+        # available. Sending an unverified document link is the unsafe path.
+        return set()
+
+    allowed_ids: set[int] = set()
+    for user in users:
+        try:
+            if can_access_correspondence(
+                confidentiality=confidentiality,
+                user_id=user.id,
+                has_regular_read=bool(user.has_perm("CORR_READ")),
+                has_confidential_read=bool(user.has_perm("CORR_CONFIDENTIAL_READ")),
+                has_confidential_manage=bool(user.has_perm("CORR_CONFIDENTIAL_MANAGE")),
+                created_by_user_id=created_by_user_id,
+                current_assignee_user_id=current_assignee_user_id,
+                authorized_user_ids=authorized_ids,
+            ):
+                allowed_ids.add(int(user.id))
+        except Exception:
+            # Permission evaluation is deliberately fail-closed per recipient.
+            continue
+    return allowed_ids
 
 
 def correspondence_target_user_ids(target: dict | None) -> list[int]:
