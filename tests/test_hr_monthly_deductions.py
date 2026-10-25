@@ -50,6 +50,7 @@ from portal.routes import (
     _deduction_pending_approval_summary,
     _notify_deduction_pending_users,
     _monthly_attendance_deduction_breakdown,
+    _leave_deduction_components,
     _has_manual_deduction_operation,
     run_automatic_leave_deduction_cycle,
     _one_time_leave_error,
@@ -155,6 +156,64 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
                     status="OK",
                 ))
             current_day += timedelta(days=1)
+
+    def test_late_and_early_can_complete_a_day_without_combining_departures(self):
+        raw = {
+            "permission_minutes": 180,
+            "late_minutes": 200,
+            "early_leave_minutes": 300,
+            "absent_days": 0,
+            "excluded_minutes": 0,
+            "details": {"days": [], "departures": []},
+        }
+        with patch("portal.routes._monthly_attendance_deduction_breakdown", return_value=raw):
+            result = _leave_deduction_components(
+                self.user.id,
+                2026,
+                3,
+                420,
+                ["DEPARTURES", "LATE", "EARLY"],
+                "LATE_EARLY",
+                carry_departures=True,
+                carry_late=False,
+                carry_early=True,
+                carry_in={"DEPARTURES": 0, "LATE": 0, "EARLY": 0},
+            )
+
+        self.assertEqual(result["deduction_days"], 1)
+        self.assertEqual(result["consumed"], {"DEPARTURES": 0, "LATE": 200, "EARLY": 220})
+        self.assertEqual(result["carry_out"], {"DEPARTURES": 180, "LATE": 0, "EARLY": 80})
+        self.assertEqual(result["details"]["deduction_style"], "LATE_EARLY")
+        self.assertIn("التأخير + الخروج المبكر", result["details"]["formula"])
+
+    def test_carry_is_selected_independently_for_each_source(self):
+        raw = {
+            "permission_minutes": 180,
+            "late_minutes": 200,
+            "early_leave_minutes": 300,
+            "absent_days": 0,
+            "excluded_minutes": 0,
+            "details": {"days": [], "departures": []},
+        }
+        with patch("portal.routes._monthly_attendance_deduction_breakdown", return_value=raw):
+            result = _leave_deduction_components(
+                self.user.id,
+                2026,
+                3,
+                420,
+                ["DEPARTURES", "LATE", "EARLY"],
+                "AGGREGATE",
+                carry_departures=True,
+                carry_late=False,
+                carry_early=True,
+                carry_in={"DEPARTURES": 0, "LATE": 0, "EARLY": 0},
+            )
+
+        self.assertEqual(result["deduction_days"], 1)
+        self.assertEqual(result["carry_out"], {"DEPARTURES": 0, "LATE": 0, "EARLY": 260})
+        self.assertTrue(result["source_summary"]["DEPARTURES"]["carry_enabled"])
+        self.assertFalse(result["source_summary"]["LATE"]["carry_enabled"])
+        self.assertTrue(result["source_summary"]["EARLY"]["carry_enabled"])
 
     def test_automatic_cycle_cannot_run_before_a_manual_cycle(self):
         config = HRAttendanceDeductionConfig(automatic_enabled=True)

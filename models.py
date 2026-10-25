@@ -4875,7 +4875,7 @@ class HRAttendanceDeductionConfig(db.Model):
 
     # Reference-system settings (the default is configurable; the product
     # default is 6.5 hours -> 1 leave day).
-    deduction_style = db.Column(db.String(40), default="AGGREGATE", nullable=False)  # AGGREGATE / PER_CATEGORY
+    deduction_style = db.Column(db.String(40), default="AGGREGATE", nullable=False)  # AGGREGATE / LATE_EARLY / PER_CATEGORY
     hours_per_day = db.Column(db.Float, default=6.5, nullable=False)
 
     # New leave-deduction policy fields.  Keep the older source/carry fields

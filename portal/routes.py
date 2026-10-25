@@ -16958,7 +16958,8 @@ def hr_deductions_settings():
     cfg = HRAttendanceDeductionConfig.query.order_by(HRAttendanceDeductionConfig.updated_at.desc()).first()
 
     style_opts = [
-        ('AGGREGATE', 'احتساب يوم خصم عن كل عدد الساعات المحدد من كافة المصادر مجتمعة'),
+        ('AGGREGATE', 'احتساب يوم خصم عن كل عدد الساعات المحدد من كافة المصادر المختارة مجتمعة'),
+        ('LATE_EARLY', 'تجميع التأخير والخروج المبكر معاً، مع إبقاء المغادرات مستقلة'),
         ('PER_CATEGORY', 'احتساب يوم خصم عن كل عدد الساعات المحدد لكل مصدر على حدة'),
     ]
     source_opts = [('LEAVE', 'من الإجازات'), ('SALARY', 'من الراتب')]
@@ -17034,7 +17035,7 @@ def hr_deductions_settings():
             v = (request.form.get(name) or '').strip().upper()
             return v if v in allowed else default
 
-        deduction_style = _pick('deduction_style', 'AGGREGATE', {'AGGREGATE', 'PER_CATEGORY'})
+        deduction_style = _pick('deduction_style', 'AGGREGATE', {'AGGREGATE', 'LATE_EARLY', 'PER_CATEGORY'})
         late_source = _pick('late_source', 'SALARY', {'LEAVE', 'SALARY'})
         early_source = _pick('early_source', 'SALARY', {'LEAVE', 'SALARY'})
         special_permission_source = _pick('special_permission_source', 'SALARY', {'LEAVE', 'SALARY'})
@@ -22759,6 +22760,13 @@ _LEAVE_DEDUCTION_SOURCE_LABELS = {
     "LATE": "التأخير الصباحي",
     "EARLY": "الخروج المبكر",
 }
+_LEAVE_DEDUCTION_STYLES = {"AGGREGATE", "LATE_EARLY", "PER_CATEGORY"}
+
+
+def _leave_deduction_style(value) -> str:
+    """Normalize the grouping mode saved in a policy snapshot."""
+    style = str(value or "AGGREGATE").strip().upper()
+    return style if style in _LEAVE_DEDUCTION_STYLES else "AGGREGATE"
 
 
 def _leave_deduction_sources(value) -> list[str]:
@@ -22940,10 +22948,31 @@ def _leave_deduction_components(
     source_remainder = {code: available[code] for code in _LEAVE_DEDUCTION_SOURCE_ORDER}
     threshold = max(1, int(minutes_per_day or 1))
 
-    if (deduction_style or "AGGREGATE").upper() == "PER_CATEGORY":
+    style = _leave_deduction_style(deduction_style)
+    if style == "PER_CATEGORY":
         for code in selected:
             days = available[code] // threshold
             consumed[code] = days * threshold
+            source_remainder[code] = available[code] - consumed[code]
+    elif style == "LATE_EARLY":
+        # Keep approved departures in their own bucket, while allowing
+        # morning lateness and early departure to complete a day together.
+        if "DEPARTURES" in selected:
+            days = available["DEPARTURES"] // threshold
+            consumed["DEPARTURES"] = days * threshold
+            source_remainder["DEPARTURES"] = available["DEPARTURES"] - consumed["DEPARTURES"]
+
+        combined_codes = [code for code in ("LATE", "EARLY") if code in selected]
+        total_available = sum(available[code] for code in combined_codes)
+        total_consumed = (total_available // threshold) * threshold
+        remaining = total_consumed
+        # Allocate the combined consumption in a stable order so the source
+        # summary and carry buckets remain auditable.
+        for code in combined_codes:
+            if remaining <= 0:
+                break
+            consumed[code] = min(available[code], remaining)
+            remaining -= consumed[code]
             source_remainder[code] = available[code] - consumed[code]
     else:
         total_available = sum(available[code] for code in selected)
@@ -23008,7 +23037,7 @@ def _leave_deduction_components(
         departure_current_consumed -= deducted_minutes
     details["policy_version"] = 2
     details["selected_sources"] = selected
-    details["deduction_style"] = (deduction_style or "AGGREGATE").upper()
+    details["deduction_style"] = style
     details["source_summary"] = source_summary
     details.setdefault("summary", {}).update({
         "selected_source_minutes": sum(available[code] for code in selected),
@@ -23018,7 +23047,12 @@ def _leave_deduction_components(
         ),
         "deducted_full_minutes": sum(consumed.values()),
     })
-    details["formula"] = "المصادر المختارة ÷ ساعات الاحتساب لليوم؛ يتم احتساب الأيام الكاملة فقط"
+    if style == "LATE_EARLY":
+        details["formula"] = "المغادرات مستقلة؛ التأخير + الخروج المبكر مجتمعان ÷ ساعات الاحتساب لليوم"
+    elif style == "PER_CATEGORY":
+        details["formula"] = "كل مصدر مستقل ÷ ساعات الاحتساب لليوم؛ يتم احتساب الأيام الكاملة لكل مصدر"
+    else:
+        details["formula"] = "المصادر المختارة مجتمعة ÷ ساعات الاحتساب لليوم؛ يتم احتساب الأيام الكاملة فقط"
     details.setdefault("summary", {})["excluded_absence_minutes"] = int(raw.get("absent_days") or 0) * threshold
     return {
         "raw": raw,
