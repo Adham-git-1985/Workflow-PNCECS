@@ -59,11 +59,13 @@ class HRAttendancePolicyCenterTests(unittest.TestCase):
             "التأخير الصباحي",
             "الخروج المبكر",
             "إجمالي أيام الخصم",
+            "الساعات المرحلة للدورة القادمة",
             "duration_pair",
         ):
             with self.subTest(label=label):
                 self.assertIn(label, self.deduction_view)
         self.assertNotIn('colspan="14"', self.deduction_view)
+        self.assertIn("carry_out_minutes", self.deduction_view)
 
     def test_only_final_deductions_affect_balances_and_salary_report(self):
         self.assertIn("HRAttendanceDeductionRun.status == 'FINAL'", self.routes)

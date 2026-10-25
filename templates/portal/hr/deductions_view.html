@@ -271,6 +271,55 @@
   </div>
 </div>
 
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <h6 class="mb-1">الساعات المرحلة للدورة القادمة</h6>
+      <div class="small text-muted">تظهر فقط المدة التي ستنتقل إلى الدورة التالية، دون إعادة تفاصيل الخصم.</div>
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>الموظف</th>
+          <th>المغادرات</th>
+          <th>التأخير الصباحي</th>
+          <th>الخروج المبكر</th>
+          <th>إجمالي الساعات المرحلة</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set carry_rows = namespace(count=0) %}
+        {% for item in items %}
+          {% set details = details_by_item.get(item.id, {}) %}
+          {% set source_summary = details.get('source_summary') or {} %}
+          {% set departure_carry = (source_summary.get('DEPARTURES') or {}).get('carry_out_minutes') %}
+          {% if departure_carry is none %}{% set departure_carry = item.carry_departure_minutes or 0 %}{% endif %}
+          {% set late_carry = (source_summary.get('LATE') or {}).get('carry_out_minutes') %}
+          {% if late_carry is none %}{% set late_carry = item.carry_late_minutes or 0 %}{% endif %}
+          {% set early_carry = (source_summary.get('EARLY') or {}).get('carry_out_minutes') %}
+          {% if early_carry is none %}{% set early_carry = item.carry_early_leave_minutes or 0 %}{% endif %}
+          {% set total_carry = (departure_carry|int) + (late_carry|int) + (early_carry|int) %}
+          {% if total_carry > 0 %}
+            {% set carry_rows.count = carry_rows.count + 1 %}
+            <tr>
+              <td style="min-width:170px"><div class="fw-bold">{{ item.user.full_name or item.user.name or '—' }}</div><div class="text-muted small">{{ item.user.email or '' }}</div></td>
+              <td>{{ duration_pair(departure_carry) }}</td>
+              <td>{{ duration_pair(late_carry) }}</td>
+              <td>{{ duration_pair(early_carry) }}</td>
+              <td class="fw-bold text-primary">{{ duration_pair(total_carry) }}</td>
+            </tr>
+          {% endif %}
+        {% endfor %}
+        {% if carry_rows.count == 0 %}
+          <tr><td colspan="5" class="text-center text-muted py-3">لا توجد ساعات مرحلة للدورة القادمة.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
 {% if is_draft and can_approve %}
 <form method="post" action="{{ url_for('portal.hr_deduction_approve', run_id=run.id) }}" class="bg-white border border-success rounded-3 shadow-sm p-3">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
