@@ -17356,6 +17356,19 @@ def hr_deductions_run():
 @_perm(HR_ATTENDANCE_DEDUCTIONS_MANAGE)
 def hr_deductions_view(run_id: int):
     run = HRAttendanceDeductionRun.query.get_or_404(run_id)
+    try:
+        run_policy_snapshot = json.loads(run.config_snapshot_json or '{}')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        run_policy_snapshot = {}
+    current_policy_config = (
+        HRAttendanceDeductionConfig.query
+        .order_by(HRAttendanceDeductionConfig.updated_at.desc())
+        .first()
+    )
+    policy_comparison = _leave_deduction_policy_comparison(
+        run_policy_snapshot,
+        current_policy_config,
+    )
     exempt_user_ids = _attendance_exempt_user_ids()
     visible_items = [
         item for item in run.items
@@ -17436,11 +17449,16 @@ def hr_deductions_view(run_id: int):
 
     can_approve = _hr_can_manage_deductions()
     details_by_item = {}
+    full_day_minutes_by_item = {}
     for item in visible_items:
         try:
             details_by_item[item.id] = json.loads(item.details_json or '{}')
         except (TypeError, ValueError, json.JSONDecodeError):
             details_by_item[item.id] = {}
+        full_day_minutes_by_item[item.id] = _deduction_full_day_minutes(
+            item,
+            details_by_item[item.id],
+        )
     live_departures_by_user = {}
     pending_approval_by_user = {}
     if (run.status or '').upper() == 'DRAFT' and visible_items:
@@ -17468,6 +17486,8 @@ def hr_deductions_view(run_id: int):
         details_by_item=details_by_item,
         live_departures_by_user=live_departures_by_user,
         pending_approval_by_user=pending_approval_by_user,
+        policy_comparison=policy_comparison,
+        full_day_minutes_by_item=full_day_minutes_by_item,
     )
 
 
@@ -17475,7 +17495,7 @@ def hr_deductions_view(run_id: int):
 @login_required
 @_perm(HR_ATTENDANCE_DEDUCTIONS_MANAGE)
 def hr_deduction_refresh(run_id: int):
-    """Explicitly refresh a draft from the current approved source data."""
+    """Explicitly refresh a draft from approved sources and, when requested, policy."""
     run = HRAttendanceDeductionRun.query.get_or_404(run_id)
     if (run.status or '').upper() != 'DRAFT':
         flash('يمكن تحديث المعاينة قبل الاعتماد فقط.', 'warning')
@@ -17486,7 +17506,35 @@ def hr_deduction_refresh(run_id: int):
     except (TypeError, ValueError, json.JSONDecodeError):
         snapshot = {}
 
-    changed = False
+    sync_policy = (request.form.get('sync_policy') or '').strip().lower() in {
+        '1', 'true', 'yes', 'on'
+    }
+    policy_updated = False
+    if sync_policy:
+        current_cfg = (
+            HRAttendanceDeductionConfig.query
+            .order_by(HRAttendanceDeductionConfig.updated_at.desc())
+            .first()
+        )
+        if not current_cfg:
+            flash('لا توجد سياسة خصم محفوظة لإعادة تطبيقها على هذه المسودة.', 'warning')
+            return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
+        snapshot = _leave_deduction_policy_snapshot_from_config(
+            current_cfg,
+            run.year,
+            run.month,
+            execution_mode=run.execution_mode or 'MANUAL',
+        )
+        run.config_snapshot_json = json.dumps(snapshot, ensure_ascii=False)
+        carry_flags = _leave_deduction_carry_flags(snapshot.get('carry_policy'))
+        run.carry_departures = carry_flags['DEPARTURES']
+        run.carry_late = carry_flags['LATE']
+        run.carry_early = carry_flags['EARLY']
+        for item in run.items:
+            item.deduction_leave_type_id = snapshot.get('annual_leave_type_id')
+        policy_updated = True
+
+    changed = policy_updated
     for item in run.items:
         if _is_attendance_exempt_user(item.user_id):
             continue
@@ -17494,14 +17542,21 @@ def hr_deduction_refresh(run_id: int):
 
     _refresh_deduction_run_totals(run)
     _portal_audit(
-        'HR_DEDUCTION_DRAFT_REFRESH',
-        f'تحديث معاينة خصومات {run.year}-{run.month:02d} من بيانات المصادر الحالية',
+        'HR_DEDUCTION_DRAFT_REFRESH_POLICY' if policy_updated else 'HR_DEDUCTION_DRAFT_REFRESH',
+        (
+            f'تحديث معاينة خصومات {run.year}-{run.month:02d} مع إعادة تطبيق السياسة الحالية'
+            if policy_updated
+            else f'تحديث معاينة خصومات {run.year}-{run.month:02d} من بيانات المصادر الحالية'
+        ),
         target_type='HR_ATT_DEDUCTION_RUN',
         target_id=run.id,
     )
     db.session.commit()
     if changed:
-        flash('تم تحديث المعاينة من بيانات الدوام والمغادرات المعتمدة. لم يتغير الرصيد قبل الاعتماد.', 'success')
+        if policy_updated:
+            flash('تمت إعادة تطبيق السياسة الحالية وتحديث المعاينة. لم يتغير الرصيد قبل الاعتماد.', 'success')
+        else:
+            flash('تم تحديث المعاينة من بيانات الدوام والمغادرات المعتمدة. لم يتغير الرصيد قبل الاعتماد.', 'success')
     else:
         flash('تم تحديث المعاينة؛ لم يظهر اختلاف في بيانات المصادر.', 'info')
     return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
@@ -17831,6 +17886,26 @@ def hr_deduction_approve(run_id: int):
     run = HRAttendanceDeductionRun.query.get_or_404(run_id)
     if (run.status or '').upper() != 'DRAFT':
         flash('عملية الخصم معتمدة مسبقاً.', 'info')
+        return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
+
+    try:
+        saved_policy_snapshot = json.loads(run.config_snapshot_json or '{}')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        saved_policy_snapshot = {}
+    current_policy_config = (
+        HRAttendanceDeductionConfig.query
+        .order_by(HRAttendanceDeductionConfig.updated_at.desc())
+        .first()
+    )
+    if _leave_deduction_policy_comparison(
+        saved_policy_snapshot,
+        current_policy_config,
+    ).get('mismatch'):
+        flash(
+            'لا يمكن اعتماد المسودة لأن السياسة المحفوظة معها تختلف عن السياسة الحالية. '
+            'استخدم «إعادة تطبيق السياسة الحالية» ثم راجع النتائج قبل الاعتماد.',
+            'warning',
+        )
         return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
 
     exempt_items = [
@@ -18277,9 +18352,13 @@ def _attendance_deduction_report_rows(year: int | None = None, month: int | None
             except (TypeError, ValueError, json.JSONDecodeError):
                 details = {}
             source_summary = details.get('source_summary') or {}
-            remainder_minutes = sum(
-                int((source_summary.get(code) or {}).get('remainder_minutes') or 0)
-                for code in _LEAVE_DEDUCTION_SOURCE_ORDER
+            policy_display = _leave_deduction_policy_display(snapshot)
+            remainder_minutes = int(
+                getattr(item, 'remainder_minutes', 0)
+                or sum(
+                    int((source_summary.get(code) or {}).get('carry_out_minutes') or 0)
+                    for code in _LEAVE_DEDUCTION_SOURCE_ORDER
+                )
             )
             carry_minutes = {
                 code: int((source_summary.get(code) or {}).get('carry_out_minutes') or 0)
@@ -18287,6 +18366,16 @@ def _attendance_deduction_report_rows(year: int | None = None, month: int | None
             }
             actor = run.approved_by or run.created_by or run.reversed_by
             leave_type = item.deduction_leave_type
+            threshold_hours = float(
+                details.get('hours_per_day') or snapshot.get('hours_per_day') or 6.5
+            )
+            full_day_minutes = _deduction_full_day_minutes(item, details)
+            threshold_minutes = max(1, int(round(threshold_hours * 60)))
+            deducted_days = (
+                full_day_minutes / threshold_minutes
+                if policy_display['legacy']
+                else float(item.leave_deduction_days or 0)
+            )
             rows.append({
                 'run': run,
                 'item': item,
@@ -18301,9 +18390,9 @@ def _attendance_deduction_report_rows(year: int | None = None, month: int | None
                 'late_hours': round((int(item.late_minutes or 0) / 60), 2),
                 'early_minutes': int(item.early_leave_minutes or 0),
                 'early_hours': round((int(item.early_leave_minutes or 0) / 60), 2),
-                'deducted_days': float(item.leave_deduction_days or 0),
-                'threshold_hours': float(details.get('hours_per_day') or snapshot.get('hours_per_day') or 6.5),
-                'chargeable_hours': round((int(item.chargeable_minutes or 0) / 60), 2),
+                'deducted_days': deducted_days,
+                'threshold_hours': threshold_hours,
+                'chargeable_hours': round((full_day_minutes / 60), 2),
                 'excess_minutes': remainder_minutes,
                 'excess_hours': round(remainder_minutes / 60, 2),
                 'carry_departures': carry_minutes['DEPARTURES'],
@@ -18311,7 +18400,14 @@ def _attendance_deduction_report_rows(year: int | None = None, month: int | None
                 'carry_early': carry_minutes['EARLY'],
                 'carry_any': any(carry_minutes.values()),
                 'carry_label': 'نعم' if any(carry_minutes.values()) else 'لا',
-                'selected_sources': '، '.join(_LEAVE_DEDUCTION_SOURCE_LABELS[code] for code in (details.get('selected_sources') or snapshot.get('selected_sources') or [])),
+                'selected_sources': (
+                    policy_display['sources_label']
+                    if policy_display['legacy']
+                    else '، '.join(
+                        _LEAVE_DEDUCTION_SOURCE_LABELS[code]
+                        for code in (details.get('selected_sources') or snapshot.get('selected_sources') or [])
+                    )
+                ),
                 'status_label': f"{run.status} / {run.operation_type or 'NORMAL'}",
                 'actor': getattr(actor, 'full_name', None) or getattr(actor, 'name', None) or getattr(actor, 'email', None) or ('تشغيل تلقائي' if run.execution_mode == 'AUTO' else ''),
             })
@@ -22881,6 +22977,275 @@ def _leave_deduction_sources(value) -> list[str]:
     return [code for code in _LEAVE_DEDUCTION_SOURCE_ORDER if code in selected]
 
 
+def _leave_deduction_policy_snapshot_from_config(
+    cfg: HRAttendanceDeductionConfig | None,
+    year: int | None = None,
+    month: int | None = None,
+    *,
+    selected_sources: list[str] | None = None,
+    carry_policy: str | None = None,
+    execution_mode: str = "MANUAL",
+    deduction_leave_type_id: int | None = None,
+) -> dict:
+    """Build the immutable policy snapshot used by a deduction draft.
+
+    Keeping this in one place is important: the settings page, a refreshed
+    draft, and a newly-created draft must describe the same policy.  Older
+    drafts intentionally keep their historical snapshot until an HR user
+    explicitly asks to apply the current policy.
+    """
+    if cfg is None:
+        return {
+            "policy_version": 2,
+            "deduction_style": "AGGREGATE",
+            "hours_per_day": 6.5,
+            "selected_sources": ["DEPARTURES"],
+            "annual_leave_type_id": None,
+            "enabled_leave_type_ids": [],
+            "deduction_sequence": "LEAVE_ONLY",
+            "carry_departures": False,
+            "carry_late": False,
+            "carry_early": False,
+            "carry_policy": "NONE",
+            "permission_allowance_hours": 0.0,
+            "execution_mode": execution_mode,
+            "gregorian_period": f"{year:04d}-{month:02d}" if year and month else None,
+            "exclusion_policy_version": 1,
+        }
+
+    enabled_leave_type_ids = _leave_deduction_leave_type_ids(cfg)
+    selection_was_saved = getattr(cfg, "leave_type_selection_json", None) is not None
+    requested_leave_type_id = (
+        _leave_balance_owner_id(deduction_leave_type_id)
+        if deduction_leave_type_id
+        else _leave_balance_owner_id(getattr(cfg, "annual_leave_type_id", None))
+    )
+    if enabled_leave_type_ids:
+        annual_leave_type_id = requested_leave_type_id
+        if annual_leave_type_id not in enabled_leave_type_ids:
+            annual_leave_type_id = enabled_leave_type_ids[0]
+    elif selection_was_saved:
+        annual_leave_type_id = None
+    else:
+        annual_leave_type_id = requested_leave_type_id or _permission_excess_leave_type_id()
+
+    selected = _leave_deduction_sources(
+        selected_sources
+        if selected_sources is not None
+        else getattr(cfg, "source_selection_json", None)
+    ) or ["DEPARTURES"]
+    configured_carry_policy = _leave_deduction_carry_policy_from_config(cfg)
+    normalized_carry_policy = _leave_deduction_carry_policy(
+        carry_policy or configured_carry_policy,
+        carry_departures=bool(getattr(cfg, "default_carry_departures", False)),
+        carry_late=bool(getattr(cfg, "default_carry_late", False)),
+        carry_early=bool(getattr(cfg, "default_carry_early", False)),
+    )
+    carry_flags = _leave_deduction_carry_flags(normalized_carry_policy)
+    try:
+        hours_per_day = float(getattr(cfg, "hours_per_day", 6.5) or 6.5)
+    except (TypeError, ValueError):
+        hours_per_day = 6.5
+    if hours_per_day <= 0:
+        hours_per_day = 6.5
+    try:
+        permission_allowance_hours = float(
+            getattr(cfg, "permission_allowance_hours", 0.0) or 0.0
+        )
+    except (TypeError, ValueError):
+        permission_allowance_hours = 0.0
+    if permission_allowance_hours < 0:
+        permission_allowance_hours = 0.0
+
+    return {
+        "policy_version": 2,
+        "deduction_style": _leave_deduction_style(
+            getattr(cfg, "deduction_style", None)
+        ),
+        "hours_per_day": hours_per_day,
+        "selected_sources": selected,
+        "annual_leave_type_id": annual_leave_type_id,
+        "enabled_leave_type_ids": enabled_leave_type_ids,
+        "deduction_sequence": str(
+            getattr(cfg, "deduction_sequence", None) or "LEAVE_ONLY"
+        ).upper(),
+        "carry_departures": carry_flags["DEPARTURES"],
+        "carry_late": carry_flags["LATE"],
+        "carry_early": carry_flags["EARLY"],
+        "carry_policy": normalized_carry_policy,
+        # This value belongs to the legacy allowance model.  It is retained
+        # in the snapshot for audit clarity; policy version 2 does not apply
+        # it unless the selected legacy policy is used.
+        "permission_allowance_hours": permission_allowance_hours,
+        "execution_mode": execution_mode,
+        "gregorian_period": f"{year:04d}-{month:02d}" if year and month else None,
+        "exclusion_policy_version": 1,
+    }
+
+
+def _leave_deduction_policy_display(snapshot: dict | None) -> dict:
+    """Return stable, human-readable policy values for the review screen."""
+    snapshot = snapshot or {}
+    legacy = not snapshot.get("selected_sources") and not snapshot.get("policy_version")
+    try:
+        hours_per_day = float(snapshot.get("hours_per_day") or (7.0 if legacy else 6.5))
+    except (TypeError, ValueError):
+        hours_per_day = 7.0 if legacy else 6.5
+    if hours_per_day <= 0:
+        hours_per_day = 7.0 if legacy else 6.5
+
+    style = _leave_deduction_style(snapshot.get("deduction_style"))
+    style_labels = {
+        "AGGREGATE": "تجميع كل المصادر المختارة",
+        "LATE_EARLY": "تجميع التأخير والخروج المبكر معاً والمغادرات مستقلة",
+        "PER_CATEGORY": "احتساب كل مصدر على حدة",
+    }
+    source_labels = {
+        "DEPARTURES": "المغادرات المعتمدة",
+        "LATE": "التأخير الصباحي",
+        "EARLY": "الخروج المبكر",
+    }
+    if legacy:
+        selected_sources = []
+        sources_label = "الصيغة القديمة: التأخير + الخروج المبكر + المغادرات بعد السماح + الغياب"
+        carry_policy = str(
+            snapshot.get("carry_method") or snapshot.get("carry_policy") or "NONE"
+        ).upper()
+    else:
+        selected_sources = _leave_deduction_sources(snapshot.get("selected_sources")) or [
+            "DEPARTURES"
+        ]
+        sources_label = "، ".join(source_labels[code] for code in selected_sources)
+        carry_policy = _leave_deduction_carry_policy(
+            snapshot.get("carry_policy") or snapshot.get("carry_method"),
+            carry_departures=bool(snapshot.get("carry_departures")),
+            carry_late=bool(snapshot.get("carry_late")),
+            carry_early=bool(snapshot.get("carry_early")),
+        )
+    carry_labels = {
+        "DEPARTURES_ONLY": "ترحيل المغادرات فقط",
+        "LATE_EARLY_ONLY": "ترحيل التأخير والخروج المبكر فقط",
+        "ALL": "ترحيل جميع المصادر",
+        "NONE": "عدم الترحيل",
+        "CARRY_TO_NEXT": "الترحيل إلى الدورة التالية (قديم)",
+        "WITHIN_MONTH": "ضمن نفس الشهر فقط (قديم)",
+    }
+    sequence = str(
+        snapshot.get("deduction_sequence") or ("LEAVE_THEN_SALARY" if legacy else "LEAVE_ONLY")
+    ).upper()
+    sequence_labels = {
+        "LEAVE_ONLY": "من نوع الإجازة المحدد فقط",
+        "LEAVE_THEN_SALARY": "من الإجازة أولاً ثم الراتب",
+        "SALARY_ONLY": "من الراتب مباشرة",
+    }
+    try:
+        allowance_hours = float(snapshot.get("permission_allowance_hours") or 0.0)
+    except (TypeError, ValueError):
+        allowance_hours = 0.0
+    summary = (
+        f"{hours_per_day:.2f} ساعة/يوم · {style_labels.get(style, style)} · "
+        f"المصادر: {sources_label} · {sequence_labels.get(sequence, sequence)} · "
+        f"{carry_labels.get(carry_policy, carry_policy)}"
+    )
+    if allowance_hours:
+        summary += (
+            f" · سماح المغادرات القديم: {allowance_hours:.2f} ساعة"
+            if legacy
+            else f" · السماح القديم {allowance_hours:.2f} ساعة (لا يطبق على هذه السياسة)"
+        )
+    if legacy:
+        summary = f"{summary} · سياسة قديمة"
+    return {
+        "legacy": legacy,
+        "hours_per_day": round(hours_per_day, 4),
+        "style": style,
+        "style_label": style_labels.get(style, style),
+        "selected_sources": selected_sources,
+        "sources_label": sources_label,
+        "deduction_sequence": sequence,
+        "deduction_sequence_label": sequence_labels.get(sequence, sequence),
+        "carry_policy": carry_policy,
+        "carry_policy_label": carry_labels.get(carry_policy, carry_policy),
+        "permission_allowance_hours": round(allowance_hours, 4),
+        "summary": summary,
+    }
+
+
+def _leave_deduction_policy_signature(snapshot: dict | None) -> tuple:
+    """Return only policy fields that change a draft's calculation."""
+    display = _leave_deduction_policy_display(snapshot)
+    snapshot = snapshot or {}
+    if display["legacy"]:
+        return (
+            "legacy",
+            display["hours_per_day"],
+            str(snapshot.get("deduction_style") or "AGGREGATE").upper(),
+            str(snapshot.get("deduction_sequence") or "LEAVE_THEN_SALARY").upper(),
+            display["carry_policy"],
+            round(display["permission_allowance_hours"], 4),
+        )
+    enabled = tuple(
+        int(value)
+        for value in (snapshot.get("enabled_leave_type_ids") or [])
+        if str(value).isdigit()
+    )
+    try:
+        annual_leave_type_id = int(snapshot.get("annual_leave_type_id"))
+    except (TypeError, ValueError):
+        annual_leave_type_id = None
+    return (
+        "modern",
+        display["hours_per_day"],
+        display["style"],
+        tuple(display["selected_sources"]),
+        display["deduction_sequence"],
+        display["carry_policy"],
+        annual_leave_type_id,
+        enabled,
+    )
+
+
+def _leave_deduction_policy_comparison(snapshot: dict | None, cfg) -> dict:
+    """Compare a draft's saved policy with the currently configured policy."""
+    applied = _leave_deduction_policy_display(snapshot)
+    if not cfg:
+        return {"mismatch": False, "applied": applied, "current": None}
+    current_snapshot = _leave_deduction_policy_snapshot_from_config(cfg)
+    current = _leave_deduction_policy_display(current_snapshot)
+    return {
+        "mismatch": _leave_deduction_policy_signature(snapshot)
+        != _leave_deduction_policy_signature(current_snapshot),
+        "applied": applied,
+        "current": current,
+    }
+
+
+def _deduction_full_day_minutes(item, details: dict | None) -> int:
+    """Return only complete deduction-day minutes for display and reports.
+
+    Legacy rows stored all chargeable source minutes in ``chargeable_minutes``
+    and kept the fraction separately.  Policy-version-2 rows already store
+    complete-day minutes.  Flooring by the saved threshold makes both shapes
+    display consistently without changing the stored audit values.
+    """
+    details = details or {}
+    try:
+        threshold = int(details.get("minutes_per_day") or 0)
+    except (TypeError, ValueError):
+        threshold = 0
+    if threshold <= 0:
+        try:
+            threshold = int(round(float(details.get("hours_per_day") or 6.5) * 60))
+        except (TypeError, ValueError):
+            threshold = 390
+    threshold = max(1, threshold)
+    try:
+        chargeable = max(0, int(item.chargeable_minutes or 0))
+    except (TypeError, ValueError):
+        chargeable = 0
+    return (chargeable // threshold) * threshold
+
+
 def _leave_deduction_leave_type_ids(cfg: HRAttendanceDeductionConfig | None) -> list[int]:
     """Return active leave-balance types enabled for this policy."""
     raw = getattr(cfg, "leave_type_selection_json", None) if cfg else None
@@ -23264,6 +23629,9 @@ def _create_leave_deduction_draft(
             "carry_late": carry_late,
             "carry_early": carry_early,
             "carry_policy": carry_policy,
+            "permission_allowance_hours": float(
+                getattr(cfg, "permission_allowance_hours", 0.0) or 0.0
+            ),
             "execution_mode": execution_mode,
             "gregorian_period": f"{year:04d}-{month:02d}",
             "exclusion_policy_version": 1,

@@ -27,6 +27,33 @@
   </div>
 </div>
 
+{% set policy = policy_comparison or {} %}
+{% set applied_policy = policy.get('applied') or {} %}
+{% set current_policy = policy.get('current') or {} %}
+{% if applied_policy %}
+  {% if policy.get('mismatch') and is_draft %}
+    <div class="alert alert-danger d-flex gap-3 align-items-start">
+      <i class="bi bi-exclamation-octagon fs-4"></i>
+      <div class="w-100">
+        <strong>السياسة المحفوظة مع هذه المسودة لا تطابق السياسة الحالية.</strong>
+        <div class="small mt-1"><b>المطبقة على العملية:</b> {{ applied_policy.get('summary') }}</div>
+        <div class="small"><b>السياسة الحالية:</b> {{ current_policy.get('summary') }}</div>
+        {% if can_approve %}
+          <form method="post" action="{{ url_for('portal.hr_deduction_refresh', run_id=run.id) }}" class="mt-2" onsubmit="return confirm('سيتم إعادة حساب هذه المسودة وفق السياسة الحالية دون تغيير أي رصيد. متابعة؟')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+            <input type="hidden" name="sync_policy" value="1">
+            <button class="btn btn-sm btn-danger" type="submit"><i class="bi bi-arrow-repeat"></i> إعادة تطبيق السياسة الحالية وإعادة الحساب</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+    <div class="alert alert-light border small">
+      <b>السياسة المطبقة على هذه العملية:</b> {{ applied_policy.get('summary') }}
+    </div>
+  {% endif %}
+{% endif %}
+
 {% if is_draft %}
   <div class="alert alert-warning d-flex gap-3 align-items-start">
     <i class="bi bi-shield-exclamation fs-4"></i>
@@ -77,6 +104,7 @@
           {% set departure_source = source_summary.get('DEPARTURES') or {} %}
           {% set live_departure = live_departures_by_user.get(item.user_id) or {} %}
           {% set pending = pending_approval_by_user.get(item.user_id) or {} %}
+          {% set full_day_minutes = full_day_minutes_by_item.get(item.id, item.chargeable_minutes or 0) %}
           {% set total_source_minutes = summary.get('selected_source_minutes') %}
           {% if total_source_minutes is none %}{% set total_source_minutes = (summary.get('attendance_chargeable_minutes') or 0) + (summary.get('permission_chargeable_minutes') or 0) %}{% endif %}
           {% if total_source_minutes == 0 and not summary and not source_summary %}{% set total_source_minutes = item.chargeable_minutes or 0 %}{% endif %}
@@ -88,7 +116,7 @@
             <td><div>{{ item.departure_minutes or item.approved_permission_minutes or 0 }} د / {{ "%.2f"|format((item.departure_minutes or item.approved_permission_minutes or 0) / 60) }} س</div>{% if live_departure %}<div class="small text-success fw-semibold">المسجل حالياً: {{ live_departure.get('count', 0) }} مغادرة / {{ live_departure.get('minutes', 0) }} د</div>{% endif %}{% if departure_source %}<div class="small text-danger fw-semibold">داخل الخصم: {{ departure_source.get('current_consumed_minutes', departure_source.get('consumed_minutes', 0)) }} د</div>{% endif %}</td>
             <td>{{ "%.2f"|format(details.get('hours_per_day') or (((details.get('minutes_per_day', 390) or 390) / 60) or 6.5)) }} س</td>
             <td>{{ "%.2f"|format((item.excluded_minutes or 0) / 60) }} س</td>
-            <td class="text-danger fw-bold fs-5">{{ "%.2f"|format((item.chargeable_minutes or 0) / 60) }} س</td>
+            <td class="text-danger fw-bold fs-5">{{ "%.2f"|format(full_day_minutes / 60) }} س</td>
             <td>{{ "%.2f"|format((item.remainder_minutes or 0) / 60) }} س</td>
             <td>{% if (item.carry_departure_minutes or item.carry_late_minutes or item.carry_early_leave_minutes) %}<span class="badge text-bg-info">نعم</span>{% else %}<span class="badge text-bg-secondary">لا</span>{% endif %}</td>
             <td><span class="badge text-bg-primary">{{ "%.0f"|format(item.leave_deduction_days or 0) }} يوم</span></td>
@@ -98,8 +126,8 @@
           <tr class="table-light">
             <td colspan="14">
               <div class="d-flex flex-wrap align-items-center gap-2">
-                <span class="border border-danger rounded px-2 py-1 text-danger fw-bold">إجمالي ساعات المصادر المحتسبة: {{ "%.2f"|format(total_source_minutes / 60) }} ساعة ({{ total_source_minutes }} دقيقة)</span>
-                <span class="border border-danger rounded px-2 py-1 text-danger fw-bold">المخصوم كأيام كاملة: {{ "%.2f"|format((item.chargeable_minutes or 0) / 60) }} ساعة</span>
+                <span class="border border-danger rounded px-2 py-1 text-danger fw-bold">إجمالي ساعات المصادر قبل تحويلها لأيام كاملة: {{ "%.2f"|format(total_source_minutes / 60) }} ساعة ({{ total_source_minutes }} دقيقة)</span>
+                <span class="border border-danger rounded px-2 py-1 text-danger fw-bold">المخصوم كأيام كاملة: {{ "%.2f"|format(full_day_minutes / 60) }} ساعة</span>
                 {% if source_summary %}
                   {% for code in ('DEPARTURES', 'LATE', 'EARLY') %}
                     {% set source = source_summary.get(code) or {} %}

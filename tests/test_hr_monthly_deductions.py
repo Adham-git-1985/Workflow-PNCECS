@@ -51,6 +51,9 @@ from portal.routes import (
     _notify_deduction_pending_users,
     _monthly_attendance_deduction_breakdown,
     _leave_deduction_components,
+    _leave_deduction_policy_comparison,
+    _leave_deduction_policy_snapshot_from_config,
+    _deduction_full_day_minutes,
     _leave_deduction_carry_flags,
     _has_manual_deduction_operation,
     run_automatic_leave_deduction_cycle,
@@ -157,6 +160,96 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
                     status="OK",
                 ))
             current_day += timedelta(days=1)
+
+    def test_policy_comparison_detects_legacy_draft_against_current_settings(self):
+        config = HRAttendanceDeductionConfig(
+            deduction_style="LATE_EARLY",
+            hours_per_day=6.5,
+            source_selection_json=json.dumps(["DEPARTURES", "LATE", "EARLY"]),
+            leave_type_selection_json=json.dumps([]),
+            deduction_sequence="LEAVE_ONLY",
+            carry_method="LATE_EARLY_ONLY",
+            permission_allowance_hours=6.0,
+        )
+        db.session.add(config)
+        db.session.commit()
+
+        comparison = _leave_deduction_policy_comparison(
+            {
+                "deduction_style": "AGGREGATE",
+                "hours_per_day": 7.0,
+                "permission_allowance_hours": 6.0,
+                "deduction_sequence": "LEAVE_THEN_SALARY",
+                "carry_method": "CARRY_TO_NEXT",
+            },
+            config,
+        )
+
+        self.assertTrue(comparison["mismatch"])
+        self.assertEqual(comparison["applied"]["hours_per_day"], 7.0)
+        self.assertEqual(comparison["current"]["hours_per_day"], 6.5)
+        self.assertIn("LATE_EARLY", comparison["current"]["style"])
+
+    def test_current_policy_snapshot_matches_current_settings(self):
+        config = HRAttendanceDeductionConfig(
+            deduction_style="LATE_EARLY",
+            hours_per_day=6.5,
+            source_selection_json=json.dumps(["DEPARTURES", "LATE", "EARLY"]),
+            leave_type_selection_json=json.dumps([]),
+            deduction_sequence="LEAVE_ONLY",
+            carry_method="LATE_EARLY_ONLY",
+            permission_allowance_hours=6.0,
+        )
+        db.session.add(config)
+        db.session.commit()
+        snapshot = _leave_deduction_policy_snapshot_from_config(
+            config,
+            2026,
+            9,
+        )
+
+        comparison = _leave_deduction_policy_comparison(snapshot, config)
+
+        self.assertFalse(comparison["mismatch"])
+        self.assertEqual(snapshot["hours_per_day"], 6.5)
+        self.assertEqual(snapshot["selected_sources"], ["DEPARTURES", "LATE", "EARLY"])
+        self.assertEqual(snapshot["carry_policy"], "LATE_EARLY_ONLY")
+
+    def test_legacy_chargeable_minutes_display_only_complete_days(self):
+        item = HRAttendanceDeductionItem(chargeable_minutes=979)
+
+        self.assertEqual(
+            _deduction_full_day_minutes(
+                item,
+                {"hours_per_day": 7.0, "minutes_per_day": 420},
+            ),
+            840,
+        )
+
+    def test_current_grouped_policy_produces_complete_days_and_source_remainder(self):
+        raw = {
+            "permission_minutes": 747,
+            "late_minutes": 209,
+            "early_leave_minutes": 383,
+            "absent_days": 0,
+            "excluded_minutes": 0,
+            "details": {"days": [], "departures": []},
+        }
+        with patch("portal.routes._monthly_attendance_deduction_breakdown", return_value=raw):
+            result = _leave_deduction_components(
+                self.user.id,
+                2026,
+                9,
+                390,
+                ["DEPARTURES", "LATE", "EARLY"],
+                "LATE_EARLY",
+                carry_policy="LATE_EARLY_ONLY",
+            )
+
+        self.assertEqual(result["chargeable_minutes"], 780)
+        self.assertEqual(result["deduction_days"], 2)
+        self.assertEqual(result["remainder_minutes"], 202)
+        self.assertEqual(result["carry_out"], {"DEPARTURES": 0, "LATE": 0, "EARLY": 202})
 
     def test_late_and_early_can_complete_a_day_without_combining_departures(self):
         raw = {
@@ -1272,6 +1365,63 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
         self.assertEqual(run.status, "DRAFT")
         self.assertEqual(item.late_minutes, 30)
         self.assertTrue(item.details_json)
+
+
+    def test_refresh_can_apply_current_policy_to_a_legacy_draft(self):
+        admin = User(
+            email="policy-refresh-admin@example.test",
+            name="Policy Refresh Admin",
+            password_hash="not-used",
+            role="SUPER_ADMIN",
+        )
+        config = HRAttendanceDeductionConfig(
+            deduction_style="LATE_EARLY",
+            hours_per_day=6.5,
+            source_selection_json=json.dumps(["DEPARTURES", "LATE", "EARLY"]),
+            leave_type_selection_json=json.dumps([]),
+            deduction_sequence="LEAVE_ONLY",
+            carry_method="LATE_EARLY_ONLY",
+        )
+        run = HRAttendanceDeductionRun(
+            year=2026,
+            month=3,
+            status="DRAFT",
+            execution_mode="MANUAL",
+            config_snapshot_json=json.dumps({
+                "deduction_style": "AGGREGATE",
+                "hours_per_day": 7.0,
+                "deduction_sequence": "LEAVE_THEN_SALARY",
+            }),
+        )
+        db.session.add_all((admin, config, run))
+        db.session.flush()
+        db.session.add(HRAttendanceDeductionItem(
+            run_id=run.id,
+            user_id=self.user.id,
+            chargeable_minutes=979,
+            details_json=json.dumps({}, ensure_ascii=False),
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context(
+            f"/portal/hr/deductions/{run.id}/refresh",
+            method="POST",
+            data={"sync_policy": "1"},
+        ):
+            login_user(admin)
+            response = hr_deduction_refresh(run.id)
+            logout_user()
+
+        self.assertEqual(response.status_code, 302)
+        snapshot = json.loads(run.config_snapshot_json)
+        self.assertEqual(snapshot["policy_version"], 2)
+        self.assertEqual(snapshot["hours_per_day"], 6.5)
+        self.assertEqual(snapshot["selected_sources"], ["DEPARTURES", "LATE", "EARLY"])
+        self.assertEqual(snapshot["carry_policy"], "LATE_EARLY_ONLY")
+        self.assertTrue(run.carry_late)
+        self.assertTrue(run.carry_early)
+        self.assertFalse(run.carry_departures)
+        self.assertEqual(run.status, "DRAFT")
 
 
     def test_annual_balance_splits_2026_then_approves_current_closing_balance_for_2027(self):
