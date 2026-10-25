@@ -135,7 +135,7 @@
               <div>{{ duration_pair(item.early_leave_minutes) }}</div>
               {% if source_summary %}<div class="small text-danger">داخل الخصم: {{ duration_pair(early_consumed_minutes) }}</div>{% endif %}
             </td>
-            <td><div class="text-danger fw-bold fs-5">{{ total_deduction_days }} يوم</div><div class="small text-muted">{{ duration_pair(full_day_minutes) }}</div></td>
+            <td><div class="text-danger fw-bold fs-5">{{ total_deduction_days }} يوم</div><div class="small text-muted">{{ duration_pair(full_day_minutes) }}</div>{% if details.get('schedule_absence_review') %}<div class="small text-warning-emphasis">أيام دوام مختارة: {{ (details.get('selected_schedule_absence_days') or [])|length }} / مرشحة: {{ (details.get('schedule_absences') or [])|length }}</div>{% endif %}</td>
           </tr>
           {% if pending.get('permission_count', 0) or pending.get('leave_count', 0) %}
             <tr>
@@ -206,6 +206,39 @@
                       <div>{{ adjustment.at or '—' }} · {{ adjustment.by_name or ('مستخدم #' ~ adjustment.by_user_id) }} · {{ duration_pair(adjustment.requested_minutes or adjustment.chargeable_minutes or 0) }} مطلوبة، {{ duration_pair(adjustment.chargeable_minutes or 0) }} محتسبة · {{ adjustment.note }}</div>
                     {% endfor %}
                     {% if details.get('manual_override') %}<div class="mt-1">سيُعتمد هذا التعديل عند الاعتماد: {{ duration_pair(details.get('manual_override').requested_minutes or 0) }} إجمالي، والباقي {{ duration_pair(details.get('manual_override').remainder_minutes or 0) }}.</div>{% endif %}
+                  </div>
+                {% endif %}
+                {% if details.get('schedule_absence_review') %}
+                  {% set schedule_absences = details.get('schedule_absences') or [] %}
+                  {% set schedule_absence_summary = details.get('schedule_absence_summary') or {} %}
+                  <div class="alert alert-warning border-warning py-3">
+                    <div class="fw-bold mb-1"><i class="bi bi-calendar-x"></i> مراجعة أيام الدوام المجدولة غير المحضورة</div>
+                    <div class="small mb-2">المجدول: {{ schedule_absence_summary.get('scheduled_work_days', 0) }} يوم · الحضور المسجل: {{ schedule_absence_summary.get('attended_work_days', 0) }} يوم · الأيام المرشحة للمراجعة: {{ schedule_absence_summary.get('missing_candidate_days', 0) }} يوم.</div>
+                    <div class="small text-muted mb-2">هذه الأيام لا تدخل في الخصم إلا بعد اختيارها وحفظ القرار يدوياً من الشؤون الإدارية.</div>
+                    {% if schedule_absences %}
+                      <form method="post" action="{{ url_for('portal.hr_deduction_schedule_absence_update', run_id=run.id, item_id=item.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+                        <div class="table-responsive bg-white rounded border">
+                          <table class="table table-sm align-middle mb-0">
+                            <thead><tr><th style="width:42px"></th><th>التاريخ</th><th>جدول الدوام</th><th>السبب</th><th>قرار هذه الدورة</th></tr></thead>
+                            <tbody>
+                              {% for absence in schedule_absences %}
+                                <tr class="{% if absence.selected %}table-danger{% endif %}">
+                                  <td><input class="form-check-input" type="checkbox" name="selected_schedule_absence_days" value="{{ absence.day }}" {% if absence.selected %}checked{% endif %} {% if not can_adjust or not is_draft %}disabled{% endif %}></td>
+                                  <td class="fw-semibold">{{ absence.day }}</td>
+                                  <td>{{ absence.schedule_name or 'جدول الدوام المعتمد' }}{% if absence.start_time or absence.end_time %}<div class="small text-muted">{{ absence.start_time or '—' }} - {{ absence.end_time or '—' }}</div>{% endif %}</td>
+                                  <td>{{ absence.reason_label }}</td>
+                                  <td>{% if absence.selected %}<span class="badge text-bg-danger">سيُخصم يوم إجازة</span>{% else %}<span class="badge text-bg-secondary">مستبعد حالياً</span>{% endif %}</td>
+                                </tr>
+                              {% endfor %}
+                            </tbody>
+                          </table>
+                        </div>
+                        {% if can_adjust and is_draft %}<button class="btn btn-sm btn-outline-danger mt-2" type="submit"><i class="bi bi-check2-square"></i> حفظ أيام الخصم المختارة</button>{% endif %}
+                      </form>
+                    {% else %}
+                      <div class="small text-success">لا توجد حالياً أيام دوام مجدولة بلا حضور أو إجازة مسجلة.</div>
+                    {% endif %}
                   </div>
                 {% endif %}
                 <h6>الأيام</h6>

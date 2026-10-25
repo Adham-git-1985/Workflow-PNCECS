@@ -13,10 +13,13 @@ from werkzeug.exceptions import Forbidden
 from extensions import db
 from models import (
     AttendanceDailySummary,
+    AttendanceEvent,
     EmployeeFile,
     HRAttendanceDeductionConfig,
     HRAttendanceDeductionItem,
     HRAttendanceDeductionRun,
+    HRAttendanceScheduleDay,
+    HRAttendanceSchedulePlan,
     HRAttendanceSpecialCase,
     HRLeaveBalance,
     HRLeaveBalanceAdjustment,
@@ -250,6 +253,173 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
         self.assertEqual(result["deduction_days"], 2)
         self.assertEqual(result["remainder_minutes"], 202)
         self.assertEqual(result["carry_out"], {"DEPARTURES": 0, "LATE": 0, "EARLY": 202})
+
+    def test_schedule_absence_review_finds_missing_published_work_day_without_auto_charging(self):
+        plan = HRAttendanceSchedulePlan(
+            user_id=self.user.id,
+            period_start="2026-09-01",
+            period_end="2026-09-07",
+            version_no=1,
+            status="FINAL_APPROVED",
+            request_type="BASELINE",
+        )
+        db.session.add(plan)
+        db.session.flush()
+        for day_text, day_type in (
+            ("2026-09-01", "WORK"),
+            ("2026-09-03", "WORK"),
+            ("2026-09-02", "OFF"),
+            ("2026-09-04", "OFF"),
+            ("2026-09-05", "OFF"),
+            ("2026-09-06", "OFF"),
+            ("2026-09-07", "OFF"),
+        ):
+            db.session.add(HRAttendanceScheduleDay(
+                plan_id=plan.id,
+                work_date=day_text,
+                day_type=day_type,
+                schedule_id=self.schedule.id if day_type == "WORK" else None,
+                start_time="08:00" if day_type == "WORK" else None,
+                end_time="15:00" if day_type == "WORK" else None,
+            ))
+        closing_plan = HRAttendanceSchedulePlan(
+            user_id=self.user.id,
+            period_start="2026-09-08",
+            period_end="2026-09-14",
+            version_no=1,
+            status="FINAL_APPROVED",
+            request_type="BASELINE",
+        )
+        db.session.add(closing_plan)
+        db.session.flush()
+        for offset in range(7):
+            work_day = date(2026, 9, 8) + timedelta(days=offset)
+            db.session.add(HRAttendanceScheduleDay(
+                plan_id=closing_plan.id,
+                work_date=work_day.isoformat(),
+                day_type="OFF",
+            ))
+        db.session.add_all((
+            AttendanceDailySummary(
+                user_id=self.user.id,
+                day="2026-09-01",
+                first_in=datetime(2026, 9, 1, 8),
+                last_out=datetime(2026, 9, 1, 15),
+                status="OK",
+            ),
+        ))
+        db.session.commit()
+
+        raw = {
+            "permission_minutes": 0,
+            "late_minutes": 0,
+            "early_leave_minutes": 0,
+            "absent_days": 0,
+            "excluded_minutes": 0,
+            "details": {"days": [], "departures": []},
+        }
+        with patch("portal.routes._monthly_attendance_deduction_breakdown", return_value=raw):
+            review = _leave_deduction_components(
+                self.user.id,
+                2026,
+                9,
+                390,
+                ["DEPARTURES"],
+                schedule_absence_review=True,
+            )
+            selected = _leave_deduction_components(
+                self.user.id,
+                2026,
+                9,
+                390,
+                ["DEPARTURES"],
+                schedule_absence_review=True,
+                selected_schedule_absence_days=["2026-09-03"],
+            )
+
+        self.assertEqual(review["schedule_absence_summary"]["scheduled_work_days"], 2)
+        self.assertEqual(review["schedule_absence_summary"]["attended_work_days"], 1)
+        self.assertEqual(review["schedule_absence_summary"]["missing_candidate_days"], 1)
+        self.assertEqual(review["schedule_absence_candidates"][0]["day"], "2026-09-03")
+        self.assertEqual(review["deduction_days"], 0)
+        self.assertEqual(selected["selected_schedule_absence_days"], ["2026-09-03"])
+        self.assertEqual(selected["deduction_days"], 1)
+        self.assertEqual(selected["chargeable_minutes"], 390)
+
+    def test_schedule_absence_review_excludes_approved_leave(self):
+        plan = HRAttendanceSchedulePlan(
+            user_id=self.user.id,
+            period_start="2026-09-01",
+            period_end="2026-09-07",
+            version_no=1,
+            status="FINAL_APPROVED",
+            request_type="BASELINE",
+        )
+        sick = HRLeaveType(code="SCHEDULE_SICK", name_ar="إجازة مرضية", is_active=True)
+        db.session.add_all((plan, sick))
+        db.session.flush()
+        for day_text, day_type in (
+            ("2026-09-01", "WORK"),
+            ("2026-09-02", "OFF"),
+            ("2026-09-03", "OFF"),
+            ("2026-09-04", "OFF"),
+            ("2026-09-05", "OFF"),
+            ("2026-09-06", "OFF"),
+            ("2026-09-07", "OFF"),
+        ):
+            db.session.add(HRAttendanceScheduleDay(
+                plan_id=plan.id,
+                work_date=day_text,
+                day_type=day_type,
+                schedule_id=self.schedule.id if day_type == "WORK" else None,
+            ))
+        closing_plan = HRAttendanceSchedulePlan(
+            user_id=self.user.id,
+            period_start="2026-09-08",
+            period_end="2026-09-14",
+            version_no=1,
+            status="FINAL_APPROVED",
+            request_type="BASELINE",
+        )
+        db.session.add(closing_plan)
+        db.session.flush()
+        for offset in range(7):
+            work_day = date(2026, 9, 8) + timedelta(days=offset)
+            db.session.add(HRAttendanceScheduleDay(
+                plan_id=closing_plan.id,
+                work_date=work_day.isoformat(),
+                day_type="OFF",
+            ))
+        db.session.add(HRLeaveRequest(
+            user_id=self.user.id,
+            leave_type_id=sick.id,
+            start_date="2026-09-01",
+            end_date="2026-09-01",
+            days=1,
+            status="APPROVED",
+        ))
+        db.session.commit()
+
+        raw = {
+            "permission_minutes": 0,
+            "late_minutes": 0,
+            "early_leave_minutes": 0,
+            "absent_days": 0,
+            "excluded_minutes": 0,
+            "details": {"days": [], "departures": []},
+        }
+        with patch("portal.routes._monthly_attendance_deduction_breakdown", return_value=raw):
+            result = _leave_deduction_components(
+                self.user.id,
+                2026,
+                9,
+                390,
+                ["DEPARTURES"],
+                schedule_absence_review=True,
+            )
+
+        self.assertEqual(result["schedule_absence_candidates"], [])
+        self.assertEqual(result["schedule_absence_summary"]["excused_work_days"], 1)
 
     def test_late_and_early_can_complete_a_day_without_combining_departures(self):
         raw = {
@@ -570,6 +740,49 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
         )
         self.assertEqual(live[self.user.id]["count"], 1)
         self.assertEqual(live[self.user.id]["minutes"], 60)
+
+    def test_breakdown_recomputes_stale_summary_with_grace_as_threshold(self):
+        self.schedule.grace_minutes = 15
+        self.schedule.start_grace_minutes = 15
+        self.schedule.end_grace_minutes = 15
+        day = "2026-03-02"
+        db.session.add_all((
+            # This is the old cached result: 20 minutes early minus the
+            # 15-minute grace period.
+            AttendanceDailySummary(
+                user_id=self.user.id,
+                day=day,
+                first_in=datetime(2026, 3, 2, 8, 12),
+                last_out=datetime(2026, 3, 2, 14, 40),
+                early_leave_minutes=5,
+                work_minutes=388,
+                status="OK",
+            ),
+            AttendanceEvent(
+                user_id=self.user.id,
+                event_dt=datetime(2026, 3, 2, 8, 12),
+                event_type="IN",
+            ),
+            AttendanceEvent(
+                user_id=self.user.id,
+                event_dt=datetime(2026, 3, 2, 14, 40),
+                event_type="OUT",
+            ),
+        ))
+        db.session.commit()
+
+        result = _monthly_attendance_deduction_breakdown(
+            self.user.id,
+            2026,
+            3,
+            minutes_per_day=420,
+            allowance_minutes=0,
+        )
+
+        day_detail = next(row for row in result["details"]["days"] if row["day"] == day)
+        self.assertEqual(day_detail["early_minutes"], 20)
+        self.assertEqual(result["early_leave_minutes"], 20)
+        self.assertEqual(result["details"]["attendance_calculation_version"], 2)
 
     def test_preview_reports_pending_permissions_separately_from_approved_sources(self):
         permission_type = HRPermissionType(

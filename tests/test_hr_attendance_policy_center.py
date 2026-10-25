@@ -46,6 +46,7 @@ class HRAttendancePolicyCenterTests(unittest.TestCase):
     def test_deductions_have_draft_adjustment_and_final_approval(self):
         self.assertIn("status='DRAFT'", self.routes)
         self.assertIn("def hr_deduction_item_adjust", self.routes)
+        self.assertIn("def hr_deduction_schedule_absence_update", self.routes)
         self.assertIn("def hr_deduction_approve", self.routes)
         self.assertIn("run.status = 'FINAL'", self.routes)
         self.assertIn('name="adjustment_note" required', self.deduction_view)
@@ -60,12 +61,14 @@ class HRAttendancePolicyCenterTests(unittest.TestCase):
             "الخروج المبكر",
             "إجمالي أيام الخصم",
             "الساعات المرحلة للدورة القادمة",
+            "مراجعة أيام الدوام المجدولة غير المحضورة",
             "duration_pair",
         ):
             with self.subTest(label=label):
                 self.assertIn(label, self.deduction_view)
         self.assertNotIn('colspan="14"', self.deduction_view)
         self.assertIn("carry_out_minutes", self.deduction_view)
+        self.assertIn("selected_schedule_absence_days", self.deduction_view)
 
     def test_only_final_deductions_affect_balances_and_salary_report(self):
         self.assertIn("HRAttendanceDeductionRun.status == 'FINAL'", self.routes)

@@ -17237,6 +17237,9 @@ def hr_deductions_run():
         selected_sources = _leave_deduction_sources(request.form.getlist('source_selection'))
         if not selected_sources:
             selected_sources = _leave_deduction_sources(cfg.source_selection_json) or ['DEPARTURES']
+        schedule_absence_review = (request.form.get('schedule_absence_review') or '').strip().lower() in {
+            '1', 'true', 'yes', 'on'
+        }
         replacement_raw = (request.form.get('replacement_of_run_id') or '').strip()
         replacement_id = int(replacement_raw) if replacement_raw.isdigit() else None
         if replacement_id:
@@ -17302,6 +17305,7 @@ def hr_deductions_run():
             execution_mode='ADJUSTMENT' if replacement_id else 'MANUAL',
             replacement_of_run_id=replacement_id,
             deduction_leave_type_id=requested_leave_type_id,
+            schedule_absence_review=schedule_absence_review,
         )
         db.session.commit()
 
@@ -17345,6 +17349,7 @@ def hr_deductions_run():
             ('LATE', 'التأخير الصباحي'),
             ('EARLY', 'الخروج المبكر'),
         ],
+        schedule_absence_review=False,
         replacement_of_run_id=(request.args.get('replacement_of_run_id') or '').strip(),
         leave_types=available_leave_types,
         selected_leave_type_id=selected_leave_type_id,
@@ -17401,8 +17406,10 @@ def hr_deductions_view(run_id: int):
                 selected_sources,
                 (snapshot.get('deduction_style') or 'AGGREGATE').upper(),
                 bool(run.carry_departures), bool(run.carry_late), bool(run.carry_early),
+                schedule_absence_review=bool(snapshot.get('schedule_absence_review', False)),
+                selected_schedule_absence_days=previous.get('selected_schedule_absence_days') or [],
             )
-            if (previous.get('days') or []) != (fresh['details'].get('days') or []) or (previous.get('departures') or []) != (fresh['details'].get('departures') or []) or (previous.get('source_summary') or {}) != (fresh['details'].get('source_summary') or {}):
+            if _deduction_source_signature(previous) != _deduction_source_signature(fresh['details']):
                 changed = True
                 break
         if changed and not run.needs_review:
@@ -17511,6 +17518,7 @@ def hr_deduction_refresh(run_id: int):
     }
     policy_updated = False
     if sync_policy:
+        preserve_schedule_absence_review = bool(snapshot.get('schedule_absence_review'))
         current_cfg = (
             HRAttendanceDeductionConfig.query
             .order_by(HRAttendanceDeductionConfig.updated_at.desc())
@@ -17525,6 +17533,7 @@ def hr_deduction_refresh(run_id: int):
             run.month,
             execution_mode=run.execution_mode or 'MANUAL',
         )
+        snapshot['schedule_absence_review'] = preserve_schedule_absence_review
         run.config_snapshot_json = json.dumps(snapshot, ensure_ascii=False)
         carry_flags = _leave_deduction_carry_flags(snapshot.get('carry_policy'))
         run.carry_departures = carry_flags['DEPARTURES']
@@ -17563,6 +17572,13 @@ def hr_deduction_refresh(run_id: int):
 
 
 def _refresh_deduction_run_totals(run: HRAttendanceDeductionRun) -> None:
+    def _selected_schedule_absence_count(item) -> int:
+        try:
+            details = json.loads(item.details_json or '{}')
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return 0
+        return len(details.get('selected_schedule_absence_days') or [])
+
     payload = {
         'employees_count': len(run.items),
         'total_leave_deduction_days': round(sum(float(x.leave_deduction_days or 0) for x in run.items), 4),
@@ -17573,6 +17589,7 @@ def _refresh_deduction_run_totals(run: HRAttendanceDeductionRun) -> None:
                 'chargeable_minutes': int(x.chargeable_minutes or 0),
                 'leave_deduction_days': float(x.leave_deduction_days or 0),
                 'salary_deduction_days': float(x.salary_deduction_days or 0),
+                'schedule_absence_deduction_days': _selected_schedule_absence_count(x),
             }
             for x in run.items
         ],
@@ -17612,6 +17629,8 @@ def _deduction_source_signature(details: dict) -> dict:
         'departures': details.get('departures') or [],
         'summary': details.get('summary') or {},
         'source_summary': details.get('source_summary') or {},
+        'schedule_absences': details.get('schedule_absences') or [],
+        'selected_schedule_absence_days': details.get('selected_schedule_absence_days') or [],
     }
 
 
@@ -17725,6 +17744,8 @@ def _refresh_deduction_draft_item(
         bool(run.carry_departures),
         bool(run.carry_late),
         bool(run.carry_early),
+        schedule_absence_review=bool(snapshot.get('schedule_absence_review', False)),
+        selected_schedule_absence_days=previous_details.get('selected_schedule_absence_days') or [],
     )
     fresh_details = fresh['details']
     fresh_source = _deduction_source_signature(fresh_details)
@@ -17786,6 +17807,60 @@ def _refresh_deduction_draft_item(
         fresh_details['manual_override'] = manual_override
     item.details_json = json.dumps(fresh_details, ensure_ascii=False)
     return source_changed
+
+
+@portal_bp.route('/hr/deductions/<int:run_id>/items/<int:item_id>/schedule-absence', methods=['POST'])
+@login_required
+@_perm(HR_ATTENDANCE_DEDUCTIONS_MANAGE)
+def hr_deduction_schedule_absence_update(run_id: int, item_id: int):
+    """Save HR's explicit date selection for scheduled missing attendance."""
+    run = HRAttendanceDeductionRun.query.get_or_404(run_id)
+    item = HRAttendanceDeductionItem.query.filter_by(id=item_id, run_id=run.id).first_or_404()
+    if (run.status or '').upper() != 'DRAFT':
+        flash('لا يمكن تعديل أيام الدوام بعد اعتماد العملية.', 'warning')
+        return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
+    if _is_attendance_exempt_user(item.user_id):
+        flash('هذا المستخدم مستثنى من احتسابات الدوام.', 'warning')
+        return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
+
+    try:
+        snapshot = json.loads(run.config_snapshot_json or '{}')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        snapshot = {}
+    if not bool(snapshot.get('schedule_absence_review')):
+        flash('لم تُفعّل مراجعة أيام الدوام غير المحضورة لهذه المسودة.', 'info')
+        return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
+
+    try:
+        details = json.loads(item.details_json or '{}')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        details = {}
+    candidate_days = {
+        str(candidate.get('day'))
+        for candidate in (details.get('schedule_absences') or [])
+        if candidate.get('day')
+    }
+    selected_days = sorted({
+        str(value).strip()
+        for value in request.form.getlist('selected_schedule_absence_days')
+        if str(value).strip() in candidate_days
+    })
+    details['selected_schedule_absence_days'] = selected_days
+    item.details_json = json.dumps(details, ensure_ascii=False)
+    _refresh_deduction_draft_item(run, item, snapshot)
+    _refresh_deduction_run_totals(run)
+    _portal_audit(
+        'HR_DEDUCTION_SCHEDULE_ABSENCE_SELECTION',
+        f'اختيار أيام دوام غير محضورة للموظف #{item.user_id}: {", ".join(selected_days) or "لا يوجد"}',
+        target_type='HR_ATT_DEDUCTION_RUN',
+        target_id=run.id,
+    )
+    db.session.commit()
+    if selected_days:
+        flash(f'تم حفظ اختيار {len(selected_days)} يوم/أيام كخصم مقترح. لا يتأثر الرصيد قبل اعتماد العملية.', 'success')
+    else:
+        flash('تم إلغاء اختيار أيام الدوام غير المحضورة لهذا الموظف. لا يتأثر الرصيد قبل اعتماد العملية.', 'success')
+    return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
 
 
 @portal_bp.route('/hr/deductions/<int:run_id>/items/<int:item_id>/adjust', methods=['POST'])
@@ -18035,6 +18110,8 @@ def hr_deduction_approve(run_id: int):
             'departures': previous_details.get('departures') or [],
             'summary': previous_details.get('summary') or {},
             'source_summary': previous_details.get('source_summary') or {},
+            'schedule_absences': previous_details.get('schedule_absences') or [],
+            'selected_schedule_absence_days': previous_details.get('selected_schedule_absence_days') or [],
         }
         if legacy_policy:
             legacy_minutes_per_day = max(1, int(round(float(snapshot.get('hours_per_day') or 7.0) * 60)))
@@ -18054,6 +18131,8 @@ def hr_deduction_approve(run_id: int):
                 'departures': fresh_details.get('departures') or [],
                 'summary': fresh_details.get('summary') or {},
                 'source_summary': previous_details.get('source_summary') or {},
+                'schedule_absences': fresh_details.get('schedule_absences') or [],
+                'selected_schedule_absence_days': fresh_details.get('selected_schedule_absence_days') or [],
             }
             if previous_source != fresh_source or allowance_minutes != int(item.permission_allowance_minutes or 0):
                 source_data_changed = True
@@ -18107,6 +18186,8 @@ def hr_deduction_approve(run_id: int):
             bool(run.carry_departures),
             bool(run.carry_late),
             bool(run.carry_early),
+            schedule_absence_review=bool(snapshot.get('schedule_absence_review', False)),
+            selected_schedule_absence_days=previous_details.get('selected_schedule_absence_days') or [],
         )
         fresh_details = fresh['details']
         fresh_source = {
@@ -18114,6 +18195,8 @@ def hr_deduction_approve(run_id: int):
             'departures': fresh_details.get('departures') or [],
             'summary': fresh_details.get('summary') or {},
             'source_summary': fresh_details.get('source_summary') or {},
+            'schedule_absences': fresh_details.get('schedule_absences') or [],
+            'selected_schedule_absence_days': fresh_details.get('selected_schedule_absence_days') or [],
         }
         if previous_source != fresh_source:
             source_data_changed = True
@@ -23368,6 +23451,172 @@ def _leave_deduction_previous_carry(user_id: int, year: int, month: int) -> dict
     return result
 
 
+def _deduction_schedule_absence_review(
+    user_id: int,
+    year: int,
+    month: int,
+) -> dict:
+    """Find scheduled office days with no attendance or leave evidence.
+
+    This is deliberately a review-only source.  It reads the published
+    employee schedule and returns candidates, but no candidate is chargeable
+    until HR explicitly selects its date on the draft review screen.
+    Remote days are not treated as missing punches because they do not require
+    a time-clock record in the attendance model.
+    """
+    empty = {
+        "candidates": [],
+        "summary": {
+            "scheduled_work_days": 0,
+            "attended_work_days": 0,
+            "excused_work_days": 0,
+            "missing_candidate_days": 0,
+        },
+    }
+    if _is_attendance_exempt_user(user_id):
+        return empty
+
+    month_start = date(year, month, 1)
+    month_end = _parse_yyyy_mm_dd(_end_of_month_str(year, month))
+    if not month_end:
+        return empty
+    # Future days cannot be absent yet.  A current day's missing punch is
+    # also left for the next review so HR does not see a transient candidate.
+    evaluation_end = min(month_end, date.today() - timedelta(days=1))
+    if evaluation_end < month_start:
+        return empty
+
+    schedule_map = _approved_schedule_day_map(
+        [int(user_id)],
+        month_start,
+        evaluation_end,
+    )
+    scheduled_days = {
+        day_text
+        for (scheduled_user_id, day_text), schedule_day in schedule_map.items()
+        if int(scheduled_user_id) == int(user_id)
+        and _attendance_schedule_day_kind(schedule_day) == "WORK"
+    }
+    if not scheduled_days:
+        return empty
+
+    attendance_rows = (
+        AttendanceDailySummary.query
+        .filter(AttendanceDailySummary.user_id == int(user_id))
+        .filter(AttendanceDailySummary.day >= month_start.isoformat())
+        .filter(AttendanceDailySummary.day <= evaluation_end.isoformat())
+        .all()
+    )
+    attended_days = {
+        row.day
+        for row in attendance_rows
+        if row.day
+        and (
+            row.first_in is not None
+            or row.last_out is not None
+            or (row.status or "").upper() in {"OK", "PRESENT", "INCOMPLETE"}
+        )
+    }
+
+    event_rows = (
+        AttendanceEvent.query
+        .filter(AttendanceEvent.user_id == int(user_id))
+        .filter(AttendanceEvent.event_dt >= datetime.combine(month_start, datetime.min.time()))
+        .filter(AttendanceEvent.event_dt < datetime.combine(evaluation_end + timedelta(days=1), datetime.min.time()))
+        .all()
+    )
+    for event in event_rows:
+        if event.event_dt and _attendance_event_code(event) not in {"C", "D", "E", "F"}:
+            attended_days.add(event.event_dt.date().isoformat())
+
+    manual_map = _approved_manual_attendance_map(
+        [int(user_id)],
+        month_start,
+        evaluation_end,
+    )
+    attended_days.update(
+        day_text
+        for (manual_user_id, day_text) in manual_map
+        if int(manual_user_id) == int(user_id)
+    )
+
+    special_rows = (
+        HRAttendanceSpecialCase.query
+        .filter(HRAttendanceSpecialCase.user_id == int(user_id))
+        .filter(HRAttendanceSpecialCase.kind == "STATUS")
+        .filter(HRAttendanceSpecialCase.applied.is_(True))
+        .filter(HRAttendanceSpecialCase.day <= evaluation_end.isoformat())
+        .filter(or_(
+            HRAttendanceSpecialCase.day_to.is_(None),
+            HRAttendanceSpecialCase.day_to >= month_start.isoformat(),
+        ))
+        .all()
+    )
+    special_map = _period_rows_by_user_day(special_rows, month_start, evaluation_end)
+    attended_days.update(
+        day_text
+        for (special_user_id, day_text), special in special_map.items()
+        if int(special_user_id) == int(user_id)
+        and (special.status or "").upper() == "PRESENT"
+    )
+
+    active_leaves = (
+        HRLeaveRequest.query
+        .filter(HRLeaveRequest.user_id == int(user_id))
+        .filter(HRLeaveRequest.status.in_(_MY_ATTENDANCE_ACTIVE_LEAVE_STATUSES))
+        .filter(HRLeaveRequest.start_date <= evaluation_end.isoformat())
+        .filter(HRLeaveRequest.end_date >= month_start.isoformat())
+        .all()
+    )
+    leave_map = _period_rows_by_user_day(active_leaves, month_start, evaluation_end)
+    leave_days = {
+        day_text
+        for (_leave_user_id, day_text), leave in leave_map.items()
+        if not _attendance_auto_leave_is_released(leave)
+    }
+
+    candidates = []
+    excused_days = set()
+    for day_text in sorted(scheduled_days):
+        if day_text in attended_days:
+            continue
+        if day_text in leave_days:
+            excused_days.add(day_text)
+            continue
+        exemption = _attendance_exemption_reason(int(user_id), day_text)
+        if exemption:
+            excused_days.add(day_text)
+            continue
+        schedule_day = schedule_map.get((int(user_id), day_text))
+        schedule = getattr(schedule_day, "schedule", None)
+        candidates.append({
+            "day": day_text,
+            "day_type": "WORK",
+            "status": "MISSING_PUNCH",
+            "status_label": "دوام مجدول دون بصمة",
+            "reason_code": "SCHEDULED_WORK_WITHOUT_ATTENDANCE",
+            "reason_label": "يوم دوام مكتبي مجدول بلا حضور أو بصمة، ولا توجد إجازة مسجلة",
+            "schedule_name": (
+                getattr(schedule, "name", None)
+                or "جدول الدوام المعتمد"
+            ),
+            "start_time": getattr(schedule_day, "start_time", None) or getattr(schedule, "start_time", None) or "",
+            "end_time": getattr(schedule_day, "end_time", None) or getattr(schedule, "end_time", None) or "",
+            "note": getattr(schedule_day, "note", None) or "",
+            "selected": False,
+        })
+
+    return {
+        "candidates": candidates,
+        "summary": {
+            "scheduled_work_days": len(scheduled_days),
+            "attended_work_days": len(scheduled_days.intersection(attended_days)),
+            "excused_work_days": len(excused_days),
+            "missing_candidate_days": len(candidates),
+        },
+    }
+
+
 def _leave_deduction_components(
     user_id: int,
     year: int,
@@ -23380,6 +23629,8 @@ def _leave_deduction_components(
     carry_early: bool = False,
     carry_in: dict[str, int] | None = None,
     carry_policy: str | None = None,
+    schedule_absence_review: bool = False,
+    selected_schedule_absence_days: list[str] | None = None,
 ) -> dict:
     """Calculate only the three explicitly selectable attendance sources.
 
@@ -23389,6 +23640,26 @@ def _leave_deduction_components(
     departures, morning lateness and early departure.
     """
     raw = _monthly_attendance_deduction_breakdown(user_id, year, month, minutes_per_day, 0)
+    schedule_absence_review = bool(schedule_absence_review)
+    schedule_absence_data = (
+        _deduction_schedule_absence_review(user_id, year, month)
+        if schedule_absence_review
+        else {"candidates": [], "summary": {}}
+    )
+    schedule_absence_candidates = schedule_absence_data.get("candidates") or []
+    candidate_days = {
+        str(candidate.get("day"))
+        for candidate in schedule_absence_candidates
+        if candidate.get("day")
+    }
+    selected_schedule_absence_days = sorted({
+        str(day)
+        for day in (selected_schedule_absence_days or [])
+        if str(day) in candidate_days
+    })
+    selected_schedule_absence_day_set = set(selected_schedule_absence_days)
+    for candidate in schedule_absence_candidates:
+        candidate["selected"] = candidate.get("day") in selected_schedule_absence_day_set
     selected = _leave_deduction_sources(selected_sources)
     carry_in = carry_in or _leave_deduction_previous_carry(user_id, year, month)
     current = {
@@ -23477,6 +23748,8 @@ def _leave_deduction_components(
             "carry_enabled": carry_flags[code],
             "carry_out_minutes": carry_out[code],
         }
+    schedule_absence_minutes = len(selected_schedule_absence_days) * threshold
+    base_chargeable_minutes = sum(consumed.values())
     details = dict(raw.get("details") or {})
     # Make the individual approved departures auditable.  ``consumed`` can
     # include hours carried from a previous cycle, so only the portion paid
@@ -23503,15 +23776,26 @@ def _leave_deduction_components(
     details["deduction_style"] = style
     details["carry_policy"] = carry_policy
     details["source_summary"] = source_summary
+    details["schedule_absence_review"] = schedule_absence_review
+    details["schedule_absences"] = schedule_absence_candidates
+    details["selected_schedule_absence_days"] = selected_schedule_absence_days
+    details["schedule_absence_summary"] = schedule_absence_data.get("summary") or {}
     details.setdefault("summary", {}).update({
         "selected_source_minutes": sum(available[code] for code in selected),
         "selected_current_minutes": sum(current[code] for code in selected),
         "selected_carry_in_minutes": sum(
             max(0, int(carry_in.get(code, 0) or 0)) for code in selected
         ),
-        "deducted_full_minutes": sum(consumed.values()),
+        "hourly_deducted_full_minutes": base_chargeable_minutes,
+        "schedule_absence_minutes": schedule_absence_minutes,
+        "schedule_absence_deduction_days": len(selected_schedule_absence_days),
+        "deducted_full_minutes": base_chargeable_minutes + schedule_absence_minutes,
     })
-    if style == "LATE_EARLY":
+    if schedule_absence_review:
+        details["formula"] = (
+            "مصادر الساعات حسب السياسة، مع أيام دوام مجدولة غير محضورة تُضاف فقط بعد اختيارها يدوياً"
+        )
+    elif style == "LATE_EARLY":
         details["formula"] = "المغادرات مستقلة؛ التأخير + الخروج المبكر مجتمعان ÷ ساعات الاحتساب لليوم"
     elif style == "PER_CATEGORY":
         details["formula"] = "كل مصدر مستقل ÷ ساعات الاحتساب لليوم؛ يتم احتساب الأيام الكاملة لكل مصدر"
@@ -23528,9 +23812,12 @@ def _leave_deduction_components(
         "consumed": consumed,
         "carry_out": carry_out,
         "source_summary": source_summary,
-        "chargeable_minutes": sum(consumed.values()),
-        "deduction_days": sum(consumed.values()) // threshold,
+        "chargeable_minutes": base_chargeable_minutes + schedule_absence_minutes,
+        "deduction_days": (base_chargeable_minutes // threshold) + len(selected_schedule_absence_days),
         "remainder_minutes": sum(carry_out.values()),
+        "schedule_absence_candidates": schedule_absence_candidates,
+        "selected_schedule_absence_days": selected_schedule_absence_days,
+        "schedule_absence_summary": schedule_absence_data.get("summary") or {},
     }
 
 
@@ -23552,6 +23839,7 @@ def _create_leave_deduction_draft(
     deduction_leave_type_id: int | None = None,
     append_to_run: HRAttendanceDeductionRun | None = None,
     policy_snapshot: dict | None = None,
+    schedule_absence_review: bool = False,
 ) -> HRAttendanceDeductionRun:
     """Build a DRAFT without changing a balance; used by manual and monthly jobs."""
     append_mode = append_to_run is not None
@@ -23585,6 +23873,7 @@ def _create_leave_deduction_draft(
         snapshot["carry_departures"] = carry_departures
         snapshot["carry_late"] = carry_late
         snapshot["carry_early"] = carry_early
+        snapshot["schedule_absence_review"] = bool(snapshot.get("schedule_absence_review", False))
     else:
         enabled_leave_type_ids = _leave_deduction_leave_type_ids(cfg)
         selection_was_saved = getattr(cfg, "leave_type_selection_json", None) is not None
@@ -23635,6 +23924,7 @@ def _create_leave_deduction_draft(
             "execution_mode": execution_mode,
             "gregorian_period": f"{year:04d}-{month:02d}",
             "exclusion_policy_version": 1,
+            "schedule_absence_review": bool(schedule_absence_review),
         }
     if append_mode:
         run = append_to_run
@@ -23676,6 +23966,7 @@ def _create_leave_deduction_draft(
             carry_late,
             carry_early,
             carry_policy=carry_policy,
+            schedule_absence_review=bool(snapshot.get("schedule_absence_review", False)),
         )
         deduction_days = int(components["deduction_days"])
         available_leave_days = 0.0
@@ -23742,6 +24033,7 @@ def _create_leave_deduction_draft(
             "early_minutes": components["current"]["EARLY"],
             "chargeable_minutes": components["chargeable_minutes"],
             "deduction_days": deduction_days,
+            "schedule_absence_deduction_days": len(components.get("selected_schedule_absence_days") or []),
             "leave_deduction_days": leave_days,
             "carry_out_minutes": components["carry_out"],
             "hours_per_day": hours_per_day,
