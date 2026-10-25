@@ -17379,6 +17379,7 @@ def hr_deductions_view(run_id: int):
         item for item in run.items
         if int(item.user_id) not in exempt_user_ids
     ]
+    can_approve = _hr_can_manage_deductions()
 
     # A final run is never recalculated in the background.  Source verification
     # is deliberately explicit because recalculating a large run on every
@@ -17417,6 +17418,41 @@ def hr_deductions_view(run_id: int):
             run.review_reason = 'تغيرت بيانات الحضور أو المغادرات المعتمدة بعد اعتماد العملية؛ يلزم عكسها وإنشاء تصحيح يدوي.'
             db.session.commit()
 
+    # Drafts are safe to refresh because they have not changed any balance.
+    # Older drafts may contain attendance details calculated before the grace
+    # period became a threshold. Finalized runs remain immutable and use the
+    # explicit source-verification action above.
+    if (run.status or '').upper() == 'DRAFT' and can_approve and visible_items:
+        stale_items = []
+        for item in visible_items:
+            if _is_attendance_exempt_user(item.user_id):
+                continue
+            try:
+                item_details = json.loads(item.details_json or '{}')
+            except (TypeError, ValueError, json.JSONDecodeError):
+                item_details = {}
+            if _deduction_details_need_attendance_refresh(item_details):
+                stale_items.append(item)
+
+        if stale_items:
+            try:
+                for item in stale_items:
+                    _refresh_deduction_draft_item(run, item, run_policy_snapshot)
+                _refresh_deduction_run_totals(run)
+                _portal_audit(
+                    'HR_DEDUCTION_DRAFT_AUTO_REFRESH',
+                    f'تحديث تلقائي لمسودة خصومات {run.year}-{run.month:02d} بعد تغيير قاعدة احتساب الحضور',
+                    target_type='HR_ATT_DEDUCTION_RUN',
+                    target_id=run.id,
+                )
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception(
+                    'Failed to refresh stale attendance details for deduction draft %s',
+                    run.id,
+                )
+
     export = (request.args.get('export') or '').strip().lower()
     if export in ('1', 'csv'):
         # CSV export
@@ -17454,7 +17490,6 @@ def hr_deductions_view(run_id: int):
             download_name=f"deductions_{run.year:04d}_{run.month:02d}.csv",
         )
 
-    can_approve = _hr_can_manage_deductions()
     details_by_item = {}
     full_day_minutes_by_item = {}
     for item in visible_items:
@@ -17625,6 +17660,7 @@ def _deduction_source_signature(details: dict) -> dict:
     """Return only source data used to detect a stale deduction draft."""
     details = details or {}
     return {
+        'attendance_calculation_version': details.get('attendance_calculation_version', 0),
         'days': details.get('days') or [],
         'departures': details.get('departures') or [],
         'summary': details.get('summary') or {},
@@ -17634,6 +17670,15 @@ def _deduction_source_signature(details: dict) -> dict:
     }
 
 
+def _deduction_details_need_attendance_refresh(details: dict | None) -> bool:
+    """Return whether a draft was calculated before the current attendance formula."""
+    try:
+        version = int((details or {}).get('attendance_calculation_version') or 0)
+    except (TypeError, ValueError):
+        version = 0
+    return version < _ATTENDANCE_DEDUCTION_CALCULATION_VERSION
+
+
 def _refresh_deduction_draft_item(
     run: HRAttendanceDeductionRun,
     item: HRAttendanceDeductionItem,
@@ -17641,10 +17686,9 @@ def _refresh_deduction_draft_item(
 ) -> bool:
     """Refresh one draft item from current approved/corrected source data.
 
-    This is intentionally called only by an explicit HR action.  Opening a
-    draft must remain read-only so a large run does not repeat attendance
-    queries on every page view.  Existing manual overrides are retained and
-    re-applied after the source details are refreshed.
+    Draft refreshes are limited to safe, unfinalized runs.  Existing manual
+    overrides are retained and re-applied after the source details are
+    refreshed.
     """
     try:
         previous_details = json.loads(item.details_json or '{}')
@@ -22184,13 +22228,21 @@ def _my_attendance_month_rows(
             if day_obj == reference_day and not current_day_has_evidence:
                 continue
 
-            row = _my_attendance_display_row(stored_row)
-            if not stored_row:
-                row.user_id = user_id
-                row.day = day_str
-
-            if (has_event or has_manual) and not (row.first_in or row.last_out):
-                row = _my_attendance_display_row(values=_summary_compute_one(user_id, day_str))
+            # AttendanceDailySummary is a cache.  When raw clock evidence (or
+            # an approved manual correction) exists, rebuild the row from the
+            # current attendance rules instead of trusting a value calculated
+            # by an older rule set.  This is especially important after a
+            # grace-period policy change: the stored row may still contain the
+            # old "early minus grace" value.
+            if has_event or has_manual:
+                row = _my_attendance_display_row(
+                    values=_summary_compute_one(user_id, day_str)
+                )
+            else:
+                row = _my_attendance_display_row(stored_row)
+                if not stored_row:
+                    row.user_id = user_id
+                    row.day = day_str
 
             if classification in {"WEEKLY_OFF", "OFFICIAL_HOLIDAY", "SCHEDULED_OFF"}:
                 row.status = classification
@@ -22790,6 +22842,7 @@ def _monthly_attendance_deduction_breakdown(
             "remainder_minutes": 0,
             "details": {
                 "version": 1,
+                "attendance_calculation_version": _ATTENDANCE_DEDUCTION_CALCULATION_VERSION,
                 "period": f"{year:04d}-{month:02d}",
                 "minutes_per_day": minutes_per_day,
                 "formula": "الموظف مستثنى من احتساب الدوام والإجازات",
@@ -22924,6 +22977,7 @@ def _monthly_attendance_deduction_breakdown(
         "remainder_minutes": chargeable_minutes % max(1, minutes_per_day),
         "details": {
             "version": 1,
+            "attendance_calculation_version": _ATTENDANCE_DEDUCTION_CALCULATION_VERSION,
             "period": f"{year:04d}-{month:02d}",
             "minutes_per_day": minutes_per_day,
             "formula": "التأخير + الخروج المبكر + المغادرات الخاصة بعد السماح + الغياب",
@@ -22950,6 +23004,10 @@ def _monthly_attendance_deduction_breakdown(
 
 
 _LEAVE_DEDUCTION_SOURCE_ORDER = ("DEPARTURES", "LATE", "EARLY")
+# Bump this whenever the attendance component formula changes. Drafts keep
+# their source details as an audit snapshot, so the version lets us refresh
+# old draft rows once without rewriting finalized operations.
+_ATTENDANCE_DEDUCTION_CALCULATION_VERSION = 2
 _LEAVE_DEDUCTION_SOURCE_LABELS = {
     "DEPARTURES": "المغادرات المعتمدة",
     "LATE": "التأخير الصباحي",
@@ -23751,6 +23809,7 @@ def _leave_deduction_components(
     schedule_absence_minutes = len(selected_schedule_absence_days) * threshold
     base_chargeable_minutes = sum(consumed.values())
     details = dict(raw.get("details") or {})
+    details["attendance_calculation_version"] = _ATTENDANCE_DEDUCTION_CALCULATION_VERSION
     # Make the individual approved departures auditable.  ``consumed`` can
     # include hours carried from a previous cycle, so only the portion paid
     # by this month's departure records is assigned to these rows.
