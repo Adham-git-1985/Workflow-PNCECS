@@ -87,6 +87,9 @@
                 <div class="small text-muted mt-1">بانتظار {{ stage_labels.get(it.approval_stage, it.approval_stage) }}</div>
               {% elif it.status == 'APPROVED' %}
                 <span class="badge text-bg-success">معتمد</span>
+                {% if it.approval_stage == 'ADMIN_INFO' %}
+                  <div class="small text-muted mt-1">(تم توجيهه إلى مدير الشؤون الإدارية للاطلاع)</div>
+                {% endif %}
               {% elif it.status == 'REJECTED' %}
                 <span class="badge text-bg-danger">مرفوض</span>
               {% elif it.status == 'COMPLETED' %}

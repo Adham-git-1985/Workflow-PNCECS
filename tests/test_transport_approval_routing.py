@@ -131,7 +131,7 @@ class TransportApprovalRoutingTests(unittest.TestCase):
         self._set_approver("TRANSPORT_DIRECTOR_USER_ID", self.transport_alternate.id)
         self.assertEqual(_movement_recipient_ids(self.permit), [self.transport_manager.id])
 
-        self.permit.approval_stage = "ADMIN"
+        self.permit.approval_stage = "ADMIN_INFO"
         self._set_approver("TRANSPORT_ADMIN_USER_ID", self.administrative_manager.id)
         self.assertEqual(_movement_recipient_ids(self.permit), [self.administrative_manager.id])
 
@@ -139,7 +139,7 @@ class TransportApprovalRoutingTests(unittest.TestCase):
         self.permit.approval_stage = "TRANSPORT"
         self.assertEqual(_movement_recipient_ids(self.permit), [self.other_approver.id])
 
-        self.permit.approval_stage = "ADMIN"
+        self.permit.approval_stage = "ADMIN_INFO"
         self.assertEqual(_movement_recipient_ids(self.permit), [self.other_approver.id])
 
     def test_alternate_receives_and_can_process_when_no_primary_is_assigned(self):

@@ -12,7 +12,13 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Mm, Pt
 
-from services.transport_forms import _date_text, _plain, _time_text
+from services.transport_forms import (
+    _date_text,
+    _movement_approver_name,
+    _movement_vehicle_name,
+    _plain,
+    _time_text,
+)
 
 
 FONT_NAME = "Sakkal Majalla"
@@ -478,7 +484,7 @@ def build_movement_permit_docx(permit, trip=None, letterhead_path: str | None = 
     _add_paragraph(document, f"اليوم والتاريخ {_ltr_embed(_date_text(depart_at))}", after=3, keep_with_next=True)
     fields = [
         ("اسم السائق", getattr(driver, "name", None)),
-        ("رقم السيارة", getattr(vehicle, "plate_no", None)),
+        ("اسم السيارة ورقمها", _movement_vehicle_name(vehicle)),
         ("اسم الموظف المكلف بالمهمة", requester_name),
         ("خط سير الرحلة مع العنوان المستهدف", route_text),
         ("ساعة بدء المهمة", _time_text(depart_at)),
@@ -495,5 +501,9 @@ def build_movement_permit_docx(permit, trip=None, letterhead_path: str | None = 
     _add_spacer(document, 9)
     _add_signature_line(document, "توقيع المكلف بالمهمة:", after=8)
     _add_signature_line(document, "توقيع السائق:", after=10)
-    _add_signature_line(document, "اعتماد مسؤول الحركة:", after=0)
+    _add_signature_line(
+        document,
+        f"اعتماد مسؤول الحركة والنقل: {_movement_approver_name(permit)}",
+        after=0,
+    )
     return _save_document(document)

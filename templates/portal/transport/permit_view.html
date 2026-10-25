@@ -41,6 +41,9 @@
             <span class="badge text-bg-warning">قيد الاعتماد</span>
           {% elif item.status == 'APPROVED' %}
             <span class="badge text-bg-success">معتمد</span>
+            {% if item.approval_stage == 'ADMIN_INFO' %}
+              <span class="text-muted small d-inline-block mt-1">(تم توجيهه إلى مدير الشؤون الإدارية للاطلاع)</span>
+            {% endif %}
           {% elif item.status == 'REJECTED' %}
             <span class="badge text-bg-danger">مرفوض</span>
           {% elif item.status == 'COMPLETED' %}
@@ -110,10 +113,17 @@
           هذا الطلب بانتظار: <b>{{ stage_labels.get(item.approval_stage, item.approval_stage) }}</b>.
         </div>
       {% elif item.status == 'APPROVED' %}
-        <div class="text-muted small mb-2">
-          معتمد بواسطة: <b>{{ item.approver.name or item.approver.email }}</b>
-          {% if item.decided_at %}— {{ item.decided_at|local_datetime }}{% endif %}
-        </div>
+        {% if item.approver %}
+          <div class="text-muted small mb-2">
+            معتمد بواسطة: <b>{{ item.approver.name or item.approver.email }}</b>
+            {% if item.decided_at %}— {{ item.decided_at|local_datetime }}{% endif %}
+          </div>
+        {% endif %}
+        {% if item.approval_stage == 'ADMIN_INFO' %}
+          <div class="alert alert-info small mb-2">
+            تم اعتماد الطلب وتوجيهه إلى مدير الشؤون الإدارية للاطلاع.
+          </div>
+        {% endif %}
       {% elif item.status == 'REJECTED' %}
         <div class="text-muted small mb-2">
           مرفوض بواسطة: <b>{{ item.approver.name or item.approver.email }}</b>
@@ -124,10 +134,10 @@
       {% if item.status == 'SUBMITTED' and can_approve %}
         <hr id="decision">
         <form method="post" action="{{ url_for('portal.transport_permit_approve', permit_id=item.id) }}" class="mb-2">
-          {% if item.approval_stage == 'TRANSPORT' %}
-            <label class="form-label">السيارة (اختياري)</label>
-            <select class="form-select mb-2" name="vehicle_id">
-              <option value="">—</option>
+          {% if requires_transport_assignment %}
+            <label class="form-label">السيارة *</label>
+            <select class="form-select mb-2" name="vehicle_id" required>
+              <option value="">اختر السيارة</option>
               {% for vehicle in vehicles %}<option value="{{ vehicle.id }}" {% if item.vehicle_id == vehicle.id %}selected{% endif %}>{{ vehicle.plate_no }}{% if vehicle.label %} — {{ vehicle.label }}{% endif %}</option>{% endfor %}
             </select>
             <label class="form-label">السائق *</label>
@@ -138,7 +148,7 @@
           {% endif %}
           <label class="form-label">ملاحظة (اختياري)</label>
           <textarea class="form-control" name="decision_note" rows="2" placeholder="ملاحظة الاعتماد..."></textarea>
-          <button class="btn btn-success w-100 mt-2" type="submit" onclick="return confirm('اعتماد طلب الحركة وإرساله للمرحلة التالية؟');">اعتماد وإرسال للمرحلة التالية</button>
+          <button class="btn btn-success w-100 mt-2" type="submit" onclick="return confirm('اعتماد طلب الحركة؟');">{{ 'اعتماد الطلب وتوجيهه للاطلاع' if requires_transport_assignment else 'اعتماد وإرسال للمرحلة التالية' }}</button>
         </form>
 
         <form method="post" action="{{ url_for('portal.transport_permit_reject', permit_id=item.id) }}">

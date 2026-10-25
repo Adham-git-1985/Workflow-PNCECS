@@ -4829,7 +4829,7 @@ def _access_service_defs():
                 ("APPROVE", "اعتماد أذون الحركة", ["TRANSPORT_READ", "TRANSPORT_APPROVE"]),
                 ("TRANSPORT_MANAGER", "مسؤول الحركة والنقل (تعيين سائق)", ["TRANSPORT_READ", "TRANSPORT_MANAGER_APPROVE"]),
                 ("TRANSPORT_DIRECTOR", "مدير النقل البديل", ["TRANSPORT_READ", "TRANSPORT_DIRECTOR_APPROVE"]),
-                ("ADMIN_APPROVE", "مدير الشؤون الإدارية (اعتماد نهائي)", ["TRANSPORT_READ", "TRANSPORT_ADMIN_APPROVE"]),
+                ("ADMIN_APPROVE", "مدير الشؤون الإدارية (للاطلاع)", ["TRANSPORT_READ", "TRANSPORT_ADMIN_APPROVE"]),
                 ("TRACKING", "التتبع (الخيار C)", ["TRANSPORT_READ", "TRANSPORT_TRACKING_READ", "TRANSPORT_TRACKING_MANAGE"]),
             ],
         },

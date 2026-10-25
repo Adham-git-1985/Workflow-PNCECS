@@ -140,6 +140,7 @@ _MOVEMENT_STAGES = {
     "MANAGER": "المدير المباشر",
     "TRANSPORT": "مسؤول الحركة والنقل",
     "ADMIN": "مدير الشؤون الإدارية",
+    "ADMIN_INFO": "مدير الشؤون الإدارية للاطلاع",
     "DONE": "مكتمل",
 }
 
@@ -332,10 +333,16 @@ def _can_read_movement_requests() -> bool:
     )
 
 
-def _record_movement_action(row: TransportPermit, action: str, note: str | None = None) -> None:
+def _record_movement_action(
+    row: TransportPermit,
+    action: str,
+    note: str | None = None,
+    *,
+    stage: str | None = None,
+) -> None:
     db.session.add(TransportPermitAction(
         permit_id=row.id,
-        stage=row.approval_stage,
+        stage=stage or row.approval_stage,
         action=action,
         actor_user_id=_movement_actor().id,
         note=note,
@@ -377,7 +384,7 @@ def _movement_recipient_ids(row: TransportPermit) -> list[int]:
         if legacy_manager_ids:
             return legacy_manager_ids
         return _assigned_transport_approver_ids("TRANSPORT_DIRECTOR_APPROVE")
-    elif row.approval_stage == "ADMIN":
+    elif row.approval_stage in {"ADMIN", "ADMIN_INFO"}:
         configured_admin = _to_int(_get_setting("TRANSPORT_ADMIN_USER_ID"))
         if configured_admin:
             return [configured_admin]
@@ -1470,10 +1477,14 @@ def transport_permit_new():
 def transport_permit_view(permit_id: int):
     row = TransportPermit.query.get_or_404(permit_id)
     actor = _movement_actor()
-    can_manage = _has_transport_permission(actor, "TRANSPORT_READ") or _has_transport_permission(actor, "TRANSPORT_APPROVE")
+    can_manage = _can_read_movement_requests()
     if row.requester_user_id != actor.id and not can_manage and not _can_process_movement(row) and not _can_edit_movement(row) and not _can_view_movement(row):
         abort(403)
     can_approve = _can_process_movement(row)
+    is_transport_manager_approver = _has_transport_permission(actor, "TRANSPORT_MANAGER_APPROVE")
+    requires_transport_assignment = can_approve and (
+        row.approval_stage == "TRANSPORT" or is_transport_manager_approver
+    )
     current_user_approval = (
         _latest_movement_approval_by_current_user(row)
         if row.status == "SUBMITTED"
@@ -1482,7 +1493,7 @@ def transport_permit_view(permit_id: int):
     can_update = _can_edit_movement(row)
     vehicles = []
     drivers = []
-    if can_approve and row.approval_stage == "TRANSPORT":
+    if requires_transport_assignment:
         vehicles = TransportVehicle.query.filter(TransportVehicle.status == "ACTIVE").order_by(TransportVehicle.plate_no.asc()).all()
         drivers = TransportDriver.query.filter(TransportDriver.status == "ACTIVE").order_by(TransportDriver.name.asc()).all()
     return render_template(
@@ -1494,6 +1505,7 @@ def transport_permit_view(permit_id: int):
         drivers=drivers,
         stage_labels=_MOVEMENT_STAGES,
         current_user_approval=current_user_approval,
+        requires_transport_assignment=requires_transport_assignment,
     )
 
 
@@ -1503,9 +1515,23 @@ def transport_permit_action(permit_id: int):
     row = TransportPermit.query.get_or_404(permit_id)
     if not _can_process_movement(row):
         abort(403)
-    vehicles = TransportVehicle.query.filter(TransportVehicle.status == "ACTIVE").order_by(TransportVehicle.plate_no.asc()).all()
-    drivers = TransportDriver.query.filter(TransportDriver.status == "ACTIVE").order_by(TransportDriver.name.asc()).all()
-    return render_template("portal/transport/permit_action.html", item=row, vehicles=vehicles, drivers=drivers, stage_labels=_MOVEMENT_STAGES)
+    is_transport_manager_approver = _has_transport_permission(
+        _movement_actor(), "TRANSPORT_MANAGER_APPROVE"
+    )
+    requires_transport_assignment = row.approval_stage == "TRANSPORT" or is_transport_manager_approver
+    vehicles = []
+    drivers = []
+    if requires_transport_assignment:
+        vehicles = TransportVehicle.query.filter(TransportVehicle.status == "ACTIVE").order_by(TransportVehicle.plate_no.asc()).all()
+        drivers = TransportDriver.query.filter(TransportDriver.status == "ACTIVE").order_by(TransportDriver.name.asc()).all()
+    return render_template(
+        "portal/transport/permit_action.html",
+        item=row,
+        vehicles=vehicles,
+        drivers=drivers,
+        stage_labels=_MOVEMENT_STAGES,
+        requires_transport_assignment=requires_transport_assignment,
+    )
 
 
 @portal_bp.route("/transport/permits/<int:permit_id>/edit", methods=["GET", "POST"])
@@ -1549,21 +1575,30 @@ def transport_permit_approve(permit_id: int):
 
     decision_note = (request.form.get("decision_note") or "").strip() or None
     approved_stage = row.approval_stage
-    if row.approval_stage == "TRANSPORT":
+    actor = _movement_actor()
+    transport_manager_finalizes = _has_transport_permission(actor, "TRANSPORT_MANAGER_APPROVE")
+    requires_transport_assignment = row.approval_stage == "TRANSPORT" or transport_manager_finalizes
+
+    # A holder of the explicit "مسؤول الحركة والنقل" permission is the
+    # operational approver.  They can complete a submitted request from any
+    # earlier stage, while an ordinary direct manager still advances only to
+    # the transport stage.
+    if requires_transport_assignment:
         vehicle_id = _to_int(request.form.get("vehicle_id") or "")
         driver_id = _to_int(request.form.get("driver_id") or "")
-        if not driver_id:
-            flash("يجب تعيين سائق قبل تحويل الطلب للاعتماد النهائي.", "danger")
+        if not vehicle_id:
+            flash("يجب تعيين سيارة قبل اعتماد طلب الحركة.", "danger")
             return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
-        vehicle = None
-        if vehicle_id:
-            vehicle = TransportVehicle.query.filter(
-                TransportVehicle.id == vehicle_id,
-                TransportVehicle.status == "ACTIVE",
-            ).first()
-            if not vehicle:
-                flash("السيارة المختارة غير متاحة.", "danger")
-                return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
+        if not driver_id:
+            flash("يجب تعيين سائق قبل اعتماد طلب الحركة.", "danger")
+            return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
+        vehicle = TransportVehicle.query.filter(
+            TransportVehicle.id == vehicle_id,
+            TransportVehicle.status == "ACTIVE",
+        ).first()
+        if not vehicle:
+            flash("السيارة المختارة غير متاحة.", "danger")
+            return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
         driver = TransportDriver.query.filter(
             TransportDriver.id == driver_id,
             TransportDriver.status == "ACTIVE",
@@ -1571,16 +1606,28 @@ def transport_permit_approve(permit_id: int):
         if not driver:
             flash("السائق المختار غير متاح.", "danger")
             return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
-        row.vehicle_id, row.driver_id = (vehicle.id if vehicle else None), driver.id
-    _record_movement_action(row, "APPROVED", decision_note)
-    if row.approval_stage == "MANAGER":
+        row.vehicle_id, row.driver_id = vehicle.id, driver.id
+
+    _record_movement_action(
+        row,
+        "APPROVED",
+        decision_note,
+        stage="TRANSPORT" if transport_manager_finalizes else None,
+    )
+    if requires_transport_assignment:
+        row.status = "APPROVED"
+        # The administrative manager receives the completed permit for
+        # information only, never as a blocking approval step.
+        row.approval_stage = "ADMIN_INFO"
+        row.approver_user_id = actor.id
+        row.decided_at = datetime.utcnow()
+        row.decision_note = decision_note
+    elif row.approval_stage == "MANAGER":
         row.approval_stage = "TRANSPORT"
-    elif row.approval_stage == "TRANSPORT":
-        row.approval_stage = "ADMIN"
     else:
         row.status = "APPROVED"
         row.approval_stage = "DONE"
-        row.approver_user_id = _movement_actor().id
+        row.approver_user_id = actor.id
         row.decided_at = datetime.utcnow()
         row.decision_note = decision_note
 
@@ -1592,6 +1639,17 @@ def transport_permit_approve(permit_id: int):
     try:
         if row.status == "SUBMITTED":
             _notify_next_movement_stage(row)
+        elif row.approval_stage == "ADMIN_INFO":
+            _send_movement_alert(
+                row,
+                _movement_recipient_ids(row),
+                f"تم اعتماد طلب الحركة #{row.id} من مسؤول الحركة والنقل وتم توجيهه إليك للاطلاع.",
+            )
+            _send_movement_alert(
+                row,
+                [row.requester_user_id],
+                f"تم اعتماد طلب الحركة #{row.id} وتوجيهه إلى مدير الشؤون الإدارية للاطلاع.",
+            )
         else:
             _send_movement_alert(row, [row.requester_user_id], f"تمت الموافقة والاعتماد النهائي على طلب الحركة #{row.id}.")
         db.session.commit()
@@ -1599,7 +1657,9 @@ def transport_permit_approve(permit_id: int):
         db.session.rollback()
         current_app.logger.exception("Failed to send transport permit approval notifications for permit %s", row.id)
 
-    if row.status == "SUBMITTED":
+    if row.approval_stage == "ADMIN_INFO":
+        flash("تم اعتماد طلب الحركة وتوجيهه إلى مدير الشؤون الإدارية للاطلاع.", "success")
+    elif row.status == "SUBMITTED":
         next_stage = _MOVEMENT_STAGES.get(row.approval_stage, row.approval_stage)
         flash(
             f"تم اعتماد طلب الحركة من قبلك في مرحلة {_MOVEMENT_STAGES.get(approved_stage, approved_stage)}. "
