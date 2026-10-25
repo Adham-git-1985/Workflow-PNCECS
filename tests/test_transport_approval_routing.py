@@ -217,6 +217,20 @@ class TransportApprovalRoutingTests(unittest.TestCase):
             self.assertTrue(_can_process_movement(self.permit))
             logout_user()
 
+    def test_direct_transport_assignment_survives_a_false_permission_resolver(self):
+        self.permit.approval_stage = "TRANSPORT"
+        db.session.add(UserPermission(
+            user_id=self.transport_manager.id,
+            key="TRANSPORT_MANAGER_APPROVE",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context(), patch.object(User, "has_perm", return_value=False):
+            login_user(self.transport_manager)
+            self.assertTrue(_can_process_movement(self.permit))
+            logout_user()
+
     def test_requester_cannot_process_own_permit(self):
         db.session.add(UserPermission(
             user_id=self.requester.id,

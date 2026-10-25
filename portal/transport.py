@@ -215,6 +215,28 @@ def _assigned_transport_approver_ids(permission: str) -> list[int]:
     return sorted(recipient_ids)
 
 
+def _has_transport_permission(actor: User, permission: str) -> bool:
+    """Resolve a transport permission, including direct database assignments.
+
+    The regular ``User.has_perm`` path also handles inherited and delegated
+    permissions.  The direct lookup is an intentional fallback for transport
+    approval screens so a stale authorization cache or a legacy permission
+    resolver cannot hide the decision controls from an explicitly assigned
+    transport approver.
+    """
+    try:
+        if actor.has_perm(permission):
+            return True
+    except Exception:
+        pass
+
+    try:
+        actor_id = int(getattr(actor, "id", 0) or 0)
+    except (TypeError, ValueError):
+        actor_id = 0
+    return bool(actor_id and actor_id in _assigned_transport_approver_ids(permission))
+
+
 def _has_transport_manager() -> bool:
     configured_id = _to_int(_get_setting("TRANSPORT_MANAGER_USER_ID"))
     return (
@@ -247,18 +269,18 @@ def _can_process_movement(row: TransportPermit) -> bool:
     if row.requester_user_id == actor.id:
         return False
     if row.approval_stage == "MANAGER":
-        return actor.id in _movement_manager_ids(row) or actor.has_perm("TRANSPORT_APPROVE")
+        return actor.id in _movement_manager_ids(row) or _has_transport_permission(actor, "TRANSPORT_APPROVE")
     if row.approval_stage == "TRANSPORT":
         configured_manager = _to_int(_get_setting("TRANSPORT_MANAGER_USER_ID"))
         configured_director = _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID"))
         return actor.id == configured_manager or (
             not configured_manager and actor.id == configured_director
-        ) or actor.has_perm("TRANSPORT_MANAGER_APPROVE") or actor.has_perm("TRANSPORT_UPDATE") or (
-            not _has_transport_manager() and actor.has_perm("TRANSPORT_DIRECTOR_APPROVE")
-        ) or actor.has_perm("TRANSPORT_APPROVE")
+        ) or _has_transport_permission(actor, "TRANSPORT_MANAGER_APPROVE") or _has_transport_permission(actor, "TRANSPORT_UPDATE") or (
+            not _has_transport_manager() and _has_transport_permission(actor, "TRANSPORT_DIRECTOR_APPROVE")
+        ) or _has_transport_permission(actor, "TRANSPORT_APPROVE")
     if row.approval_stage == "ADMIN":
         configured_admin = _to_int(_get_setting("TRANSPORT_ADMIN_USER_ID"))
-        return actor.id == configured_admin or actor.has_perm("TRANSPORT_ADMIN_APPROVE") or actor.has_perm("TRANSPORT_APPROVE")
+        return actor.id == configured_admin or _has_transport_permission(actor, "TRANSPORT_ADMIN_APPROVE") or _has_transport_permission(actor, "TRANSPORT_APPROVE")
     return False
 
 
@@ -271,7 +293,7 @@ def _can_edit_movement(row: TransportPermit) -> bool:
         _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID")),
         _to_int(_get_setting("TRANSPORT_ADMIN_USER_ID")),
     }
-    return row.requester_user_id == actor.id or actor.id in configured_ids or actor.has_perm("TRANSPORT_UPDATE") or actor.has_perm("TRANSPORT_APPROVE")
+    return row.requester_user_id == actor.id or actor.id in configured_ids or _has_transport_permission(actor, "TRANSPORT_UPDATE") or _has_transport_permission(actor, "TRANSPORT_APPROVE")
 
 
 def _can_view_movement(row: TransportPermit) -> bool:
@@ -295,11 +317,11 @@ def _can_read_movement_requests() -> bool:
     }
     return (
         actor.id in configured_ids
-        or actor.has_perm("TRANSPORT_READ")
-        or actor.has_perm("TRANSPORT_APPROVE")
-        or actor.has_perm("TRANSPORT_MANAGER_APPROVE")
-        or actor.has_perm("TRANSPORT_DIRECTOR_APPROVE")
-        or actor.has_perm("TRANSPORT_ADMIN_APPROVE")
+        or _has_transport_permission(actor, "TRANSPORT_READ")
+        or _has_transport_permission(actor, "TRANSPORT_APPROVE")
+        or _has_transport_permission(actor, "TRANSPORT_MANAGER_APPROVE")
+        or _has_transport_permission(actor, "TRANSPORT_DIRECTOR_APPROVE")
+        or _has_transport_permission(actor, "TRANSPORT_ADMIN_APPROVE")
     )
 
 
@@ -1441,7 +1463,7 @@ def transport_permit_new():
 def transport_permit_view(permit_id: int):
     row = TransportPermit.query.get_or_404(permit_id)
     actor = _movement_actor()
-    can_manage = actor.has_perm("TRANSPORT_READ") or actor.has_perm("TRANSPORT_APPROVE")
+    can_manage = _has_transport_permission(actor, "TRANSPORT_READ") or _has_transport_permission(actor, "TRANSPORT_APPROVE")
     if row.requester_user_id != actor.id and not can_manage and not _can_process_movement(row) and not _can_edit_movement(row) and not _can_view_movement(row):
         abort(403)
     can_approve = _can_process_movement(row)
