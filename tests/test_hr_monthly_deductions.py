@@ -51,6 +51,7 @@ from portal.routes import (
     _notify_deduction_pending_users,
     _monthly_attendance_deduction_breakdown,
     _leave_deduction_components,
+    _leave_deduction_carry_flags,
     _has_manual_deduction_operation,
     run_automatic_leave_deduction_cycle,
     _one_time_leave_error,
@@ -186,11 +187,69 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
         self.assertEqual(result["details"]["deduction_style"], "LATE_EARLY")
         self.assertIn("التأخير + الخروج المبكر", result["details"]["formula"])
 
-    def test_carry_is_selected_independently_for_each_source(self):
+    def test_grouped_fraction_carry_policy_selects_requested_buckets(self):
         raw = {
             "permission_minutes": 180,
             "late_minutes": 200,
             "early_leave_minutes": 300,
+            "absent_days": 0,
+            "excluded_minutes": 0,
+            "details": {"days": [], "departures": []},
+        }
+        expected = {
+            "DEPARTURES_ONLY": {"DEPARTURES": 180, "LATE": 0, "EARLY": 0},
+            "LATE_EARLY_ONLY": {"DEPARTURES": 0, "LATE": 0, "EARLY": 80},
+            "ALL": {"DEPARTURES": 180, "LATE": 0, "EARLY": 80},
+            "NONE": {"DEPARTURES": 0, "LATE": 0, "EARLY": 0},
+        }
+        for policy, expected_carry in expected.items():
+            flags = _leave_deduction_carry_flags(policy)
+            with patch("portal.routes._monthly_attendance_deduction_breakdown", return_value=raw):
+                result = _leave_deduction_components(
+                    self.user.id,
+                    2026,
+                    3,
+                    420,
+                    ["DEPARTURES", "LATE", "EARLY"],
+                    "LATE_EARLY",
+                    carry_departures=flags["DEPARTURES"],
+                    carry_late=flags["LATE"],
+                    carry_early=flags["EARLY"],
+                    carry_in={"DEPARTURES": 0, "LATE": 0, "EARLY": 0},
+                )
+
+            self.assertEqual(result["deduction_days"], 1)
+            self.assertEqual(result["carry_policy"], policy)
+            self.assertEqual(result["details"]["carry_policy"], policy)
+            self.assertEqual(result["carry_out"], expected_carry)
+
+    def test_grouped_fraction_is_read_from_previous_final_cycle(self):
+        previous_run = HRAttendanceDeductionRun(
+            year=2026,
+            month=2,
+            status="FINAL",
+            execution_mode="MANUAL",
+        )
+        db.session.add(previous_run)
+        db.session.flush()
+        db.session.add(HRAttendanceDeductionItem(
+            run_id=previous_run.id,
+            user_id=self.user.id,
+            carry_departure_minutes=60,
+            carry_late_minutes=0,
+            carry_early_leave_minutes=0,
+            details_json=json.dumps({
+                "source_summary": {
+                    "DEPARTURES": {"carry_out_minutes": 60},
+                },
+            }),
+        ))
+        db.session.commit()
+
+        raw = {
+            "permission_minutes": 360,
+            "late_minutes": 0,
+            "early_leave_minutes": 0,
             "absent_days": 0,
             "excluded_minutes": 0,
             "details": {"days": [], "departures": []},
@@ -202,18 +261,13 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
                 3,
                 420,
                 ["DEPARTURES", "LATE", "EARLY"],
-                "AGGREGATE",
-                carry_departures=True,
-                carry_late=False,
-                carry_early=True,
-                carry_in={"DEPARTURES": 0, "LATE": 0, "EARLY": 0},
+                "LATE_EARLY",
+                carry_policy="DEPARTURES_ONLY",
             )
 
+        self.assertEqual(result["carry_in"], {"DEPARTURES": 60, "LATE": 0, "EARLY": 0})
         self.assertEqual(result["deduction_days"], 1)
-        self.assertEqual(result["carry_out"], {"DEPARTURES": 0, "LATE": 0, "EARLY": 260})
-        self.assertTrue(result["source_summary"]["DEPARTURES"]["carry_enabled"])
-        self.assertFalse(result["source_summary"]["LATE"]["carry_enabled"])
-        self.assertTrue(result["source_summary"]["EARLY"]["carry_enabled"])
+        self.assertEqual(result["carry_out"], {"DEPARTURES": 0, "LATE": 0, "EARLY": 0})
 
     def test_automatic_cycle_cannot_run_before_a_manual_cycle(self):
         config = HRAttendanceDeductionConfig(automatic_enabled=True)

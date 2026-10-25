@@ -4893,7 +4893,10 @@ class HRAttendanceDeductionConfig(db.Model):
     special_permission_source = db.Column(db.String(20), default="SALARY", nullable=False)
     unauthorized_permission_source = db.Column(db.String(20), default="SALARY", nullable=False)
 
-    carry_method = db.Column(db.String(40), default="CARRY_TO_NEXT", nullable=False)  # CARRY_TO_NEXT / WITHIN_MONTH
+    # Source bucket(s) that receive the remainder after the selected grouping:
+    # DEPARTURES_ONLY / LATE_EARLY_ONLY / ALL / NONE. The old
+    # CARRY_TO_NEXT/WITHIN_MONTH values are read as legacy values.
+    carry_method = db.Column(db.String(40), default="NONE", nullable=False)
 
     # Monthly permission allowance and the leave type consumed before salary.
     permission_allowance_hours = db.Column(db.Float, default=6.0, nullable=False)

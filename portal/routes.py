@@ -16963,7 +16963,7 @@ def hr_deductions_settings():
         ('PER_CATEGORY', 'احتساب يوم خصم عن كل عدد الساعات المحدد لكل مصدر على حدة'),
     ]
     source_opts = [('LEAVE', 'من الإجازات'), ('SALARY', 'من الراتب')]
-    carry_opts = [('CARRY_TO_NEXT', 'تحويل من الشهر الحالي إلى القادم'), ('WITHIN_MONTH', 'ضمن نفس الشهر فقط')]
+    carry_opts = list(_LEAVE_DEDUCTION_CARRY_POLICY_OPTIONS)
 
     if request.method == 'POST':
         if not _hr_can_manage_deductions():
@@ -17040,7 +17040,11 @@ def hr_deductions_settings():
         early_source = _pick('early_source', 'SALARY', {'LEAVE', 'SALARY'})
         special_permission_source = _pick('special_permission_source', 'SALARY', {'LEAVE', 'SALARY'})
         unauthorized_permission_source = _pick('unauthorized_permission_source', 'SALARY', {'LEAVE', 'SALARY'})
-        carry_method = _pick('carry_method', 'CARRY_TO_NEXT', {'CARRY_TO_NEXT', 'WITHIN_MONTH'})
+        carry_method = _leave_deduction_carry_policy_from_form(
+            request.form,
+            _leave_deduction_carry_policy_from_config(cfg),
+            ('default_carry_departures', 'default_carry_late', 'default_carry_early'),
+        )
         deduction_sequence = _pick(
             'deduction_sequence',
             'LEAVE_ONLY',
@@ -17097,9 +17101,10 @@ def hr_deductions_settings():
         cfg.require_approval = True
         cfg.source_selection_json = json.dumps(selected_sources, ensure_ascii=False)
         cfg.automatic_enabled = bool(automatic_requested and has_final_deduction)
-        cfg.default_carry_departures = bool(request.form.get('default_carry_departures'))
-        cfg.default_carry_late = bool(request.form.get('default_carry_late'))
-        cfg.default_carry_early = bool(request.form.get('default_carry_early'))
+        carry_flags = _leave_deduction_carry_flags(carry_method)
+        cfg.default_carry_departures = carry_flags['DEPARTURES']
+        cfg.default_carry_late = carry_flags['LATE']
+        cfg.default_carry_early = carry_flags['EARLY']
         cfg.note = (request.form.get('note') or '').strip() or None
 
         cfg.updated_at = datetime.utcnow()
@@ -17120,6 +17125,7 @@ def hr_deductions_settings():
         style_opts=style_opts,
         source_opts=source_opts,
         carry_opts=carry_opts,
+        selected_carry_policy=_leave_deduction_carry_policy_from_config(cfg),
         deduction_source_opts=[
             ('DEPARTURES', 'المغادرات المعتمدة'),
             ('LATE', 'ساعات التأخير الصباحي'),
@@ -17162,7 +17168,7 @@ def hr_deductions_run():
             early_source='SALARY',
             special_permission_source='SALARY',
             unauthorized_permission_source='SALARY',
-            carry_method='CARRY_TO_NEXT',
+            carry_method='NONE',
             hours_per_day=6.5,
             permission_allowance_hours=0.0,
             annual_leave_type_id=_permission_excess_leave_type_id(),
@@ -17274,6 +17280,12 @@ def hr_deductions_run():
                 'warning',
             )
             return redirect(url_for('portal.hr_deductions_view', run_id=existing_overlap.id))
+        carry_policy = _leave_deduction_carry_policy_from_form(
+            request.form,
+            _leave_deduction_carry_policy_from_config(cfg),
+            ('carry_departures', 'carry_late', 'carry_early'),
+        )
+        carry_flags = _leave_deduction_carry_flags(carry_policy)
         run = _create_leave_deduction_draft(
             cfg,
             selected_ids,
@@ -17282,9 +17294,10 @@ def hr_deductions_run():
             actor_id=getattr(current_user, 'id', None),
             note=(request.form.get('note') or '').strip() or None,
             selected_sources=selected_sources,
-            carry_departures=bool(request.form.get('carry_departures')),
-            carry_late=bool(request.form.get('carry_late')),
-            carry_early=bool(request.form.get('carry_early')),
+            carry_policy=carry_policy,
+            carry_departures=carry_flags['DEPARTURES'],
+            carry_late=carry_flags['LATE'],
+            carry_early=carry_flags['EARLY'],
             execution_mode='ADJUSTMENT' if replacement_id else 'MANUAL',
             replacement_of_run_id=replacement_id,
             deduction_leave_type_id=requested_leave_type_id,
@@ -17321,6 +17334,8 @@ def hr_deductions_run():
         matching_users_count=matching_users_count,
         can_manage=_hr_can_manage_deductions(),
         selected_sources=_leave_deduction_sources(cfg.source_selection_json) or ['DEPARTURES'],
+        carry_opts=list(_LEAVE_DEDUCTION_CARRY_POLICY_OPTIONS),
+        selected_carry_policy=_leave_deduction_carry_policy_from_config(cfg),
         selected_source_labels={
             'DEPARTURES': 'المغادرات', 'LATE': 'التأخير', 'EARLY': 'الخروج المبكر',
         },
@@ -22761,12 +22776,91 @@ _LEAVE_DEDUCTION_SOURCE_LABELS = {
     "EARLY": "الخروج المبكر",
 }
 _LEAVE_DEDUCTION_STYLES = {"AGGREGATE", "LATE_EARLY", "PER_CATEGORY"}
+_LEAVE_DEDUCTION_CARRY_POLICIES = {
+    "DEPARTURES_ONLY": {"DEPARTURES": True, "LATE": False, "EARLY": False},
+    "LATE_EARLY_ONLY": {"DEPARTURES": False, "LATE": True, "EARLY": True},
+    "ALL": {"DEPARTURES": True, "LATE": True, "EARLY": True},
+    "NONE": {"DEPARTURES": False, "LATE": False, "EARLY": False},
+}
+_LEAVE_DEDUCTION_CARRY_POLICY_OPTIONS = (
+    ("DEPARTURES_ONLY", "ترحيل المغادرات فقط"),
+    ("LATE_EARLY_ONLY", "ترحيل التأخير والخروج المبكر فقط"),
+    ("ALL", "ترحيل جميع المصادر"),
+    ("NONE", "عدم الترحيل"),
+)
 
 
 def _leave_deduction_style(value) -> str:
     """Normalize the grouping mode saved in a policy snapshot."""
     style = str(value or "AGGREGATE").strip().upper()
     return style if style in _LEAVE_DEDUCTION_STYLES else "AGGREGATE"
+
+
+def _leave_deduction_carry_policy(
+    value=None,
+    *,
+    carry_departures: bool = False,
+    carry_late: bool = False,
+    carry_early: bool = False,
+) -> str:
+    """Normalize the source buckets that receive a grouped remainder.
+
+    ``CARRY_TO_NEXT`` and ``WITHIN_MONTH`` were the values used by the old
+    screen. They are treated as legacy values and fall back to the old
+    per-source flags, so existing configurations are not lost.
+    """
+    policy = str(value or "").strip().upper()
+    if policy in _LEAVE_DEDUCTION_CARRY_POLICIES:
+        return policy
+    flags = {
+        "DEPARTURES": bool(carry_departures),
+        "LATE": bool(carry_late),
+        "EARLY": bool(carry_early),
+    }
+    if flags == _LEAVE_DEDUCTION_CARRY_POLICIES["ALL"]:
+        return "ALL"
+    if flags == _LEAVE_DEDUCTION_CARRY_POLICIES["LATE_EARLY_ONLY"]:
+        return "LATE_EARLY_ONLY"
+    if flags == _LEAVE_DEDUCTION_CARRY_POLICIES["DEPARTURES_ONLY"]:
+        return "DEPARTURES_ONLY"
+    if not any(flags.values()):
+        return "NONE"
+    # Legacy combinations such as late-only are folded into the supported
+    # lateness/early-departure bucket.
+    return "ALL" if flags["DEPARTURES"] else "LATE_EARLY_ONLY"
+
+
+def _leave_deduction_carry_flags(policy=None, **legacy_flags) -> dict[str, bool]:
+    """Return the three source flags represented by a carry policy."""
+    normalized = _leave_deduction_carry_policy(policy, **legacy_flags)
+    return dict(_LEAVE_DEDUCTION_CARRY_POLICIES[normalized])
+
+
+def _leave_deduction_carry_policy_from_config(cfg) -> str:
+    return _leave_deduction_carry_policy(
+        getattr(cfg, "carry_method", None) if cfg else None,
+        carry_departures=getattr(cfg, "default_carry_departures", False) if cfg else False,
+        carry_late=getattr(cfg, "default_carry_late", False) if cfg else False,
+        carry_early=getattr(cfg, "default_carry_early", False) if cfg else False,
+    )
+
+
+def _leave_deduction_carry_policy_from_form(
+    form,
+    fallback: str,
+    legacy_names: tuple[str, str, str],
+) -> str:
+    """Read the new select and support forms from the old checkbox UI."""
+    posted = str(form.get("carry_method") or "").strip().upper()
+    if posted in _LEAVE_DEDUCTION_CARRY_POLICIES:
+        return posted
+    if any(name in form for name in legacy_names):
+        return _leave_deduction_carry_policy(
+            carry_departures=bool(form.get(legacy_names[0])),
+            carry_late=bool(form.get(legacy_names[1])),
+            carry_early=bool(form.get(legacy_names[2])),
+        )
+    return _leave_deduction_carry_policy(fallback)
 
 
 def _leave_deduction_sources(value) -> list[str]:
@@ -22919,6 +23013,7 @@ def _leave_deduction_components(
     carry_late: bool = False,
     carry_early: bool = False,
     carry_in: dict[str, int] | None = None,
+    carry_policy: str | None = None,
 ) -> dict:
     """Calculate only the three explicitly selectable attendance sources.
 
@@ -22935,11 +23030,13 @@ def _leave_deduction_components(
         "LATE": max(0, int(raw.get("late_minutes") or 0)),
         "EARLY": max(0, int(raw.get("early_leave_minutes") or 0)),
     }
-    carry_flags = {
-        "DEPARTURES": bool(carry_departures),
-        "LATE": bool(carry_late),
-        "EARLY": bool(carry_early),
-    }
+    carry_policy = _leave_deduction_carry_policy(
+        carry_policy,
+        carry_departures=carry_departures,
+        carry_late=carry_late,
+        carry_early=carry_early,
+    )
+    carry_flags = _leave_deduction_carry_flags(carry_policy)
     available = {
         code: current[code] + max(0, int(carry_in.get(code, 0) or 0))
         for code in _LEAVE_DEDUCTION_SOURCE_ORDER
@@ -23038,6 +23135,7 @@ def _leave_deduction_components(
     details["policy_version"] = 2
     details["selected_sources"] = selected
     details["deduction_style"] = style
+    details["carry_policy"] = carry_policy
     details["source_summary"] = source_summary
     details.setdefault("summary", {}).update({
         "selected_source_minutes": sum(available[code] for code in selected),
@@ -23058,6 +23156,7 @@ def _leave_deduction_components(
         "raw": raw,
         "details": details,
         "selected_sources": selected,
+        "carry_policy": carry_policy,
         "current": current,
         "carry_in": {code: max(0, int(carry_in.get(code, 0) or 0)) for code in _LEAVE_DEDUCTION_SOURCE_ORDER},
         "consumed": consumed,
@@ -23081,6 +23180,7 @@ def _create_leave_deduction_draft(
     carry_departures: bool | None = None,
     carry_late: bool | None = None,
     carry_early: bool | None = None,
+    carry_policy: str | None = None,
     execution_mode: str = "MANUAL",
     replacement_of_run_id: int | None = None,
     deduction_leave_type_id: int | None = None,
@@ -23101,13 +23201,24 @@ def _create_leave_deduction_draft(
         ]
         annual_leave_type_id = _leave_balance_owner_id(snapshot.get("annual_leave_type_id")) if snapshot.get("annual_leave_type_id") else None
         selected_sources = _leave_deduction_sources(snapshot.get("selected_sources")) or ["DEPARTURES"]
-        carry_departures = bool(snapshot.get("carry_departures"))
-        carry_late = bool(snapshot.get("carry_late"))
-        carry_early = bool(snapshot.get("carry_early"))
+        carry_policy = _leave_deduction_carry_policy(
+            snapshot.get("carry_policy") or snapshot.get("carry_method"),
+            carry_departures=bool(snapshot.get("carry_departures")),
+            carry_late=bool(snapshot.get("carry_late")),
+            carry_early=bool(snapshot.get("carry_early")),
+        )
+        carry_flags = _leave_deduction_carry_flags(carry_policy)
+        carry_departures = carry_flags["DEPARTURES"]
+        carry_late = carry_flags["LATE"]
+        carry_early = carry_flags["EARLY"]
         snapshot.setdefault("policy_version", 2)
         snapshot.setdefault("hours_per_day", 6.5)
         snapshot.setdefault("deduction_style", "AGGREGATE")
         snapshot.setdefault("deduction_sequence", "LEAVE_ONLY")
+        snapshot["carry_policy"] = carry_policy
+        snapshot["carry_departures"] = carry_departures
+        snapshot["carry_late"] = carry_late
+        snapshot["carry_early"] = carry_early
     else:
         enabled_leave_type_ids = _leave_deduction_leave_type_ids(cfg)
         selection_was_saved = getattr(cfg, "leave_type_selection_json", None) is not None
@@ -23130,6 +23241,16 @@ def _create_leave_deduction_draft(
         carry_departures = bool(getattr(cfg, "default_carry_departures", False) if carry_departures is None else carry_departures)
         carry_late = bool(getattr(cfg, "default_carry_late", False) if carry_late is None else carry_late)
         carry_early = bool(getattr(cfg, "default_carry_early", False) if carry_early is None else carry_early)
+        carry_policy = _leave_deduction_carry_policy(
+            carry_policy or getattr(cfg, "carry_method", None),
+            carry_departures=carry_departures,
+            carry_late=carry_late,
+            carry_early=carry_early,
+        )
+        carry_flags = _leave_deduction_carry_flags(carry_policy)
+        carry_departures = carry_flags["DEPARTURES"]
+        carry_late = carry_flags["LATE"]
+        carry_early = carry_flags["EARLY"]
         snapshot = {
             "policy_version": 2,
             "deduction_style": (cfg.deduction_style or "AGGREGATE").upper(),
@@ -23141,6 +23262,7 @@ def _create_leave_deduction_draft(
             "carry_departures": carry_departures,
             "carry_late": carry_late,
             "carry_early": carry_early,
+            "carry_policy": carry_policy,
             "execution_mode": execution_mode,
             "gregorian_period": f"{year:04d}-{month:02d}",
             "exclusion_policy_version": 1,
@@ -23184,6 +23306,7 @@ def _create_leave_deduction_draft(
             carry_departures,
             carry_late,
             carry_early,
+            carry_policy=carry_policy,
         )
         deduction_days = int(components["deduction_days"])
         available_leave_days = 0.0
@@ -23462,6 +23585,7 @@ def run_automatic_leave_deduction_cycle() -> int:
             actor_id=None,
             note="اعتماد تلقائي للدورة الشهرية بالإعدادات المحفوظة.",
             selected_sources=selected_sources,
+            carry_policy=_leave_deduction_carry_policy_from_config(cfg),
             carry_departures=bool(getattr(cfg, "default_carry_departures", False)),
             carry_late=bool(getattr(cfg, "default_carry_late", False)),
             carry_early=bool(getattr(cfg, "default_carry_early", False)),
