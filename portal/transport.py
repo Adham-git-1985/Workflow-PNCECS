@@ -267,13 +267,22 @@ def _can_process_movement(row: TransportPermit) -> bool:
     actor = _movement_actor()
     if row.status != "SUBMITTED":
         return False
-    if row.requester_user_id == actor.id:
+
+    # The explicit transport-manager permission is an operational role.  It
+    # must be checked before the ordinary requester guard so that a person
+    # assigned to that role can process every submitted permit, including one
+    # they created themselves.  Other approval permissions still cannot
+    # approve the requester's own permit.
+    transport_manager_approver = _has_transport_permission(
+        actor, "TRANSPORT_MANAGER_APPROVE"
+    )
+    if row.requester_user_id == actor.id and not transport_manager_approver:
         return False
 
     # An explicitly assigned transport manager can process every submitted
     # movement request, regardless of which workflow stage currently owns it.
     # This permission drives both the list action and the detail-page forms.
-    if _has_transport_permission(actor, "TRANSPORT_MANAGER_APPROVE"):
+    if transport_manager_approver:
         return True
 
     if row.approval_stage == "MANAGER":

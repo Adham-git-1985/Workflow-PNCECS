@@ -258,6 +258,19 @@ class TransportApprovalRoutingTests(unittest.TestCase):
             self.assertFalse(_can_process_movement(self.permit))
             logout_user()
 
+    def test_transport_manager_can_process_own_submitted_permit(self):
+        db.session.add(UserPermission(
+            user_id=self.requester.id,
+            key="TRANSPORT_MANAGER_APPROVE",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context():
+            login_user(self.requester)
+            self.assertTrue(_can_process_movement(self.permit))
+            logout_user()
+
     def test_selected_working_identity_can_process_requester_session(self):
         """Approval uses the selected identity, not the technical login account."""
         db.session.add(UserPermission(
