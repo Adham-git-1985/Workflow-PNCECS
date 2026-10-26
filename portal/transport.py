@@ -285,9 +285,10 @@ def _can_process_movement(row: TransportPermit) -> bool:
     if transport_manager_approver:
         return True
 
-    if row.approval_stage == "MANAGER":
-        return actor.id in _movement_manager_ids(row) or _has_transport_permission(actor, "TRANSPORT_APPROVE")
-    if row.approval_stage == "TRANSPORT":
+    if row.approval_stage in {"MANAGER", "TRANSPORT"}:
+        # The direct manager is an information recipient only.  MANAGER is
+        # retained for legacy rows, but legacy requests are evaluated against
+        # the operational movement rules so they do not remain blocked.
         configured_manager = _to_int(_get_setting("TRANSPORT_MANAGER_USER_ID"))
         configured_director = _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID"))
         return actor.id == configured_manager or (
@@ -320,7 +321,11 @@ def _can_view_movement(row: TransportPermit) -> bool:
         _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID")),
         _to_int(_get_setting("TRANSPORT_ADMIN_USER_ID")),
     }
-    if actor.id in configured_ids or row.approver_user_id == actor.id:
+    if (
+        actor.id in configured_ids
+        or actor.id in _movement_manager_ids(row)
+        or row.approver_user_id == actor.id
+    ):
         return True
     return any(action.actor_user_id == actor.id for action in row.actions or [])
 
@@ -377,9 +382,9 @@ def _latest_movement_approval_by_current_user(row: TransportPermit):
 
 
 def _movement_recipient_ids(row: TransportPermit) -> list[int]:
-    if row.approval_stage == "MANAGER":
-        return _movement_manager_ids(row)
-    if row.approval_stage == "TRANSPORT":
+    if row.approval_stage in {"MANAGER", "TRANSPORT"}:
+        # MANAGER is kept here only for old submitted rows.  New rows skip
+        # that stage and go straight to the operational movement team.
         configured_manager = _to_int(_get_setting("TRANSPORT_MANAGER_USER_ID"))
         configured_director = _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID"))
         if configured_manager:
@@ -872,25 +877,56 @@ def transport_movement_permit_docx(permit_id: int):
     return _transport_docx_response(payload, f"تصريح أمر حركة - {permit.id}.docx")
 
 
-def _send_movement_alert(row: TransportPermit, recipient_ids: list[int], message: str) -> None:
+def _send_movement_alert(
+    row: TransportPermit,
+    recipient_ids: list[int],
+    message: str,
+    *,
+    subject: str | None = None,
+    notification_type: str = "INFO",
+    email_delivery_mode: str | None = None,
+) -> None:
     actor = _movement_actor()
     recipient_ids = sorted({user_id for user_id in recipient_ids if user_id and user_id != actor.id})
     if not recipient_ids:
         return
     link_url = url_for("portal.transport_permit_view", permit_id=row.id)
+    notifications = []
     for user_id in recipient_ids:
-        db.session.add(Notification(
+        notification = Notification(
             user_id=user_id,
             message=message,
-            type="INFO",
+            type=notification_type,
             source="portal",
             link_url=link_url,
+            email_delivery_mode=email_delivery_mode,
             is_read=False,
             created_at=datetime.utcnow(),
-        ))
+            target_type="TRANSPORT_PERMIT",
+            target_id=row.id,
+        )
+        db.session.add(notification)
+        notifications.append(notification)
+
+    if email_delivery_mode:
+        # Notification emails are queued transactionally and delivered by the
+        # existing background worker.  A missing/temporarily unavailable email
+        # outbox must not prevent the movement request itself from being saved.
+        try:
+            from services.notification_email import enqueue_notification_email
+
+            db.session.flush(notifications)
+            for notification in notifications:
+                enqueue_notification_email(notification)
+        except Exception:
+            current_app.logger.exception(
+                "Failed to queue transport movement notification emails for permit %s",
+                row.id,
+            )
+
     internal_message = Message(
         sender_id=actor.id,
-        subject=f"طلب حركة #{row.id} بانتظار الإجراء",
+        subject=subject or f"طلب حركة #{row.id} بانتظار الإجراء",
         body=f"{message}\nافتح الطلب مباشرة: {link_url}",
         target_kind="USER",
         target_id=recipient_ids[0],
@@ -905,6 +941,25 @@ def _send_movement_alert(row: TransportPermit, recipient_ids: list[int], message
 def _notify_next_movement_stage(row: TransportPermit) -> None:
     stage_name = _MOVEMENT_STAGES.get(row.approval_stage, row.approval_stage)
     _send_movement_alert(row, _movement_recipient_ids(row), f"طلب الحركة #{row.id} بانتظار إجراءك لدى {stage_name}.")
+
+
+def _notify_direct_managers_for_review(row: TransportPermit, manager_ids: list[int]) -> None:
+    """Notify responsible managers that a movement request is view-only."""
+    if not manager_ids:
+        return
+    from services.notification_email import TRANSPORT_MOVEMENT_EMAIL_MODE
+
+    _send_movement_alert(
+        row,
+        manager_ids,
+        (
+            f"تم إرسال طلب الحركة #{row.id} إليك للاطلاع فقط. "
+            "لا يتطلب منك اعتماد الطلب أو رفضه."
+        ),
+        subject=f"إشعار طلب حركة #{row.id} للاطلاع",
+        notification_type="TRANSPORT_MOVEMENT_INFO",
+        email_delivery_mode=TRANSPORT_MOVEMENT_EMAIL_MODE,
+    )
 
 
 # -------------------------
@@ -1377,12 +1432,22 @@ def transport_permits():
     q = (request.args.get("q") or "").strip()
     status = (request.args.get("status") or "").strip().upper()
 
+    actor = _movement_actor()
     can_manage = _can_read_movement_requests()
     if not can_manage and not _can_request_movement():
         abort(403)
     query = TransportPermit.query.filter(TransportPermit.is_deleted == False)  # noqa: E712
     if not can_manage:
-        query = query.filter(TransportPermit.requester_user_id == current_user.id)
+        # Direct managers receive view-only copies of their employees' permits.
+        # Keep the first manager column in the SQL filter for the common case;
+        # the frozen snapshot remains the authorization source on the detail
+        # page for any additional responsible managers.
+        query = query.filter(
+            or_(
+                TransportPermit.requester_user_id == actor.id,
+                TransportPermit.manager_user_id == actor.id,
+            )
+        )
     if status in ("DRAFT", "SUBMITTED", "APPROVED", "REJECTED", "CANCELLED", "COMPLETED"):
         query = query.filter(TransportPermit.status == status)
     if q:
@@ -1444,7 +1509,9 @@ def transport_permit_new():
             if manager and int(manager.id) != int(current_user.id)
         ]
         manager_id = manager_ids[0] if manager_ids else None
-        stage = "MANAGER" if manager_id else "TRANSPORT"
+        # The direct manager is informed for visibility only.  Approval starts
+        # with the operational movement and transport team.
+        stage = "TRANSPORT"
 
         row = TransportPermit(
             requester_user_id=current_user.id,
@@ -1466,11 +1533,20 @@ def transport_permit_new():
         db.session.add(row)
         db.session.flush()
         _record_movement_action(row, "SUBMITTED", "تم إرسال طلب الحركة.")
+        _notify_direct_managers_for_review(row, manager_ids)
         _notify_next_movement_stage(row)
         _audit("TRANSPORT_PERMIT_CREATE", f"طلب إذن حركة: #{row.id}", target_type="TRANSPORT_PERMIT", target_id=row.id)
         db.session.commit()
 
-        flash("تم إرسال طلب الحركة للاعتماد" + (" إلى المدير المباشر." if manager_id else " إلى مسؤول الحركة والنقل لعدم تعيين مدير مباشر."), "success")
+        flash(
+            "تم إرسال طلب الحركة إلى مسؤول الحركة والنقل"
+            + (
+                "، وتم إرسال تنبيه للمدير المباشر للاطلاع فقط عبر النظام والبريد."
+                if manager_ids
+                else "."
+            ),
+            "success",
+        )
         return redirect(url_for("portal.transport_permits"))
 
     return render_template(
@@ -1490,9 +1566,14 @@ def transport_permit_view(permit_id: int):
     if row.requester_user_id != actor.id and not can_manage and not _can_process_movement(row) and not _can_edit_movement(row) and not _can_view_movement(row):
         abort(403)
     can_approve = _can_process_movement(row)
+    is_manager_observer = (
+        row.status == "SUBMITTED"
+        and actor.id in _movement_manager_ids(row)
+        and not can_approve
+    )
     is_transport_manager_approver = _has_transport_permission(actor, "TRANSPORT_MANAGER_APPROVE")
     requires_transport_assignment = can_approve and (
-        row.approval_stage == "TRANSPORT" or is_transport_manager_approver
+        row.approval_stage in {"MANAGER", "TRANSPORT"} or is_transport_manager_approver
     )
     current_user_approval = (
         _latest_movement_approval_by_current_user(row)
@@ -1515,6 +1596,7 @@ def transport_permit_view(permit_id: int):
         stage_labels=_MOVEMENT_STAGES,
         current_user_approval=current_user_approval,
         requires_transport_assignment=requires_transport_assignment,
+        is_manager_observer=is_manager_observer,
     )
 
 
@@ -1527,7 +1609,7 @@ def transport_permit_action(permit_id: int):
     is_transport_manager_approver = _has_transport_permission(
         _movement_actor(), "TRANSPORT_MANAGER_APPROVE"
     )
-    requires_transport_assignment = row.approval_stage == "TRANSPORT" or is_transport_manager_approver
+    requires_transport_assignment = row.approval_stage in {"MANAGER", "TRANSPORT"} or is_transport_manager_approver
     vehicles = []
     drivers = []
     if requires_transport_assignment:
@@ -1586,12 +1668,11 @@ def transport_permit_approve(permit_id: int):
     approved_stage = row.approval_stage
     actor = _movement_actor()
     transport_manager_finalizes = _has_transport_permission(actor, "TRANSPORT_MANAGER_APPROVE")
-    requires_transport_assignment = row.approval_stage == "TRANSPORT" or transport_manager_finalizes
+    requires_transport_assignment = row.approval_stage in {"MANAGER", "TRANSPORT"} or transport_manager_finalizes
 
     # A holder of the explicit "مسؤول الحركة والنقل" permission is the
     # operational approver.  They can complete a submitted request from any
-    # earlier stage, while an ordinary direct manager still advances only to
-    # the transport stage.
+    # legacy earlier stage; the ordinary direct manager has no decision action.
     if requires_transport_assignment:
         vehicle_id = _to_int(request.form.get("vehicle_id") or "")
         driver_id = _to_int(request.form.get("driver_id") or "")

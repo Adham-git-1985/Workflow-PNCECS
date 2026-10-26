@@ -7589,7 +7589,7 @@ class TransportPermit(db.Model):
     return_at = db.Column(db.DateTime, nullable=True, index=True)
 
     status = db.Column(db.String(20), nullable=False, default="DRAFT", index=True)  # DRAFT/SUBMITTED/APPROVED/REJECTED/CANCELLED/COMPLETED
-    approval_stage = db.Column(db.String(30), nullable=False, default="MANAGER", index=True)
+    approval_stage = db.Column(db.String(30), nullable=False, default="TRANSPORT", index=True)
     manager_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
     # Frozen snapshot of all responsible managers for a submitted movement.
     manager_user_ids = db.Column(db.Text, nullable=True)

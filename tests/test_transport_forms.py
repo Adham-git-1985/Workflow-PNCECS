@@ -4,6 +4,7 @@ import unicodedata
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
 import fitz
 from PIL import Image
@@ -17,6 +18,7 @@ from extensions import db
 from models import (
     HRLookupItem,
     Notification,
+    NotificationEmailDelivery,
     SystemSetting,
     TransportDriver,
     TransportMaintenance,
@@ -103,6 +105,12 @@ class TransportReadyFormsTests(unittest.TestCase):
             password_hash="not-used-in-test",
             role="EMPLOYEE",
         )
+        self.direct_manager = User(
+            email="direct-manager@example.test",
+            name="المدير المباشر",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
         self.driver = TransportDriver(name="سائق الاختبار", status="ACTIVE")
         self.vehicle = TransportVehicle(
             plate_no="31-456-78",
@@ -121,6 +129,7 @@ class TransportReadyFormsTests(unittest.TestCase):
             self.admin,
             self.employee,
             self.transport_manager,
+            self.direct_manager,
             self.driver,
             self.vehicle,
         ])
@@ -197,6 +206,8 @@ class TransportReadyFormsTests(unittest.TestCase):
         db.session.add(self.employee_permit)
         self.pending_transport_permit = TransportPermit(
             requester_user_id=self.employee.id,
+            manager_user_id=self.direct_manager.id,
+            manager_user_ids=f"[{self.direct_manager.id}]",
             origin_text="مقر اللجنة",
             dest_text="مقر المهمة",
             purpose="طلب بانتظار مسؤول الحركة",
@@ -433,6 +444,58 @@ class TransportReadyFormsTests(unittest.TestCase):
         self.assertNotIn(f"/transport/permits/{self.employee_permit.id}/approve", body)
         self.assertNotIn(f"/transport/permits/{self.employee_permit.id}/reject", body)
         self.assertNotIn(f"/transport/permits/{self.employee_permit.id}/action", body)
+
+    def test_direct_manager_receives_view_only_movement_request(self):
+        with self.app.test_client() as client:
+            self._login(client, self.direct_manager.id)
+
+            listing = client.get("/portal/transport/permits?status=SUBMITTED")
+            self.assertEqual(listing.status_code, 200)
+            self.assertIn(f"/portal/transport/permits/{self.pending_transport_permit.id}", listing.get_data(as_text=True))
+
+            detail = client.get(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}"
+            )
+
+        self.assertEqual(detail.status_code, 200)
+        body = detail.get_data(as_text=True)
+        self.assertIn("للاطلاع فقط", body)
+        self.assertNotIn(f"/transport/permits/{self.pending_transport_permit.id}/approve", body)
+        self.assertNotIn(f"/transport/permits/{self.pending_transport_permit.id}/reject", body)
+        self.assertNotIn(f"/transport/permits/{self.pending_transport_permit.id}/action", body)
+
+    def test_new_movement_skips_direct_manager_approval_and_sends_notice(self):
+        with self.app.test_client() as client:
+            self._login(client, self.employee.id)
+            with patch(
+                "portal.transport.resolve_responsible_managers",
+                return_value=[self.direct_manager],
+            ):
+                response = client.post(
+                    "/portal/transport/permits/new",
+                    data={
+                        "origin_text": "مقر اللجنة",
+                        "dest_text": "وزارة التربية والتعليم",
+                        "purpose": "طلب حركة جديد للاختبار",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 302)
+        created = (
+            TransportPermit.query
+            .filter_by(requester_user_id=self.employee.id, purpose="طلب حركة جديد للاختبار")
+            .one()
+        )
+        self.assertEqual(created.approval_stage, "TRANSPORT")
+        self.assertEqual(created.manager_user_id, self.direct_manager.id)
+        notification = Notification.query.filter_by(
+            user_id=self.direct_manager.id,
+            target_id=created.id,
+        ).one()
+        self.assertIn("للاطلاع فقط", notification.message)
+        self.assertIsNotNone(
+            NotificationEmailDelivery.query.filter_by(notification_id=notification.id).one()
+        )
 
     def test_reject_endpoint_accepts_direct_get_and_post_from_detail(self):
         with self.app.test_client() as client:

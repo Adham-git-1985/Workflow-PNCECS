@@ -103,6 +103,11 @@
       <div class="fw-semibold mb-2">الاعتماد</div>
 
       {% if item.status == 'SUBMITTED' %}
+        {% if is_manager_observer %}
+          <div class="alert alert-info small mb-2">
+            تم إرسال هذا الطلب إليك للاطلاع فقط. لا يتطلب منك اعتماد الطلب أو رفضه.
+          </div>
+        {% endif %}
         {% if current_user_approval %}
           <div class="alert alert-success small mb-2">
             تم اعتماد طلب الحركة من قبلك في مرحلة
