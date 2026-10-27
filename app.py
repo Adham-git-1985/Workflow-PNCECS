@@ -1378,6 +1378,9 @@ def _ensure_runtime_schema():
                     db.session.rollback()
 
             for table, col, ctype in [
+                # Predefined workflow template start-access policy
+                ("workflow_templates", "start_access_mode", "TEXT NOT NULL DEFAULT 'NONE'"),
+
                 # Committee columns
                 ("workflow_template_steps", "approver_committee_id", "INTEGER"),
                 ("workflow_template_steps", "committee_delivery_mode", "TEXT"),

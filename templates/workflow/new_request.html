@@ -291,7 +291,11 @@
 </div>
 
 {% if not templates %}
-  <div class="alert alert-warning">لا توجد مسارات محفوظة مفعّلة؛ يمكنك استخدام البناء الديناميكي حسب الهيكل الإداري أو التوجيه إلى إحدى اللجان.</div>
+  {% if predefined_templates_exist %}
+    <div class="alert alert-warning">لا توجد مسارات محفوظة متاحة لك حاليًا؛ راجع مسؤول المسارات لتحديد صلاحية البدء، أو استخدم البناء الديناميكي حسب الهيكل الإداري أو التوجيه إلى إحدى اللجان.</div>
+  {% else %}
+    <div class="alert alert-warning">لا توجد مسارات محفوظة مفعّلة؛ يمكنك استخدام البناء الديناميكي حسب الهيكل الإداري أو التوجيه إلى إحدى اللجان.</div>
+  {% endif %}
 {% endif %}
 
 <form method="post" class="card shadow-sm" enctype="multipart/form-data" id="workflowNewRequestForm">
@@ -341,7 +345,7 @@
             </option>
           {% endfor %}
         </select>
-        <div class="form-text">اختيار المسار مستقل عن نوع الطلب الذي ستكتبه في القسم التالي.</div>
+        <div class="form-text">تظهر هنا المسارات التي تملك صلاحية بدءها فقط. اختيار المسار مستقل عن نوع الطلب الذي ستكتبه في القسم التالي.</div>
         <script type="application/json" id="predefinedTemplateStepsData">{{ (predefined_template_steps|default({}, true))|tojson }}</script>
         <div class="alert alert-light border mt-2 mb-0 d-none" id="predefinedRoutePreview" aria-live="polite">
           <div class="small fw-bold mb-2"><i class="bi bi-signpost-split"></i> خطوات المسار المختار</div>

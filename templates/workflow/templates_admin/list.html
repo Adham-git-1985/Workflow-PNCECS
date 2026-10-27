@@ -69,6 +69,7 @@
               <th>{{ sort_header('id', '#') }}</th>
               <th>{{ sort_header('name', 'الاسم') }}</th>
               <th>{{ sort_header('is_active', 'نشط') }}</th>
+              <th>صلاحية البدء</th>
               <th>{{ sort_header('sla', 'اتفاقية مستوى الخدمة الافتراضي') }}</th>
               <th class="text-end">إجراءات</th>
             </tr>
@@ -85,6 +86,7 @@
                   <span class="badge bg-secondary">لا</span>
                 {% endif %}
               </td>
+              <td>{{ start_access_summaries.get(t.id, 'لا أحد') }}</td>
               <td>{{ t.sla_days_default if t.sla_days_default is not none else '-' }}</td>
               <td class="text-end">
 

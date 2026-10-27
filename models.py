@@ -1760,6 +1760,15 @@ class WorkflowTemplate(db.Model):
     name = db.Column(db.String(200), nullable=False)
     is_active = db.Column(db.Boolean, default=True)
 
+    # Who may start a request from this predefined workflow template.
+    # NONE is the safe default: an administrator must explicitly choose who
+    # may start a predefined path.
+    start_access_mode = db.Column(
+        db.String(20),
+        nullable=False,
+        default="NONE",
+    )
+
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -1771,6 +1780,58 @@ class WorkflowTemplate(db.Model):
         backref="template",
         cascade="all, delete-orphan",
         order_by="WorkflowTemplateStep.step_order"
+    )
+
+    start_access_rules = db.relationship(
+        "WorkflowTemplateStartAccess",
+        back_populates="template",
+        cascade="all, delete-orphan",
+        order_by="WorkflowTemplateStartAccess.audience_type, WorkflowTemplateStartAccess.audience_id",
+    )
+
+
+class WorkflowTemplateStartAccess(db.Model):
+    """One selected audience entry allowed to start a workflow template.
+
+    ``audience_id`` is polymorphic by design: its meaning is determined by
+    ``audience_type`` (organization, directorate, department, section, or user).  The
+    template's ``start_access_mode`` stores the special NONE/ALL cases.
+    """
+
+    __tablename__ = "workflow_template_start_access"
+
+    id = db.Column(db.Integer, primary_key=True)
+    template_id = db.Column(
+        db.Integer,
+        db.ForeignKey("workflow_templates.id"),
+        nullable=False,
+        index=True,
+    )
+    audience_type = db.Column(db.String(20), nullable=False)
+    audience_id = db.Column(db.Integer, nullable=False)
+
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    template = db.relationship("WorkflowTemplate", back_populates="start_access_rules")
+    created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "template_id",
+            "audience_type",
+            "audience_id",
+            name="uq_workflow_template_start_access_audience",
+        ),
+        db.CheckConstraint(
+            "audience_type IN ('ORGANIZATION','DIRECTORATE','DEPARTMENT','SECTION','USER')",
+            name="ck_workflow_template_start_access_type",
+        ),
+        db.Index(
+            "ix_workflow_template_start_access_template_type",
+            "template_id",
+            "audience_type",
+        ),
     )
 
 

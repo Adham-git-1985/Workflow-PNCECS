@@ -23,8 +23,17 @@ from workflow.dynamic_paths import (
     org_node_approver_names,
 )
 from workflow.temporary_delete import can_delete_workflow_template
+from workflow.template_access import (
+    START_ACCESS_ALL,
+    START_ACCESS_NONE,
+    START_ACCESS_SELECTED,
+    normalize_start_access_mode,
+    start_access_rule_ids,
+    start_access_summary,
+)
 from models import (
     WorkflowTemplate,
+    WorkflowTemplateStartAccess,
     WorkflowTemplateStep,
     WorkflowTemplateParallelAssignee,
     AuditLog,
@@ -50,6 +59,110 @@ def _to_int(val, default=None):
         return int(val)
     except Exception:
         return default
+
+
+_START_ACCESS_FORM_FIELDS = (
+    ("DIRECTORATE", "start_directorate_ids", Directorate),
+    ("DEPARTMENT", "start_department_ids", Department),
+    ("SECTION", "start_section_ids", Section),
+    ("USER", "start_user_ids", User),
+)
+
+
+def _start_access_options():
+    """Load the selectable audiences shown in the template editor."""
+    return {
+        "directorates": (
+            Directorate.query.filter_by(is_active=True)
+            .order_by(Directorate.name_ar.asc())
+            .all()
+        ),
+        "departments": (
+            Department.query.filter_by(is_active=True)
+            .order_by(Department.name_ar.asc())
+            .all()
+        ),
+        "sections": (
+            Section.query.filter_by(is_active=True)
+            .order_by(Section.name_ar.asc())
+            .all()
+        ),
+        "users": User.query.order_by(User.email.asc(), User.id.asc()).all(),
+    }
+
+
+def _start_access_form_data(template=None):
+    selected = start_access_rule_ids(template)
+    return {
+        "mode": normalize_start_access_mode(
+            getattr(template, "start_access_mode", None) if template else START_ACCESS_NONE
+        ),
+        "directorate_ids": selected["DIRECTORATE"],
+        "department_ids": selected["DEPARTMENT"],
+        "section_ids": selected["SECTION"],
+        "user_ids": selected["USER"],
+    }
+
+
+def _posted_start_access_ids(field_name):
+    values = request.form.getlist(field_name)
+    # Accept a comma-separated value as well, which is useful for API-style
+    # clients and harmless for the normal HTML multiple-select submission.
+    expanded = []
+    for value in values:
+        expanded.extend(str(value or "").split(","))
+    ids = set()
+    for value in expanded:
+        value = value.strip()
+        if not value:
+            continue
+        parsed = _to_int(value, default=None)
+        if parsed is not None and parsed > 0:
+            ids.add(parsed)
+    return ids
+
+
+def _parse_start_access_form():
+    raw_mode = (request.form.get("start_access_mode") or START_ACCESS_NONE).strip().upper()
+    if raw_mode not in {START_ACCESS_NONE, START_ACCESS_ALL, START_ACCESS_SELECTED}:
+        raise ValueError("صلاحية بدء المسار غير صالحة.")
+
+    rules = []
+    if raw_mode == START_ACCESS_SELECTED:
+        for audience_type, field_name, model in _START_ACCESS_FORM_FIELDS:
+            selected_ids = _posted_start_access_ids(field_name)
+            if not selected_ids:
+                continue
+            valid_query = db.session.query(model.id).filter(model.id.in_(selected_ids))
+            if hasattr(model, "is_active"):
+                valid_query = valid_query.filter(model.is_active.is_(True))
+            valid_ids = {int(row_id) for (row_id,) in valid_query.all()}
+            if valid_ids != selected_ids:
+                raise ValueError("توجد جهة أو شخص غير صالح ضمن صلاحية بدء المسار.")
+            rules.extend((audience_type, row_id) for row_id in sorted(valid_ids))
+
+        if not rules:
+            raise ValueError("اختر جهة أو شخصًا واحدًا على الأقل، أو اختر «لا أحد».")
+
+    return raw_mode, rules
+
+
+def _replace_start_access_rules(template, mode, rules):
+    template.start_access_mode = normalize_start_access_mode(mode)
+    WorkflowTemplateStartAccess.query.filter_by(template_id=template.id).delete(
+        synchronize_session=False
+    )
+    if template.start_access_mode != START_ACCESS_SELECTED:
+        return
+    for audience_type, audience_id in rules:
+        db.session.add(
+            WorkflowTemplateStartAccess(
+                template_id=template.id,
+                audience_type=audience_type,
+                audience_id=audience_id,
+                created_by_id=getattr(current_user, "id", None),
+            )
+        )
 
 
 def _normalize_kind(kind: str) -> str:
@@ -226,6 +339,10 @@ def templates_list():
         q=q,
         sort=sort,
         direction=direction,
+        start_access_summaries={
+            int(template.id): start_access_summary(template)
+            for template in items
+        },
     )
 
 
@@ -254,6 +371,7 @@ def templates_export_excel():
         "ID",
         "اسم المسار",
         "نشط",
+        "صلاحية البدء",
         "SLA الافتراضي (أيام)",
         "عدد الخطوات",
         "أنشئ بواسطة",
@@ -268,6 +386,7 @@ def templates_export_excel():
             getattr(t, "id", ""),
             getattr(t, "name", ""),
             "نعم" if getattr(t, "is_active", False) else "لا",
+            start_access_summary(t),
             getattr(t, "sla_days_default", None) if getattr(t, "sla_days_default", None) is not None else "",
             len(getattr(t, "steps", []) or []),
             getattr(creator, "email", "") if creator else (getattr(t, "created_by_id", "") or ""),
@@ -366,6 +485,7 @@ def templates_import_excel():
     Columns (recommended):
       - name (required)
       - is_active (1/0)
+      - start_access_mode (NONE / ALL; SELECTED is configured from the editor)
       - sla_days_default (int)
 
     Modes:
@@ -400,18 +520,27 @@ def templates_import_excel():
                 continue
             name = name.strip()
             is_active = xl.to_bool(xl.pick(r, "is_active", "active", "نشط"), default=True)
+            start_access_raw = xl.to_str(xl.pick(
+                r,
+                "start_access_mode",
+                "start access mode",
+                "صلاحية البدء",
+            )).strip()
             sla = xl.to_int(xl.pick(r, "sla_days_default", "sla_days", "sla", "sla الافتراضي"), default=None)
 
             obj = WorkflowTemplate.query.filter(func.lower(WorkflowTemplate.name) == name.lower()).first()
             if obj:
                 obj.name = name
                 obj.is_active = bool(is_active) if is_active is not None else obj.is_active
+                if start_access_raw:
+                    obj.start_access_mode = normalize_start_access_mode(start_access_raw)
                 obj.sla_days_default = sla
                 updated += 1
             else:
                 obj = WorkflowTemplate(
                     name=name,
                     is_active=bool(is_active) if is_active is not None else True,
+                    start_access_mode=normalize_start_access_mode(start_access_raw or START_ACCESS_NONE),
                     sla_days_default=sla,
                     created_by_id=current_user.id,
                 )
@@ -425,6 +554,7 @@ def templates_import_excel():
             # Clear in dependency order
             WorkflowTemplateParallelAssignee.query.delete(synchronize_session=False)
             WorkflowTemplateStep.query.delete(synchronize_session=False)
+            WorkflowTemplateStartAccess.query.delete(synchronize_session=False)
             WorkflowTemplate.query.delete(synchronize_session=False)
             db.session.flush()
 
@@ -499,14 +629,22 @@ def templates_new():
             flash("اسم المسار مطلوب.", "danger")
             return redirect(request.url)
 
+        try:
+            start_access_mode, start_access_rules = _parse_start_access_form()
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return redirect(request.url)
+
         t = WorkflowTemplate(
             name=name,
             is_active=True,  # new.html عادة بدون checkbox
             created_by_id=current_user.id,
             sla_days_default=sla_days_default,
+            start_access_mode=start_access_mode,
         )
         db.session.add(t)
         db.session.flush()  # نحتاج t.id قبل إضافة الخطوات
+        _replace_start_access_rules(t, start_access_mode, start_access_rules)
 
         # Arrays from new.html
         kinds = request.form.getlist("approver_kind")
@@ -658,6 +796,8 @@ def templates_new():
         role_choices=role_choices,
         committees=committees,
         committee_summaries=committee_summaries,
+        start_access_options=_start_access_options(),
+        start_access_data=_start_access_form_data(),
     )
 
 
@@ -675,6 +815,15 @@ def templates_edit(template_id):
         if not t.name:
             flash("اسم المسار مطلوب.", "danger")
             return redirect(request.url)
+
+        try:
+            start_access_mode, start_access_rules = _parse_start_access_form()
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+            return redirect(request.url)
+
+        _replace_start_access_rules(t, start_access_mode, start_access_rules)
 
         db.session.commit()
         flash("تم حفظ بيانات المسار.", "success")
@@ -737,6 +886,8 @@ def templates_edit(template_id):
         committees=committees,
         committee_summaries=committee_summaries,
         can_delete_template=can_delete_workflow_template(current_user, t),
+        start_access_options=_start_access_options(),
+        start_access_data=_start_access_form_data(t),
     )
 
 
@@ -852,6 +1003,7 @@ def templates_details(template_id):
         org_nodes_map=org_nodes_map,
         committees_map=committees_map,
         committee_summaries=committee_summaries,
+        start_access_summary_label=start_access_summary(t),
     )
 
 
@@ -864,6 +1016,9 @@ def templates_delete(template_id):
         abort(403)
 
     WorkflowTemplateStep.query.filter_by(template_id=t.id).delete()
+    WorkflowTemplateStartAccess.query.filter_by(template_id=t.id).delete(
+        synchronize_session=False
+    )
     db.session.add(AuditLog(
         action="WORKFLOW_TEMPLATE_DELETED",
         user_id=current_user.id,

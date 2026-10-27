@@ -21,6 +21,7 @@
       <div class="col-md-6"><b>الاسم:</b> {{ t.name }}</div>
       <div class="col-md-3"><b>فعّال:</b> {{ "Yes" if t.is_active else "No" }}</div>
       <div class="col-md-3"><b>مدة الإنجاز الافتراضية:</b> {{ t.sla_days_default or "-" }}</div>
+      <div class="col-12"><b>من يستطيع بدء المسار:</b> {{ start_access_summary_label }}</div>
     </div>
   </div>
 </div>

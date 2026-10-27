@@ -175,6 +175,10 @@ from workflow.dynamic_paths import (
     requester_dynamic_manager_options,
 )
 from workflow.project_workflows import PROJECT_WORKFLOW_METADATA_BY_TEMPLATE_NAME
+from workflow.template_access import (
+    can_user_start_template,
+    filter_startable_templates,
+)
 from workflow.read_models import (
     load_dashboard_correspondence_contexts,
     load_workflow_access_snapshot,
@@ -4188,6 +4192,7 @@ def analyze_new_request_attachment():
             .order_by(WorkflowTemplate.name.asc())
             .all()
         )
+        templates = filter_startable_templates(_workflow_actor(), templates)
         analysis = analyze_workflow_attachment(
             payload,
             getattr(upload, "filename", "") or "attachment",
@@ -4405,12 +4410,14 @@ def new_request():
     )
 
     # templates always available as manual fallback
-    templates = (
+    active_templates = (
         WorkflowTemplate.query
         .filter_by(is_active=True)
         .order_by(WorkflowTemplate.name.asc())
         .all()
     )
+    predefined_templates_exist = bool(active_templates)
+    templates = filter_startable_templates(working_user, active_templates)
     predefined_template_steps = _predefined_template_steps_data(templates)
 
     selected_rt_id = request.args.get("request_type_id")
@@ -4498,6 +4505,9 @@ def new_request():
 
             if not template:
                 flash("لا يوجد مسار مناسب. اختر مساراً محفوظاً أو استخدم البناء الديناميكي حسب الهيكل.", "danger")
+                return redirect(request.url)
+            if not can_user_start_template(working_user, template):
+                flash("لا تملك صلاحية بدء هذا المسار. اختر مسارًا مسموحًا لك أو راجع الإدارة.", "danger")
                 return redirect(request.url)
             workflow_label = template.name
 
@@ -4596,6 +4606,7 @@ def new_request():
         "workflow/new_request.html",
         request_types=request_types,
         templates=templates,
+        predefined_templates_exist=predefined_templates_exist,
         predefined_template_steps=predefined_template_steps,
         project_workflow_metadata=PROJECT_WORKFLOW_METADATA_BY_TEMPLATE_NAME,
         selected_request_type_name=selected_request_type_name,

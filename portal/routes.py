@@ -341,6 +341,10 @@ from workflow.engine import (
     resolve_template_participant_user_ids,
     start_workflow_for_request,
 )
+from workflow.template_access import (
+    can_user_start_template,
+    filter_startable_templates,
+)
 from services.correspondence_procedure import (
     ACTION_LABELS as CORR_ACTION_LABELS,
     FINALIZE_ACTIONS as CORR_FINALIZE_ACTIONS,
@@ -1773,13 +1777,14 @@ def _ensure_corr_attachments_archived(attachments: list[CorrAttachment]) -> list
     return archived_files
 
 
-def _active_workflow_templates() -> list[WorkflowTemplate]:
-    return (
+def _active_workflow_templates(user=None) -> list[WorkflowTemplate]:
+    templates = (
         WorkflowTemplate.query
         .filter_by(is_active=True)
         .order_by(WorkflowTemplate.name.asc())
         .all()
     )
+    return filter_startable_templates(user or current_user, templates)
 
 
 def _corr_workflow_templates() -> list[WorkflowTemplate]:
@@ -2276,6 +2281,9 @@ def _start_corr_workflow(
 
     if not template:
         flash("يرجى اختيار قالب مسار فعال.", "danger")
+        return None
+    if not can_user_start_template(current_user, template):
+        flash("لا تملك صلاحية بدء هذا المسار. اختر مسارًا مسموحًا لك أو راجع الإدارة.", "danger")
         return None
 
     runtime_steps = _corr_workflow_runtime_steps(template, item)
@@ -4018,6 +4026,9 @@ def _start_meeting_workflow(row: PortalMeeting, source_type: str, template_id: s
 
     if not template:
         flash("يرجى اختيار قالب مسار فعال.", "danger")
+        return None
+    if not can_user_start_template(current_user, template):
+        flash("لا تملك صلاحية بدء هذا المسار. اختر مسارًا مسموحًا لك أو راجع الإدارة.", "danger")
         return None
 
     payload = _meeting_workflow_payload(row, source_type, task_id)
