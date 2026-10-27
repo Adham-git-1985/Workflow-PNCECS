@@ -66,7 +66,7 @@
   <div class="table-responsive">
     <table class="table table-hover align-middle mb-0">
       <thead class="table-light">
-        <tr><th>#</th><th>العنوان</th><th>المصدر</th><th>القالب</th><th>الحالة</th><th>الخطوة الحالية</th><th>الموعد</th><th></th></tr>
+        <tr><th>#</th><th>العنوان</th><th>وقت انشاء المسار</th><th>المصدر</th><th>القالب</th><th>الحالة</th><th>الخطوة الحالية</th><th>الموعد</th><th></th></tr>
       </thead>
       <tbody>
         {% for row in rows %}
@@ -78,6 +78,12 @@
                 {% if row.is_new %}<span class="badge rounded-pill text-bg-danger ms-1">جديد</span>{% endif %}
               </div>
               <small class="text-muted">{{ row.requester.full_name if row.requester else '-' }}</small>
+            </td>
+            <td class="text-nowrap">
+              {% if row.req.created_at %}
+                <div>{{ row.req.created_at|local_datetime('%Y-%m-%d') }}</div>
+                <div class="small text-muted">{{ row.req.created_at|local_datetime('%H:%M') }}</div>
+              {% else %}-{% endif %}
             </td>
             <td>
               {% if row.corr_source %}
@@ -143,7 +149,7 @@
             <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('workflow.view_request', request_id=row.req.id) }}">فتح</a></td>
           </tr>
         {% else %}
-          <tr><td colspan="8" class="text-center text-muted py-5"><i class="bi bi-inbox fs-1 d-block"></i>لا توجد مسارات في هذه القائمة.</td></tr>
+          <tr><td colspan="9" class="text-center text-muted py-5"><i class="bi bi-inbox fs-1 d-block"></i>لا توجد مسارات في هذه القائمة.</td></tr>
         {% endfor %}
       </tbody>
     </table>
