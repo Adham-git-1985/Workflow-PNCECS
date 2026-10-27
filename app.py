@@ -419,6 +419,28 @@ def _ensure_runtime_schema():
                     "INTEGER",
                 )
 
+            # Attachment types can carry their default classification.  This
+            # is a nullable self-reference because HRLookupItem is also used
+            # by all other employee-file lookup categories.
+            if not _col_exists("hr_lookup_item", "attachment_classification_lookup_id"):
+                _add_column_retry(
+                    "hr_lookup_item",
+                    "attachment_classification_lookup_id",
+                    "INTEGER",
+                )
+            try:
+                if _col_exists("hr_lookup_item", "attachment_classification_lookup_id"):
+                    db.session.execute(
+                        text(
+                            "CREATE INDEX IF NOT EXISTS "
+                            "ix_hr_lookup_item_attachment_classification_lookup_id "
+                            "ON hr_lookup_item (attachment_classification_lookup_id)"
+                        )
+                    )
+                    db.session.commit()
+            except Exception:
+                db.session.rollback()
+
             if _col_exists("hr_lookup_item", "category"):
                 try:
                     _now = datetime.utcnow()

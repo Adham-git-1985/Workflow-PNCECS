@@ -79,6 +79,42 @@ class EmployeeLookupImportTests(unittest.TestCase):
         self.assertEqual(item.sort_order, 1)
         self.assertTrue(item.is_active)
 
+    def test_attachment_type_import_links_its_default_classification(self):
+        classification = HRLookupItem(
+            category="ATTACH_CLASSIFICATION",
+            code="PERSONAL_DATA",
+            name_ar="بيانات شخصية",
+        )
+        db.session.add(classification)
+        db.session.commit()
+
+        workbook = make_xlsx_bytes(
+            "ATTACH_TYPE",
+            ["code", "name_ar", "name_en", "sort_order", "is_active", "classification_code"],
+            [["BIRTH_CER", "شهادة ميلاد", "Birth Certificate", 1, True, "PERSONAL_DATA"]],
+        )
+
+        import_lookup = _unwrapped(hr_employee_lookups_import)
+        with self.app.test_request_context(
+            "/portal/hr/masterdata/employee-lookups/ATTACH_TYPE/import",
+            method="POST",
+            content_type="multipart/form-data",
+            data={
+                "mode": "upsert",
+                "file": (BytesIO(workbook), "employee_lookup_ATTACH_TYPE.xlsx"),
+            },
+        ), patch("portal.routes.current_user", self.admin), patch(
+            "portal.routes._portal_audit"
+        ), patch(
+            "portal.routes.url_for",
+            return_value="/portal/hr/masterdata/employee-lookups/ATTACH_TYPE",
+        ):
+            response = import_lookup("ATTACH_TYPE")
+
+        self.assertEqual(response.status_code, 302)
+        item = HRLookupItem.query.filter_by(category="ATTACH_TYPE", code="BIRTH_CER").one()
+        self.assertEqual(item.attachment_classification_lookup_id, classification.id)
+
 
 if __name__ == "__main__":
     unittest.main()

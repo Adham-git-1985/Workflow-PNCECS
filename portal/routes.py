@@ -29493,6 +29493,34 @@ def _lookup_items(category: str, *, active_only: bool = True):
     return q.order_by(HRLookupItem.sort_order.asc(), HRLookupItem.name_ar.asc(), HRLookupItem.id.asc()).all()
 
 
+def _sync_attachment_type_classification(type_item):
+    """Apply an attachment type's default classification to existing files."""
+    if not type_item or type_item.category != "ATTACH_TYPE" or not type_item.id:
+        return
+    EmployeeAttachment.query.filter_by(
+        attachment_type_lookup_id=type_item.id,
+    ).update(
+        {
+            "attachment_classification_lookup_id": type_item.attachment_classification_lookup_id,
+        },
+        synchronize_session=False,
+    )
+
+
+def _attachment_classification_for_type(type_item):
+    """Return a valid classification id configured on an attachment type."""
+    if not type_item:
+        return None
+    classification_id = _to_int(type_item.attachment_classification_lookup_id)
+    if classification_id is None:
+        return None
+    item = HRLookupItem.query.filter_by(
+        id=classification_id,
+        category="ATTACH_CLASSIFICATION",
+    ).first()
+    return item.id if item else None
+
+
 def _lookup_label_by_id() -> dict[int, str]:
     rows = HRLookupItem.query.all()
     return {r.id: r.label for r in rows if r and r.id}
@@ -30488,14 +30516,16 @@ def hr_employee_attachments_upload(user_id: int):
     attachment_type = (request.form.get("attachment_type") or "OTHER").strip().upper() or "OTHER"
     note = (request.form.get("note") or "").strip() or None
 
-    # The detailed attachment type and the independent grouping classification
-    # are separate lookup categories.  Keep the legacy form field name for the
-    # type so existing callers continue to work.
+    # Keep the detailed attachment type field name for existing callers.  The
+    # classification is configured on the attachment type itself and inherited
+    # automatically for every uploaded file.
     attachment_type_lookup_id = _to_int(request.form.get("attachment_type_lookup_id"))
-    attachment_classification_lookup_id = _to_int(
+    posted_classification_lookup_id = _to_int(
         request.form.get("attachment_classification_lookup_id")
         or request.form.get("classification_lookup_id")
     )
+    attachment_type_item = None
+    attachment_classification_lookup_id = None
 
     if attachment_type != "PAYSLIP":
         if attachment_type_lookup_id is not None:
@@ -30507,6 +30537,17 @@ def hr_employee_attachments_upload(user_id: int):
             if not attachment_type_item:
                 flash("نوع المرفق غير صالح.", "danger")
                 return redirect(next_url or url_for("portal.hr_employee_attachments", user_id=user_id))
+
+            # The type-to-classification link is authoritative.  The posted
+            # classification remains a backwards-compatible fallback for old
+            # forms/API callers while a type is being configured.
+            attachment_classification_lookup_id = _attachment_classification_for_type(
+                attachment_type_item
+            )
+
+        if attachment_classification_lookup_id is None:
+            attachment_classification_lookup_id = posted_classification_lookup_id
+
         if attachment_classification_lookup_id is not None:
             classification_item = (
                 HRLookupItem.query
@@ -30752,10 +30793,7 @@ def hr_employee_attachment_edit(user_id: int, att_id: int):
     if request.method == "POST":
         type_raw = request.form.get("attachment_type_lookup_id")
         type_id = _to_int(type_raw) if type_raw is not None else a.attachment_type_lookup_id
-        classification_id = _to_int(
-            request.form.get("attachment_classification_lookup_id")
-            or request.form.get("classification_lookup_id")
-        )
+        attachment_type_item = None
         if type_id is not None:
             attachment_type_item = (
                 HRLookupItem.query
@@ -30765,15 +30803,16 @@ def hr_employee_attachment_edit(user_id: int, att_id: int):
             if not attachment_type_item:
                 flash("نوع المرفق غير صالح.", "danger")
                 return redirect(request.url)
-        if classification_id is not None:
-            classification_item = (
-                HRLookupItem.query
-                .filter_by(id=classification_id, category="ATTACH_CLASSIFICATION")
-                .first()
-            )
-            if not classification_item:
-                flash("تصنيف المرفق غير صالح.", "danger")
-                return redirect(request.url)
+
+        classification_id = _attachment_classification_for_type(attachment_type_item)
+        # Preserve the classification of legacy files whose type has not been
+        # linked yet.  Once a link exists, the type is authoritative.
+        if (
+            classification_id is None
+            and type_id is not None
+            and type_id == a.attachment_type_lookup_id
+        ):
+            classification_id = a.attachment_classification_lookup_id
 
         a.attachment_type_lookup_id = type_id
         a.attachment_classification_lookup_id = classification_id
@@ -34372,7 +34411,18 @@ def hr_employee_lookups_category(category: str):
         name_en = (request.form.get('name_en') or '').strip() or None
         sort_order = (request.form.get('sort_order') or '').strip()
         is_active = bool(request.form.get('is_active'))
-
+        attachment_classification_lookup_id = None
+        if cat == "ATTACH_TYPE":
+            raw_classification_id = request.form.get("attachment_classification_lookup_id")
+            attachment_classification_lookup_id = _to_int(raw_classification_id)
+            if attachment_classification_lookup_id is not None:
+                classification_item = HRLookupItem.query.filter_by(
+                    id=attachment_classification_lookup_id,
+                    category="ATTACH_CLASSIFICATION",
+                ).first()
+                if not classification_item:
+                    flash('تصنيف المرفق غير صالح.', 'danger')
+                    return redirect(request.url)
         if not code or not name_ar:
             flash('الرمز والاسم العربي مطلوبان.', 'danger')
             return redirect(request.url)
@@ -34388,6 +34438,8 @@ def hr_employee_lookups_category(category: str):
             item.name_en = name_en
             item.sort_order = so
             item.is_active = is_active
+            if cat == "ATTACH_TYPE":
+                item.attachment_classification_lookup_id = attachment_classification_lookup_id
             item.updated_at = datetime.utcnow()
         else:
             item = HRLookupItem(
@@ -34397,10 +34449,17 @@ def hr_employee_lookups_category(category: str):
                 name_en=name_en,
                 sort_order=so,
                 is_active=is_active,
+                attachment_classification_lookup_id=(
+                    attachment_classification_lookup_id if cat == "ATTACH_TYPE" else None
+                ),
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow(),
             )
             db.session.add(item)
+
+        if cat == "ATTACH_TYPE":
+            db.session.flush()
+            _sync_attachment_type_classification(item)
 
         _portal_audit(
             action='HR_EMP_LOOKUP_UPSERT',
@@ -34421,6 +34480,10 @@ def hr_employee_lookups_category(category: str):
         HRLookupItem.name_ar.asc(),
         HRLookupItem.id.asc(),
     ).all()
+    classification_options = (
+        _lookup_items("ATTACH_CLASSIFICATION", active_only=False)
+        if cat == "ATTACH_TYPE" else []
+    )
     return render_template(
         "portal/hr/employee_lookups_category.html",
         # preferred names
@@ -34430,6 +34493,7 @@ def hr_employee_lookups_category(category: str):
         category=cat,
         label=EMP_LOOKUP_LABEL.get(cat, cat),
         items=items,
+        classification_options=classification_options,
     )
 
 
@@ -34450,6 +34514,18 @@ def hr_employee_lookup_edit(category: str, item_id: int):
         name_en = (request.form.get('name_en') or '').strip() or None
         sort_order = (request.form.get('sort_order') or '').strip()
         is_active = bool(request.form.get('is_active'))
+        attachment_classification_lookup_id = None
+        if cat == "ATTACH_TYPE":
+            raw_classification_id = request.form.get("attachment_classification_lookup_id")
+            attachment_classification_lookup_id = _to_int(raw_classification_id)
+            if attachment_classification_lookup_id is not None:
+                classification_item = HRLookupItem.query.filter_by(
+                    id=attachment_classification_lookup_id,
+                    category="ATTACH_CLASSIFICATION",
+                ).first()
+                if not classification_item:
+                    flash('تصنيف المرفق غير صالح.', 'danger')
+                    return redirect(request.url)
 
         if not code or not name_ar:
             flash('الرمز والاسم العربي مطلوبان.', 'danger')
@@ -34471,7 +34547,13 @@ def hr_employee_lookup_edit(category: str, item_id: int):
         item.name_en = name_en
         item.sort_order = so
         item.is_active = is_active
+        if cat == "ATTACH_TYPE":
+            item.attachment_classification_lookup_id = attachment_classification_lookup_id
         item.updated_at = datetime.utcnow()
+
+        if cat == "ATTACH_TYPE":
+            db.session.flush()
+            _sync_attachment_type_classification(item)
 
         _portal_audit('HR_EMP_LOOKUP_UPDATE', f"{cat}: {item.code}", target_type='HR_LOOKUP_ITEM', target_id=item.id)
         try:
@@ -34493,6 +34575,10 @@ def hr_employee_lookup_edit(category: str, item_id: int):
         category=cat,
         label=EMP_LOOKUP_LABEL.get(cat, cat),
         item=item,
+        classification_options=(
+            _lookup_items("ATTACH_CLASSIFICATION", active_only=False)
+            if cat == "ATTACH_TYPE" else []
+        ),
     )
 
 
@@ -34511,9 +34597,14 @@ def hr_employee_lookup_delete(category: str, item_id: int):
     # attachment already references one, keep the FK safe by disabling it.
     # Other employee-file lookups retain their existing soft-delete behavior.
     if cat == "ATTACH_CLASSIFICATION":
-        in_use = EmployeeAttachment.query.filter_by(
+        in_use_attachments = EmployeeAttachment.query.filter_by(
             attachment_classification_lookup_id=item.id,
         ).count()
+        in_use_types = HRLookupItem.query.filter_by(
+            category="ATTACH_TYPE",
+            attachment_classification_lookup_id=item.id,
+        ).count()
+        in_use = in_use_attachments + in_use_types
     else:
         in_use = 1
 
@@ -34521,7 +34612,10 @@ def hr_employee_lookup_delete(category: str, item_id: int):
         item.is_active = False
         item.updated_at = datetime.utcnow()
         audit_action = 'HR_EMP_LOOKUP_DISABLE'
-        success_message = 'تم تعطيل التصنيف لأنه مستخدم في مرفقات.' if cat == "ATTACH_CLASSIFICATION" else 'تم التعطيل.'
+        success_message = (
+            'تم تعطيل التصنيف لأنه مستخدم في أنواع المرفقات أو المرفقات.'
+            if cat == "ATTACH_CLASSIFICATION" else 'تم التعطيل.'
+        )
     else:
         db.session.delete(item)
         audit_action = 'HR_EMP_LOOKUP_DELETE'
@@ -34550,7 +34644,17 @@ def hr_employee_lookups_export(category: str):
     items = HRLookupItem.query.filter_by(category=cat).order_by(HRLookupItem.sort_order.asc(), HRLookupItem.name_ar.asc(), HRLookupItem.id.asc()).all()
 
     headers = ["code", "name_ar", "name_en", "sort_order", "is_active"]
-    rows = [[i.code, i.name_ar, i.name_en or "", i.sort_order or 0, 1 if i.is_active else 0] for i in items]
+    if cat == "ATTACH_TYPE":
+        headers.append("classification_code")
+    rows = []
+    for i in items:
+        row = [i.code, i.name_ar, i.name_en or "", i.sort_order or 0, 1 if i.is_active else 0]
+        if cat == "ATTACH_TYPE":
+            row.append(
+                i.attachment_classification_lookup.code
+                if i.attachment_classification_lookup else ""
+            )
+        rows.append(row)
 
     from utils.excel import make_xlsx_bytes
     xbytes = make_xlsx_bytes(cat, headers, rows)
@@ -34568,6 +34672,8 @@ def hr_employee_lookups_template(category: str):
         abort(403)
 
     headers = ["code", "name_ar", "name_en", "sort_order", "is_active"]
+    if cat == "ATTACH_TYPE":
+        headers.append("classification_code")
     from utils.excel import make_xlsx_bytes
     xbytes = make_xlsx_bytes(cat, headers, [])
     fn = f"employee_lookup_{cat}_template.xlsx"
@@ -34608,6 +34714,12 @@ def hr_employee_lookups_import(category: str):
         flash('تعذر قراءة ملف Excel. تأكد من الأعمدة: code, name_ar ...', 'danger')
         return redirect(url_for('portal.hr_employee_lookups_category', category=cat))
 
+    classification_column_present = (
+        "classificationcode" in headers
+        or "attachmentclassificationcode" in headers
+        or "classification" in headers
+    )
+
     # Safe replace: deactivate all existing, then upsert from file.
     if mode in {'replace', 'safe_replace'}:
         try:
@@ -34617,6 +34729,8 @@ def hr_employee_lookups_import(category: str):
             db.session.rollback()
 
     upserted = 0
+    invalid_classification_codes = []
+    changed_attachment_types = []
     for r in rows:
         code = to_str(pick(r, 'code')) or ''
         name_ar = to_str(pick(r, 'name_ar')) or ''
@@ -34625,6 +34739,25 @@ def hr_employee_lookups_import(category: str):
         name_en = to_str(pick(r, 'name_en'))
         sort_order = to_int(pick(r, 'sort_order'), default=0) or 0
         active = bool(to_bool(pick(r, 'is_active'), default=True))
+        classification_id = None
+        if cat == "ATTACH_TYPE" and classification_column_present:
+            classification_code = to_str(
+                pick(
+                    r,
+                    "classification_code",
+                    "attachment_classification_code",
+                    "classification",
+                )
+            )
+            if classification_code:
+                classification_item = HRLookupItem.query.filter_by(
+                    category="ATTACH_CLASSIFICATION",
+                    code=classification_code,
+                ).first()
+                if not classification_item:
+                    invalid_classification_codes.append(classification_code)
+                    continue
+                classification_id = classification_item.id
 
         item = HRLookupItem.query.filter_by(category=cat, code=code).first()
         if item:
@@ -34632,6 +34765,8 @@ def hr_employee_lookups_import(category: str):
             item.name_en = name_en
             item.sort_order = sort_order
             item.is_active = active
+            if cat == "ATTACH_TYPE" and classification_column_present:
+                item.attachment_classification_lookup_id = classification_id
             item.updated_at = datetime.utcnow()
         else:
             item = HRLookupItem(
@@ -34641,11 +34776,27 @@ def hr_employee_lookups_import(category: str):
                 name_en=name_en,
                 sort_order=sort_order,
                 is_active=active,
+                attachment_classification_lookup_id=(
+                    classification_id if cat == "ATTACH_TYPE" and classification_column_present else None
+                ),
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow(),
             )
             db.session.add(item)
+        if cat == "ATTACH_TYPE":
+            changed_attachment_types.append(item)
         upserted += 1
+
+    if invalid_classification_codes:
+        db.session.rollback()
+        invalid = ", ".join(sorted(set(invalid_classification_codes)))
+        flash(f"تصنيفات غير موجودة: {invalid}", 'danger')
+        return redirect(url_for('portal.hr_employee_lookups_category', category=cat))
+
+    if cat == "ATTACH_TYPE":
+        db.session.flush()
+        for item in changed_attachment_types:
+            _sync_attachment_type_classification(item)
 
     _portal_audit('HR_EMP_LOOKUP_IMPORT', f"{cat}: mode={mode} upserted={upserted}", target_type='HR_LOOKUP_ITEM', target_id=0)
 

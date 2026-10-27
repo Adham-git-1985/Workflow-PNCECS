@@ -154,25 +154,21 @@
           </div>
           <div class="col-12 col-md-4">
             <label class="form-label">نوع المرفق</label>
-            <select name="attachment_type_lookup_id" class="form-select" required>
+            <select name="attachment_type_lookup_id" id="employeeFileAttachmentType" class="form-select" required>
               <option value="">اختر النوع</option>
               {% if lookups is defined %}
                 {% for it in lookups.ATTACH_TYPE %}
-                  <option value="{{ it.id }}">{{ it.label }}</option>
+                  <option value="{{ it.id }}"
+                          data-classification-label="{{ it.attachment_classification_lookup.label if it.attachment_classification_lookup else 'غير مرتبط' }}">
+                    {{ it.label }}
+                  </option>
                 {% endfor %}
               {% endif %}
             </select>
           </div>
           <div class="col-12 col-md-4">
-            <label class="form-label">تصنيف المرفق</label>
-            <select name="attachment_classification_lookup_id" class="form-select">
-              <option value="">غير مصنف</option>
-              {% if lookups is defined %}
-                {% for it in lookups.ATTACH_CLASSIFICATION %}
-                  <option value="{{ it.id }}">{{ it.label }}</option>
-                {% endfor %}
-              {% endif %}
-            </select>
+            <label class="form-label">التصنيف المرتبط</label>
+            <div id="employeeFileAttachmentClassification" class="form-control bg-light">اختر النوع ليظهر التصنيف المرتبط</div>
           </div>
           <div class="col-12 col-md-6">
             <label class="form-label">ملاحظة</label>
@@ -322,5 +318,21 @@
       </div>
     </div>
   </div>
-</div>
+  </div>
+
+  <script>
+    (function () {
+      const typeSelect = document.getElementById('employeeFileAttachmentType');
+      const classification = document.getElementById('employeeFileAttachmentClassification');
+      if (!typeSelect || !classification) return;
+      function updateClassification() {
+        const option = typeSelect.options[typeSelect.selectedIndex];
+        classification.textContent = option && option.value
+          ? (option.dataset.classificationLabel || 'غير مرتبط')
+          : 'اختر النوع ليظهر التصنيف المرتبط';
+      }
+      typeSelect.addEventListener('change', updateClassification);
+      updateClassification();
+    })();
+  </script>
 {% endblock %}
