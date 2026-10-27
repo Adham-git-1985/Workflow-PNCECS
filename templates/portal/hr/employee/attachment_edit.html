@@ -26,13 +26,17 @@
             </select>
           </div>
           <div class="col-md-6">
-            <label class="form-label">تصنيف المرفق</label>
-            <select name="attachment_classification_lookup_id" class="form-select">
-              <option value="">غير مصنف</option>
-              {% for it in lookups.ATTACH_CLASSIFICATION %}
-                <option value="{{ it.id }}" {% if a.attachment_classification_lookup_id == it.id %}selected{% endif %}>{{ it.label }}</option>
-              {% endfor %}
-            </select>
+            <label class="form-label">التصنيف المرتبط بالنوع</label>
+            <div class="form-control bg-light">
+              {% if a.attachment_type_lookup and a.attachment_type_lookup.attachment_classification_lookup %}
+                {{ a.attachment_type_lookup.attachment_classification_lookup.label }}
+              {% elif a.attachment_classification_lookup %}
+                {{ a.attachment_classification_lookup.label }}
+              {% else %}
+                غير مرتبط
+              {% endif %}
+            </div>
+            <div class="form-text">يتم تحديد التصنيف تلقائيًا من إعداد نوع المرفق.</div>
           </div>
           <div class="col-md-6">
             <label class="form-label">ملاحظات</label>

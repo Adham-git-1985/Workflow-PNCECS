@@ -14,24 +14,22 @@
 
               <div class="mb-2">
                 <label class="form-label">نوع المرفق</label>
-                <select name="attachment_type_lookup_id" class="form-select" required>
+                <select name="attachment_type_lookup_id" id="employeeAttachmentType" class="form-select" required>
                   <option value="">اختر نوع المرفق</option>
                   {% for it in lookups.ATTACH_TYPE %}
-                    <option value="{{ it.id }}">{{ it.label }}</option>
+                    <option value="{{ it.id }}"
+                            data-classification-label="{{ it.attachment_classification_lookup.label if it.attachment_classification_lookup else 'غير مرتبط' }}">
+                      {{ it.label }}
+                    </option>
                   {% endfor %}
                 </select>
               </div>
 
               <div class="mb-2">
-                <label class="form-label">تصنيف المرفق</label>
-                <select name="attachment_classification_lookup_id" class="form-select" required>
-                  <option value="">اختر تصنيف المرفق</option>
-                  {% for it in lookups.ATTACH_CLASSIFICATION %}
-                    <option value="{{ it.id }}">{{ it.label }}</option>
-                  {% endfor %}
-                </select>
+                <label class="form-label">التصنيف المرتبط</label>
+                <div id="employeeAttachmentClassification" class="form-control bg-light">اختر نوع المرفق ليظهر التصنيف المرتبط</div>
                 <div class="form-text">
-                  إدارة الأنواع من
+                  يتم تحديد التصنيف تلقائيًا من إعداد نوع المرفق. إدارة الربط من
                   <a href="{{ url_for('portal.hr_employee_lookups_category', category='ATTACH_TYPE') }}">أنواع المرفقات</a>،
                   وإدارة التصنيفات من
                   <a href="{{ url_for('portal.hr_employee_lookups_category', category='ATTACH_CLASSIFICATION') }}">تصنيفات المرفقات</a>.
@@ -46,7 +44,7 @@
               <div class="mb-3">
                 <label class="form-label">الملفات</label>
                 <input class="form-control" type="file" name="files" id="employeeAttachmentFiles" multiple required>
-                <div class="form-text" id="employeeAttachmentFilesHelp">يمكن اختيار عدة ملفات مرة واحدة، وسيُطبّق النوع والتصنيف عليها، مع إمكانية تعديل كل ملف لاحقًا بشكل مستقل.</div>
+                <div class="form-text" id="employeeAttachmentFilesHelp">يمكن اختيار عدة ملفات مرة واحدة، وسيُطبّق نوع المرفق وتصنيفه المرتبط عليها.</div>
               </div>
 
               <button class="btn btn-primary" type="submit"><i class="bi bi-cloud-arrow-up"></i> رفع الملفات</button>
@@ -180,14 +178,30 @@
 
   <script>
     (function () {
+      const typeSelect = document.getElementById('employeeAttachmentType');
+      const classification = document.getElementById('employeeAttachmentClassification');
       const input = document.getElementById('employeeAttachmentFiles');
       const help = document.getElementById('employeeAttachmentFilesHelp');
       if (!input || !help) return;
+
+      function updateClassification() {
+        if (!classification || !typeSelect) return;
+        const option = typeSelect.options[typeSelect.selectedIndex];
+        classification.textContent = option && option.value
+          ? (option.dataset.classificationLabel || 'غير مرتبط')
+          : 'اختر نوع المرفق ليظهر التصنيف المرتبط';
+      }
+
+      if (typeSelect) {
+        typeSelect.addEventListener('change', updateClassification);
+        updateClassification();
+      }
+
       input.addEventListener('change', function () {
         const count = input.files ? input.files.length : 0;
         help.textContent = count
-          ? `تم اختيار ${count} ملف/ملفات. سيُطبّق النوع والتصنيف عليها، ويمكن تعديل كل ملف لاحقًا.`
-          : 'يمكن اختيار عدة ملفات مرة واحدة، وسيُطبّق النوع والتصنيف عليها، مع إمكانية تعديل كل ملف لاحقًا بشكل مستقل.';
+          ? `تم اختيار ${count} ملف/ملفات. سيُطبّق نوع المرفق وتصنيفه المرتبط عليها.`
+          : 'يمكن اختيار عدة ملفات مرة واحدة، وسيُطبّق نوع المرفق وتصنيفه المرتبط عليها.';
       });
     })();
   </script>

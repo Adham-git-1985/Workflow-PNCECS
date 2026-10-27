@@ -37,6 +37,21 @@
               <label class="form-check-label" for="isActive">فعال</label>
             </div>
           </div>
+          {% if category_key == 'ATTACH_TYPE' %}
+            <div class="col-md-8">
+              <label class="form-label">التصنيف المرتبط</label>
+              <select name="attachment_classification_lookup_id" class="form-select">
+                <option value="">غير مرتبط</option>
+                {% for classification in classification_options|default([]) %}
+                  <option value="{{ classification.id }}"
+                          {% if item.attachment_classification_lookup_id == classification.id %}selected{% endif %}>
+                    {{ classification.label }}
+                  </option>
+                {% endfor %}
+              </select>
+              <div class="form-text">سيُستخدم هذا التصنيف تلقائيًا لكل مرفق يُرفع بهذا النوع.</div>
+            </div>
+          {% endif %}
         </div>
 
         <div class="mt-4 d-flex justify-content-end">

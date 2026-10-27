@@ -3037,6 +3037,15 @@ class HRLookupItem(db.Model):
     sort_order = db.Column(db.Integer, nullable=False, default=0)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
 
+    # For attachment types only (category=ATTACH_TYPE), this points to the
+    # classification that should be applied automatically to uploaded files.
+    attachment_classification_lookup_id = db.Column(
+        db.Integer,
+        db.ForeignKey("hr_lookup_item.id"),
+        nullable=True,
+        index=True,
+    )
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
@@ -3053,6 +3062,13 @@ class HRLookupItem(db.Model):
     @property
     def name(self) -> str:
         return self.label
+
+    attachment_classification_lookup = db.relationship(
+        "HRLookupItem",
+        foreign_keys=[attachment_classification_lookup_id],
+        remote_side=[id],
+        lazy="joined",
+    )
 
 
 class EmployeeFile(db.Model):
