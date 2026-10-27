@@ -409,6 +409,52 @@ def _ensure_runtime_schema():
                         return False
                 return False
 
+            # Employee attachment classifications are introduced as an
+            # independent nullable column so existing SQLite installations
+            # can start safely before the Alembic migration is run.
+            if not _col_exists("employee_attachment", "attachment_classification_lookup_id"):
+                _add_column_retry(
+                    "employee_attachment",
+                    "attachment_classification_lookup_id",
+                    "INTEGER",
+                )
+
+            if _col_exists("hr_lookup_item", "category"):
+                try:
+                    _now = datetime.utcnow()
+                    for _code, _name_ar, _name_en, _sort_order in (
+                        ("PERSONAL_DATA", "بيانات شخصية", "Personal Data", 10),
+                        ("WORK_DATA", "بيانات العمل", "Work Data", 20),
+                    ):
+                        _exists = db.session.execute(
+                            text(
+                                "SELECT 1 FROM hr_lookup_item "
+                                "WHERE category = :category AND code = :code LIMIT 1"
+                            ),
+                            {"category": "ATTACH_CLASSIFICATION", "code": _code},
+                        ).first()
+                        if not _exists:
+                            db.session.execute(
+                                text(
+                                    "INSERT INTO hr_lookup_item "
+                                    "(category, code, name_ar, name_en, sort_order, is_active, created_at, updated_at) "
+                                    "VALUES (:category, :code, :name_ar, :name_en, :sort_order, :is_active, :created_at, :updated_at)"
+                                ),
+                                {
+                                    "category": "ATTACH_CLASSIFICATION",
+                                    "code": _code,
+                                    "name_ar": _name_ar,
+                                    "name_en": _name_en,
+                                    "sort_order": _sort_order,
+                                    "is_active": True,
+                                    "created_at": _now,
+                                    "updated_at": _now,
+                                },
+                            )
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
             if _col_exists("chat_participant", "is_pinned"):
                 pass
             else:
