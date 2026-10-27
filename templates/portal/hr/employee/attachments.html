@@ -8,65 +8,133 @@
       <div class="card shadow-sm">
         <div class="card-header"><h5 class="mb-0"><i class="bi bi-upload"></i> رفع مرفق</h5></div>
         <div class="card-body">
-          <form method="post" enctype="multipart/form-data" action="{{ url_for('portal.hr_employee_attachments_upload', user_id=u.id) }}">
-            <input type="hidden" name="next" value="{{ url_for('portal.hr_employee_attachments', user_id=u.id) }}">
-            <div class="mb-2">
-              <label class="form-label">نوع المرفق</label>
-              <select name="attachment_type_lookup_id" class="form-select" required>
-                <option value="">—</option>
-                {% for it in lookups.ATTACH_TYPE %}
-                  <option value="{{ it.id }}">{{ it.name_ar }}</option>
-                {% endfor %}
-              </select>
-              <div class="form-text">يمكن إدارة القائمة من إعدادات ملف الموظف.</div>
-            </div>
-            <div class="mb-2">
-              <label class="form-label">ملاحظات</label>
-              <input type="text" name="note" class="form-control" placeholder="اختياري">
-            </div>
-            <div class="mb-3">
-              <label class="form-label">الملف</label>
-              <input class="form-control" type="file" name="file" required>
-            </div>
-            <button class="btn btn-primary" type="submit"><i class="bi bi-cloud-arrow-up"></i> رفع</button>
-          </form>
+          {% if current_user.has_perm('HR_EMPLOYEE_ATTACHMENTS_MANAGE') or current_user.has_role('ADMIN') %}
+            <form method="post" enctype="multipart/form-data" action="{{ url_for('portal.hr_employee_attachments_upload', user_id=u.id) }}">
+              <input type="hidden" name="next" value="{{ url_for('portal.hr_employee_attachments', user_id=u.id) }}">
+
+              <div class="mb-2">
+                <label class="form-label">فئة التصنيف</label>
+                <select name="classification_lookup_id" class="form-select" required>
+                  <option value="">اختر فئة التصنيف</option>
+                  {% for it in lookups.ATTACH_TYPE %}
+                    <option value="{{ it.id }}">{{ it.label }}</option>
+                  {% endfor %}
+                </select>
+                <div class="form-text">
+                  يمكن إدارة الفئات من
+                  <a href="{{ url_for('portal.hr_employee_lookups_index') }}">إعدادات ملف الموظف</a>.
+                </div>
+              </div>
+
+              <div class="mb-2">
+                <label class="form-label">ملاحظات</label>
+                <input type="text" name="note" class="form-control" placeholder="اختياري">
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label">الملفات</label>
+                <input class="form-control" type="file" name="files" id="employeeAttachmentFiles" multiple required>
+                <div class="form-text" id="employeeAttachmentFilesHelp">يمكن اختيار عدة ملفات مرة واحدة، وستُطبّق الفئة على كل الملفات المحددة.</div>
+              </div>
+
+              <button class="btn btn-primary" type="submit"><i class="bi bi-cloud-arrow-up"></i> رفع الملفات</button>
+            </form>
+          {% else %}
+            <div class="alert alert-warning mb-0">ليس لديك صلاحية رفع أو تعديل مرفقات الموظف.</div>
+          {% endif %}
         </div>
       </div>
     </div>
 
     <div class="col-lg-7">
       <div class="card shadow-sm">
-        <div class="card-header d-flex justify-content-between align-items-center">
+        <div class="card-header d-flex justify-content-between align-items-center gap-2 flex-wrap">
           <h5 class="mb-0"><i class="bi bi-paperclip"></i> المرفقات</h5>
-          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_employee_lookups_index') }}"><i class="bi bi-gear"></i> إعدادات الأنواع</a>
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_employee_lookups_index') }}">
+            <i class="bi bi-tags"></i> إدارة فئات التصنيف
+          </a>
         </div>
         <div class="card-body">
+          <div class="border rounded-3 bg-light p-3 mb-3">
+            <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-2">
+              <div class="fw-semibold"><i class="bi bi-funnel"></i> تصفية حسب فئة التصنيف</div>
+              <span class="text-muted small">
+                {% if selected_classification_label %}
+                  المعروض: {{ selected_classification_label }} ({{ items|length }})
+                {% else %}
+                  إجمالي المرفقات: {{ all_items_count }}
+                {% endif %}
+              </span>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+              <a class="btn btn-sm {% if not selected_classification_id and not filter_uncategorized %}btn-primary{% else %}btn-outline-primary{% endif %}"
+                 href="{{ url_for('portal.hr_employee_attachments', user_id=u.id) }}">
+                الكل <span class="badge rounded-pill text-bg-light">{{ all_items_count }}</span>
+              </a>
+              {% for group in classification_groups %}
+                <a class="btn btn-sm {% if selected_classification_id == group.id %}btn-primary{% else %}btn-outline-primary{% endif %}"
+                   href="{{ url_for('portal.hr_employee_attachments', user_id=u.id, classification_id=group.id) }}">
+                  {{ group.label }} <span class="badge rounded-pill text-bg-light">{{ group.count }}</span>
+                  {% if not group.is_active %}<span class="small">(غير فعال)</span>{% endif %}
+                </a>
+              {% endfor %}
+              {% if unclassified_count or filter_uncategorized %}
+                <a class="btn btn-sm {% if filter_uncategorized %}btn-primary{% else %}btn-outline-secondary{% endif %}"
+                   href="{{ url_for('portal.hr_employee_attachments', user_id=u.id, classification_id='uncategorized') }}">
+                  غير مصنف <span class="badge rounded-pill text-bg-light">{{ unclassified_count }}</span>
+                </a>
+              {% endif %}
+            </div>
+          </div>
+
           {% if items %}
             <div class="table-responsive">
               <table class="table table-striped align-middle">
                 <thead>
                   <tr>
                     <th>الملف</th>
-                    <th>النوع</th>
+                    <th>فئة التصنيف</th>
                     <th>ملاحظات</th>
                     <th>تاريخ الرفع</th>
-                    <th style="width: 170px;">إجراءات</th>
+                    <th style="width: 190px;">إجراءات</th>
                   </tr>
                 </thead>
                 <tbody>
                   {% for a in items %}
                     <tr>
-                      <td class="text-truncate" style="max-width: 220px;">{{ a.original_name }}</td>
-                      <td>{{ lookup_label.get(a.attachment_type_lookup_id, '—') }}</td>
+                      <td class="text-truncate" style="max-width: 220px;" dir="auto">{{ a.original_name }}</td>
+                      <td>
+                        <span class="badge bg-light text-dark border">
+                          {{ lookup_label.get(a.attachment_type_lookup_id, 'غير مصنف') }}
+                        </span>
+                      </td>
                       <td>{{ a.note or '—' }}</td>
                       <td>{{ a.uploaded_at.strftime('%Y-%m-%d') if a.uploaded_at else '—' }}</td>
                       <td>
-                        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_employee_attachment_download', user_id=u.id, att_id=a.id) }}"><i class="bi bi-download"></i></a>
-                        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_employee_attachment_edit', user_id=u.id, att_id=a.id) }}"><i class="bi bi-pencil"></i></a>
-                        <form method="post" action="{{ url_for('portal.hr_employee_attachment_delete', user_id=u.id, att_id=a.id) }}" style="display:inline-block" onsubmit="return confirm('حذف المرفق؟');">
-                          <input type="hidden" name="next" value="{{ url_for('portal.hr_employee_attachments', user_id=u.id) }}">
-                          <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
-                        </form>
+                        <a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener"
+                           href="{{ url_for('portal.hr_employee_attachment_preview', user_id=u.id, att_id=a.id) }}"
+                           title="معاينة" aria-label="معاينة {{ a.original_name }}">
+                          <i class="bi bi-eye"></i>
+                        </a>
+                        <a class="btn btn-sm btn-outline-secondary"
+                           href="{{ url_for('portal.hr_employee_attachment_download', user_id=u.id, att_id=a.id) }}"
+                           title="تنزيل" aria-label="تنزيل {{ a.original_name }}">
+                          <i class="bi bi-download"></i>
+                        </a>
+                        {% if current_user.has_perm('HR_EMPLOYEE_ATTACHMENTS_MANAGE') or current_user.has_role('ADMIN') %}
+                          <a class="btn btn-sm btn-outline-secondary"
+                             href="{{ url_for('portal.hr_employee_attachment_edit', user_id=u.id, att_id=a.id) }}"
+                             title="تعديل التصنيف" aria-label="تعديل تصنيف {{ a.original_name }}">
+                            <i class="bi bi-pencil"></i>
+                          </a>
+                          <form method="post" action="{{ url_for('portal.hr_employee_attachment_delete', user_id=u.id, att_id=a.id) }}"
+                                style="display:inline-block" onsubmit="return confirm('حذف المرفق؟');">
+                            <input type="hidden" name="next" value="{{ url_for('portal.hr_employee_attachments', user_id=u.id) }}">
+                            <button class="btn btn-sm btn-outline-danger" type="submit" title="حذف" aria-label="حذف {{ a.original_name }}">
+                              <i class="bi bi-trash"></i>
+                            </button>
+                          </form>
+                        {% endif %}
                       </td>
                     </tr>
                   {% endfor %}
@@ -74,10 +142,30 @@
               </table>
             </div>
           {% else %}
-            <div class="text-muted">لا توجد مرفقات.</div>
+            <div class="text-muted">
+              {% if selected_classification_label %}
+                لا توجد ملفات ضمن فئة «{{ selected_classification_label }}».
+              {% else %}
+                لا توجد مرفقات.
+              {% endif %}
+            </div>
           {% endif %}
         </div>
       </div>
     </div>
   </div>
+
+  <script>
+    (function () {
+      const input = document.getElementById('employeeAttachmentFiles');
+      const help = document.getElementById('employeeAttachmentFilesHelp');
+      if (!input || !help) return;
+      input.addEventListener('change', function () {
+        const count = input.files ? input.files.length : 0;
+        help.textContent = count
+          ? `تم اختيار ${count} ملف/ملفات. ستُطبّق الفئة على كل الملفات المحددة.`
+          : 'يمكن اختيار عدة ملفات مرة واحدة، وستُطبّق الفئة على كل الملفات المحددة.';
+      });
+    })();
+  </script>
 {% endblock %}
