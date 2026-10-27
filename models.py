@@ -3249,8 +3249,16 @@ class EmployeeAttachment(db.Model):
     # Main type buckets (kept for compatibility + special PAYSLIP handling)
     attachment_type = db.Column(db.String(50), nullable=False, default="OTHER")  # PAYSLIP/OTHER
 
-    # Detailed type via lookup (category=ATTACH_TYPE). Optional.
+    # Detailed attachment type via lookup (category=ATTACH_TYPE). Optional.
     attachment_type_lookup_id = db.Column(db.Integer, db.ForeignKey("hr_lookup_item.id"), nullable=True, index=True)
+
+    # Independent classification for grouping/filtering (category=ATTACH_CLASSIFICATION).
+    attachment_classification_lookup_id = db.Column(
+        db.Integer,
+        db.ForeignKey("hr_lookup_item.id"),
+        nullable=True,
+        index=True,
+    )
 
     original_name = db.Column(db.String(255), nullable=False)
     stored_name = db.Column(db.String(255), nullable=False)
@@ -3287,6 +3295,11 @@ class EmployeeAttachment(db.Model):
     archived_file = db.relationship("ArchivedFile", foreign_keys=[archived_file_id], lazy="joined")
 
     attachment_type_lookup = db.relationship("HRLookupItem", foreign_keys=[attachment_type_lookup_id], lazy="joined")
+    attachment_classification_lookup = db.relationship(
+        "HRLookupItem",
+        foreign_keys=[attachment_classification_lookup_id],
+        lazy="joined",
+    )
 
     @property
     def payslip_period_label(self) -> str:

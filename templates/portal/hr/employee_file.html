@@ -145,22 +145,30 @@
             <label class="form-label">الملفات</label>
             <input type="file" name="files" multiple class="form-control" required>
           </div>
-          <div class="col-12 col-md-6">
-            <label class="form-label">النوع</label>
+          <div class="col-12 col-md-4">
+            <label class="form-label">نوع السجل</label>
             <select name="attachment_type" id="attTypeSelect" class="form-select">
-              <option value="ID">هوية</option>
-              <option value="CONTRACT">عقد</option>
-              <option value="CERTIFICATE">شهادة</option>
+              <option value="OTHER" selected>مرفق موظف</option>
               <option value="PAYSLIP">قسيمة راتب</option>
-              <option value="OTHER" selected>أخرى</option>
             </select>
           </div>
-          <div class="col-12 col-md-6">
-            <label class="form-label">فئة التصنيف</label>
-            <select name="classification_lookup_id" class="form-select">
-              <option value="">غير مصنف</option>
+          <div class="col-12 col-md-4">
+            <label class="form-label">نوع المرفق</label>
+            <select name="attachment_type_lookup_id" class="form-select" required>
+              <option value="">اختر النوع</option>
               {% if lookups is defined %}
                 {% for it in lookups.ATTACH_TYPE %}
+                  <option value="{{ it.id }}">{{ it.label }}</option>
+                {% endfor %}
+              {% endif %}
+            </select>
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label">تصنيف المرفق</label>
+            <select name="attachment_classification_lookup_id" class="form-select">
+              <option value="">غير مصنف</option>
+              {% if lookups is defined %}
+                {% for it in lookups.ATTACH_CLASSIFICATION %}
                   <option value="{{ it.id }}">{{ it.label }}</option>
                 {% endfor %}
               {% endif %}
@@ -211,7 +219,8 @@
           <thead>
             <tr>
               <th>{{ portal_sort_link('الملف', 'original_name') }}</th>
-              <th>{{ portal_sort_link('فئة التصنيف', 'attachment_type_lookup_id') }}</th>
+              <th>{{ portal_sort_link('نوع المرفق', 'attachment_type_lookup_id') }}</th>
+              <th>{{ portal_sort_link('تصنيف المرفق', 'attachment_classification_lookup_id') }}</th>
               <th>{{ portal_sort_link('الفترة', 'payslip_period_label') }}</th>
               <th>{{ portal_sort_link('تاريخ', 'uploaded_at') }}</th>
               <th></th>
@@ -224,7 +233,8 @@
                   <div class="fw-semibold">{{ a.original_name }}</div>
                   {% if a.note %}<div class="text-muted small">{{ a.note }}</div>{% endif %}
                 </td>
-                <td><span class="badge bg-light text-dark border att-type">{{ (lookup_label|default({})).get(a.attachment_type_lookup_id, 'غير مصنف') }}</span></td>
+                <td><span class="badge bg-light text-dark border att-type">{{ (lookup_label|default({})).get(a.attachment_type_lookup_id, 'غير محدد') }}</span></td>
+                <td><span class="badge bg-light text-dark border att-type">{{ (lookup_label|default({})).get(a.attachment_classification_lookup_id, 'غير مصنف') }}</span></td>
                 <td class="text-muted small">
                   {% if (a.attachment_type or '').upper() == 'PAYSLIP' %}
                     {{ a.payslip_period_label }}

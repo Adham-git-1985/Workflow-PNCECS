@@ -29477,7 +29477,8 @@ EMP_LOOKUP_CATEGORIES = [
     ("QUAL_GRADE", "التقدير"),
     ("UNIVERSITY", "الجامعة"),
     ("COUNTRY", "الدولة"),
-    ("ATTACH_TYPE", "فئات تصنيف المرفقات"),
+    ("ATTACH_TYPE", "نوع المرفق"),
+    ("ATTACH_CLASSIFICATION", "تصنيفات المرفقات"),
     ("HR_DOC_CATEGORY", "تصنيفات وثائق HR"),
 ]
 
@@ -30310,8 +30311,11 @@ def hr_employee_attachments(user_id: int):
     # Active categories are used for new uploads.  Include inactive categories
     # in the filter bar as well so older attachments remain discoverable after
     # a category has been retired from the upload form.
-    lookups = {"ATTACH_TYPE": _lookup_items("ATTACH_TYPE")}
-    classification_options = _lookup_items("ATTACH_TYPE", active_only=False)
+    lookups = {
+        "ATTACH_TYPE": _lookup_items("ATTACH_TYPE"),
+        "ATTACH_CLASSIFICATION": _lookup_items("ATTACH_CLASSIFICATION"),
+    }
+    classification_options = _lookup_items("ATTACH_CLASSIFICATION", active_only=False)
 
     classification_arg = (request.args.get("classification_id") or "").strip()
     filter_uncategorized = classification_arg.lower() in {
@@ -30329,12 +30333,12 @@ def hr_employee_attachments(user_id: int):
 
     category_count_rows = (
         db.session.query(
-            EmployeeAttachment.attachment_type_lookup_id,
+            EmployeeAttachment.attachment_classification_lookup_id,
             func.count(EmployeeAttachment.id),
         )
         .filter(EmployeeAttachment.user_id == user_id)
         .filter(EmployeeAttachment.attachment_type != 'PAYSLIP')
-        .group_by(EmployeeAttachment.attachment_type_lookup_id)
+        .group_by(EmployeeAttachment.attachment_classification_lookup_id)
         .all()
     )
     category_counts = {
@@ -30343,10 +30347,10 @@ def hr_employee_attachments(user_id: int):
     }
 
     if filter_uncategorized:
-        base_query = base_query.filter(EmployeeAttachment.attachment_type_lookup_id.is_(None))
+        base_query = base_query.filter(EmployeeAttachment.attachment_classification_lookup_id.is_(None))
     elif selected_classification_id is not None:
         base_query = base_query.filter(
-            EmployeeAttachment.attachment_type_lookup_id == selected_classification_id
+            EmployeeAttachment.attachment_classification_lookup_id == selected_classification_id
         )
 
     items = base_query.order_by(EmployeeAttachment.uploaded_at.desc()).all()
@@ -30484,24 +30488,34 @@ def hr_employee_attachments_upload(user_id: int):
     attachment_type = (request.form.get("attachment_type") or "OTHER").strip().upper() or "OTHER"
     note = (request.form.get("note") or "").strip() or None
 
-    # ``attachment_type_lookup_id`` is the classification assigned to every
-    # file in this upload batch.  Accept the more explicit field name too so
-    # newer forms can describe the feature as classification without breaking
-    # older callers.
-    attachment_type_lookup_id = _to_int(
-        request.form.get('classification_lookup_id')
-        or request.form.get('attachment_type_lookup_id')
+    # The detailed attachment type and the independent grouping classification
+    # are separate lookup categories.  Keep the legacy form field name for the
+    # type so existing callers continue to work.
+    attachment_type_lookup_id = _to_int(request.form.get("attachment_type_lookup_id"))
+    attachment_classification_lookup_id = _to_int(
+        request.form.get("attachment_classification_lookup_id")
+        or request.form.get("classification_lookup_id")
     )
 
-    if attachment_type != "PAYSLIP" and attachment_type_lookup_id is not None:
-        classification = (
-            HRLookupItem.query
-            .filter_by(id=attachment_type_lookup_id, category="ATTACH_TYPE")
-            .first()
-        )
-        if not classification:
-            flash("فئة تصنيف المرفق غير صالحة.", "danger")
-            return redirect(next_url or url_for("portal.hr_employee_attachments", user_id=user_id))
+    if attachment_type != "PAYSLIP":
+        if attachment_type_lookup_id is not None:
+            attachment_type_item = (
+                HRLookupItem.query
+                .filter_by(id=attachment_type_lookup_id, category="ATTACH_TYPE")
+                .first()
+            )
+            if not attachment_type_item:
+                flash("نوع المرفق غير صالح.", "danger")
+                return redirect(next_url or url_for("portal.hr_employee_attachments", user_id=user_id))
+        if attachment_classification_lookup_id is not None:
+            classification_item = (
+                HRLookupItem.query
+                .filter_by(id=attachment_classification_lookup_id, category="ATTACH_CLASSIFICATION")
+                .first()
+            )
+            if not classification_item:
+                flash("تصنيف المرفق غير صالح.", "danger")
+                return redirect(next_url or url_for("portal.hr_employee_attachments", user_id=user_id))
 
     # Payslip period (required for PAYSLIP)
     payslip_year = None
@@ -30554,6 +30568,8 @@ def hr_employee_attachments_upload(user_id: int):
                 existing.original_name = original
                 existing.stored_name = stored
                 existing.note = note
+                existing.attachment_type_lookup_id = None
+                existing.attachment_classification_lookup_id = None
                 existing.uploaded_at = datetime.utcnow()
                 existing.uploaded_by_id = current_user.id
                 existing.is_published = False
@@ -30567,6 +30583,9 @@ def hr_employee_attachments_upload(user_id: int):
             user_id=user_id,
             attachment_type=("PAYSLIP" if attachment_type == "PAYSLIP" else "OTHER"),
             attachment_type_lookup_id=(None if attachment_type == "PAYSLIP" else attachment_type_lookup_id),
+            attachment_classification_lookup_id=(
+                None if attachment_type == "PAYSLIP" else attachment_classification_lookup_id
+            ),
             original_name=original,
             stored_name=stored,
             note=note,
@@ -30727,24 +30746,37 @@ def hr_employee_attachment_edit(user_id: int, att_id: int):
 
     lookups = {
         "ATTACH_TYPE": _lookup_items("ATTACH_TYPE", active_only=False),
+        "ATTACH_CLASSIFICATION": _lookup_items("ATTACH_CLASSIFICATION", active_only=False),
     }
 
     if request.method == "POST":
+        type_raw = request.form.get("attachment_type_lookup_id")
+        type_id = _to_int(type_raw) if type_raw is not None else a.attachment_type_lookup_id
         classification_id = _to_int(
-            request.form.get("classification_lookup_id")
-            or request.form.get("attachment_type_lookup_id")
+            request.form.get("attachment_classification_lookup_id")
+            or request.form.get("classification_lookup_id")
         )
-        if classification_id is not None:
-            classification = (
+        if type_id is not None:
+            attachment_type_item = (
                 HRLookupItem.query
-                .filter_by(id=classification_id, category="ATTACH_TYPE")
+                .filter_by(id=type_id, category="ATTACH_TYPE")
                 .first()
             )
-            if not classification:
-                flash("فئة تصنيف المرفق غير صالحة.", "danger")
+            if not attachment_type_item:
+                flash("نوع المرفق غير صالح.", "danger")
+                return redirect(request.url)
+        if classification_id is not None:
+            classification_item = (
+                HRLookupItem.query
+                .filter_by(id=classification_id, category="ATTACH_CLASSIFICATION")
+                .first()
+            )
+            if not classification_item:
+                flash("تصنيف المرفق غير صالح.", "danger")
                 return redirect(request.url)
 
-        a.attachment_type_lookup_id = classification_id
+        a.attachment_type_lookup_id = type_id
+        a.attachment_classification_lookup_id = classification_id
         a.note = _to_str(request.form.get("note"))
         a.updated_by_id = current_user.id
         sync_employee_attachment_to_archive(a)
@@ -34475,14 +34507,30 @@ def hr_employee_lookup_delete(category: str, item_id: int):
 
     item = HRLookupItem.query.filter_by(id=item_id, category=cat).first_or_404()
 
-    # Prefer soft delete to avoid FK issues
-    item.is_active = False
-    item.updated_at = datetime.utcnow()
+    # Classification rows can be physically deleted when unused.  If an
+    # attachment already references one, keep the FK safe by disabling it.
+    # Other employee-file lookups retain their existing soft-delete behavior.
+    if cat == "ATTACH_CLASSIFICATION":
+        in_use = EmployeeAttachment.query.filter_by(
+            attachment_classification_lookup_id=item.id,
+        ).count()
+    else:
+        in_use = 1
 
-    _portal_audit('HR_EMP_LOOKUP_DISABLE', f"{cat}: {item.code}", target_type='HR_LOOKUP_ITEM', target_id=item.id)
+    if in_use:
+        item.is_active = False
+        item.updated_at = datetime.utcnow()
+        audit_action = 'HR_EMP_LOOKUP_DISABLE'
+        success_message = 'تم تعطيل التصنيف لأنه مستخدم في مرفقات.' if cat == "ATTACH_CLASSIFICATION" else 'تم التعطيل.'
+    else:
+        db.session.delete(item)
+        audit_action = 'HR_EMP_LOOKUP_DELETE'
+        success_message = 'تم حذف التصنيف.'
+
+    _portal_audit(audit_action, f"{cat}: {item.code}", target_type='HR_LOOKUP_ITEM', target_id=item.id)
     try:
         db.session.commit()
-        flash('تم التعطيل.', 'success')
+        flash(success_message, 'success')
     except Exception:
         db.session.rollback()
         flash('تعذر العملية.', 'danger')

@@ -17,11 +17,20 @@
       <form method="post">
         <div class="row g-3">
           <div class="col-md-6">
-            <label class="form-label">فئة التصنيف</label>
-            <select name="classification_lookup_id" class="form-select">
-              <option value="">غير مصنف</option>
+            <label class="form-label">نوع المرفق</label>
+            <select name="attachment_type_lookup_id" class="form-select" required>
+              <option value="">اختر نوع المرفق</option>
               {% for it in lookups.ATTACH_TYPE %}
                 <option value="{{ it.id }}" {% if a.attachment_type_lookup_id == it.id %}selected{% endif %}>{{ it.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">تصنيف المرفق</label>
+            <select name="attachment_classification_lookup_id" class="form-select">
+              <option value="">غير مصنف</option>
+              {% for it in lookups.ATTACH_CLASSIFICATION %}
+                <option value="{{ it.id }}" {% if a.attachment_classification_lookup_id == it.id %}selected{% endif %}>{{ it.label }}</option>
               {% endfor %}
             </select>
           </div>

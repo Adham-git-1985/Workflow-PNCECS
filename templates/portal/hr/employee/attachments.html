@@ -13,16 +13,28 @@
               <input type="hidden" name="next" value="{{ url_for('portal.hr_employee_attachments', user_id=u.id) }}">
 
               <div class="mb-2">
-                <label class="form-label">فئة التصنيف</label>
-                <select name="classification_lookup_id" class="form-select" required>
-                  <option value="">اختر فئة التصنيف</option>
+                <label class="form-label">نوع المرفق</label>
+                <select name="attachment_type_lookup_id" class="form-select" required>
+                  <option value="">اختر نوع المرفق</option>
                   {% for it in lookups.ATTACH_TYPE %}
                     <option value="{{ it.id }}">{{ it.label }}</option>
                   {% endfor %}
                 </select>
+              </div>
+
+              <div class="mb-2">
+                <label class="form-label">تصنيف المرفق</label>
+                <select name="attachment_classification_lookup_id" class="form-select" required>
+                  <option value="">اختر تصنيف المرفق</option>
+                  {% for it in lookups.ATTACH_CLASSIFICATION %}
+                    <option value="{{ it.id }}">{{ it.label }}</option>
+                  {% endfor %}
+                </select>
                 <div class="form-text">
-                  يمكن إدارة الفئات من
-                  <a href="{{ url_for('portal.hr_employee_lookups_index') }}">إعدادات ملف الموظف</a>.
+                  إدارة الأنواع من
+                  <a href="{{ url_for('portal.hr_employee_lookups_category', category='ATTACH_TYPE') }}">أنواع المرفقات</a>،
+                  وإدارة التصنيفات من
+                  <a href="{{ url_for('portal.hr_employee_lookups_category', category='ATTACH_CLASSIFICATION') }}">تصنيفات المرفقات</a>.
                 </div>
               </div>
 
@@ -34,7 +46,7 @@
               <div class="mb-3">
                 <label class="form-label">الملفات</label>
                 <input class="form-control" type="file" name="files" id="employeeAttachmentFiles" multiple required>
-                <div class="form-text" id="employeeAttachmentFilesHelp">يمكن اختيار عدة ملفات مرة واحدة، وستُطبّق الفئة على كل الملفات المحددة.</div>
+                <div class="form-text" id="employeeAttachmentFilesHelp">يمكن اختيار عدة ملفات مرة واحدة، وسيُطبّق النوع والتصنيف عليها، مع إمكانية تعديل كل ملف لاحقًا بشكل مستقل.</div>
               </div>
 
               <button class="btn btn-primary" type="submit"><i class="bi bi-cloud-arrow-up"></i> رفع الملفات</button>
@@ -50,9 +62,14 @@
       <div class="card shadow-sm">
         <div class="card-header d-flex justify-content-between align-items-center gap-2 flex-wrap">
           <h5 class="mb-0"><i class="bi bi-paperclip"></i> المرفقات</h5>
-          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_employee_lookups_index') }}">
-            <i class="bi bi-tags"></i> إدارة فئات التصنيف
-          </a>
+          <div class="d-flex flex-wrap gap-2">
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_employee_lookups_category', category='ATTACH_TYPE') }}">
+              <i class="bi bi-list-check"></i> إدارة أنواع المرفقات
+            </a>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_employee_lookups_category', category='ATTACH_CLASSIFICATION') }}">
+              <i class="bi bi-tags"></i> إدارة التصنيفات
+            </a>
+          </div>
         </div>
         <div class="card-body">
           <div class="border rounded-3 bg-light p-3 mb-3">
@@ -93,7 +110,8 @@
                 <thead>
                   <tr>
                     <th>الملف</th>
-                    <th>فئة التصنيف</th>
+                    <th>نوع المرفق</th>
+                    <th>تصنيف المرفق</th>
                     <th>ملاحظات</th>
                     <th>تاريخ الرفع</th>
                     <th style="width: 190px;">إجراءات</th>
@@ -105,7 +123,12 @@
                       <td class="text-truncate" style="max-width: 220px;" dir="auto">{{ a.original_name }}</td>
                       <td>
                         <span class="badge bg-light text-dark border">
-                          {{ lookup_label.get(a.attachment_type_lookup_id, 'غير مصنف') }}
+                          {{ lookup_label.get(a.attachment_type_lookup_id, 'غير محدد') }}
+                        </span>
+                      </td>
+                      <td>
+                        <span class="badge bg-light text-dark border">
+                          {{ lookup_label.get(a.attachment_classification_lookup_id, 'غير مصنف') }}
                         </span>
                       </td>
                       <td>{{ a.note or '—' }}</td>
@@ -163,8 +186,8 @@
       input.addEventListener('change', function () {
         const count = input.files ? input.files.length : 0;
         help.textContent = count
-          ? `تم اختيار ${count} ملف/ملفات. ستُطبّق الفئة على كل الملفات المحددة.`
-          : 'يمكن اختيار عدة ملفات مرة واحدة، وستُطبّق الفئة على كل الملفات المحددة.';
+          ? `تم اختيار ${count} ملف/ملفات. سيُطبّق النوع والتصنيف عليها، ويمكن تعديل كل ملف لاحقًا.`
+          : 'يمكن اختيار عدة ملفات مرة واحدة، وسيُطبّق النوع والتصنيف عليها، مع إمكانية تعديل كل ملف لاحقًا بشكل مستقل.';
       });
     })();
   </script>
