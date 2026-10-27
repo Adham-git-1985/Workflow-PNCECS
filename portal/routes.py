@@ -21,6 +21,7 @@ import unicodedata
 import hashlib
 from pathlib import Path
 from io import BytesIO
+from urllib.parse import quote
 
 from flask import (
     render_template, request, redirect, url_for, flash, abort, current_app,
@@ -74,6 +75,12 @@ from utils.file_uploads import (
     is_allowed_attachment,
     is_safe_inline_mimetype,
     random_storage_name,
+)
+from utils.office_preview import (
+    OfficePreviewError,
+    convert_office_to_pdf,
+    is_office_previewable,
+    office_pdf_filename,
 )
 from services.meeting_service import (
     RECORDED_ATTENDANCE_LABELS,
@@ -28457,7 +28464,7 @@ EMP_LOOKUP_CATEGORIES = [
     ("QUAL_GRADE", "التقدير"),
     ("UNIVERSITY", "الجامعة"),
     ("COUNTRY", "الدولة"),
-    ("ATTACH_TYPE", "نوع المرفق"),
+    ("ATTACH_TYPE", "فئات تصنيف المرفقات"),
     ("HR_DOC_CATEGORY", "تصنيفات وثائق HR"),
 ]
 
@@ -29287,15 +29294,74 @@ def hr_employee_attachments(user_id: int):
     counts = _employee_nav_counts(user_id)
 
     lookup_by_id = _lookup_label_by_id()
+    # Active categories are used for new uploads.  Include inactive categories
+    # in the filter bar as well so older attachments remain discoverable after
+    # a category has been retired from the upload form.
     lookups = {"ATTACH_TYPE": _lookup_items("ATTACH_TYPE")}
+    classification_options = _lookup_items("ATTACH_TYPE", active_only=False)
 
-    items = (
+    classification_arg = (request.args.get("classification_id") or "").strip()
+    filter_uncategorized = classification_arg.lower() in {
+        "uncategorized", "unclassified", "none", "null",
+    }
+    selected_classification_id = (
+        None if filter_uncategorized else _to_int(classification_arg)
+    )
+
+    base_query = (
         EmployeeAttachment.query
         .filter_by(user_id=user_id)
         .filter(EmployeeAttachment.attachment_type != 'PAYSLIP')
-        .order_by(EmployeeAttachment.uploaded_at.desc())
+    )
+
+    category_count_rows = (
+        db.session.query(
+            EmployeeAttachment.attachment_type_lookup_id,
+            func.count(EmployeeAttachment.id),
+        )
+        .filter(EmployeeAttachment.user_id == user_id)
+        .filter(EmployeeAttachment.attachment_type != 'PAYSLIP')
+        .group_by(EmployeeAttachment.attachment_type_lookup_id)
         .all()
     )
+    category_counts = {
+        category_id: int(total or 0)
+        for category_id, total in category_count_rows
+    }
+
+    if filter_uncategorized:
+        base_query = base_query.filter(EmployeeAttachment.attachment_type_lookup_id.is_(None))
+    elif selected_classification_id is not None:
+        base_query = base_query.filter(
+            EmployeeAttachment.attachment_type_lookup_id == selected_classification_id
+        )
+
+    items = base_query.order_by(EmployeeAttachment.uploaded_at.desc()).all()
+
+    classification_groups = [
+        {
+            "id": item.id,
+            "label": item.label,
+            "count": category_counts.get(item.id, 0),
+            "is_active": bool(item.is_active),
+        }
+        for item in classification_options
+    ]
+    unclassified_count = category_counts.get(None, 0)
+    all_items_count = sum(category_counts.values())
+
+    selected_classification_label = None
+    if filter_uncategorized:
+        selected_classification_label = "غير مصنف"
+    elif selected_classification_id is not None:
+        selected_classification_label = next(
+            (
+                group["label"]
+                for group in classification_groups
+                if group["id"] == selected_classification_id
+            ),
+            None,
+        )
 
     return render_template(
         "portal/hr/employee/attachments.html",
@@ -29306,6 +29372,12 @@ def hr_employee_attachments(user_id: int):
         lookups=lookups,
         lookup_label=lookup_by_id,
         lookup_by_id=lookup_by_id,
+        classification_groups=classification_groups,
+        unclassified_count=unclassified_count,
+        all_items_count=all_items_count,
+        selected_classification_id=selected_classification_id,
+        filter_uncategorized=filter_uncategorized,
+        selected_classification_label=selected_classification_label,
     )
 
 @portal_bp.route("/hr/employees/<int:user_id>/payslips")
@@ -29399,7 +29471,24 @@ def hr_employee_attachments_upload(user_id: int):
     attachment_type = (request.form.get("attachment_type") or "OTHER").strip().upper() or "OTHER"
     note = (request.form.get("note") or "").strip() or None
 
-    attachment_type_lookup_id = _to_int(request.form.get('attachment_type_lookup_id'))
+    # ``attachment_type_lookup_id`` is the classification assigned to every
+    # file in this upload batch.  Accept the more explicit field name too so
+    # newer forms can describe the feature as classification without breaking
+    # older callers.
+    attachment_type_lookup_id = _to_int(
+        request.form.get('classification_lookup_id')
+        or request.form.get('attachment_type_lookup_id')
+    )
+
+    if attachment_type != "PAYSLIP" and attachment_type_lookup_id is not None:
+        classification = (
+            HRLookupItem.query
+            .filter_by(id=attachment_type_lookup_id, category="ATTACH_TYPE")
+            .first()
+        )
+        if not classification:
+            flash("فئة تصنيف المرفق غير صالحة.", "danger")
+            return redirect(next_url or url_for("portal.hr_employee_attachments", user_id=user_id))
 
     # Payslip period (required for PAYSLIP)
     payslip_year = None
@@ -29500,13 +29589,116 @@ def hr_employee_attachments_upload(user_id: int):
     return redirect(url_for('portal.hr_employee_attachments', user_id=user_id))
 
 
+def _employee_attachment_directory(att: EmployeeAttachment) -> Path | None:
+    """Return the existing storage directory for an employee attachment.
+
+    New files live below ``instance/uploads/employees``.  The fallback keeps
+    older files from the legacy ``static/uploads/employee`` location usable by
+    both download and preview actions.
+    """
+    if not att or not att.stored_name:
+        return None
+
+    primary_dir = _employee_upload_dir(att.user_id)
+    if (primary_dir / att.stored_name).is_file():
+        return primary_dir
+
+    legacy_dir = Path(current_app.root_path) / "static" / "uploads" / "employee"
+    if (legacy_dir / att.stored_name).is_file():
+        return legacy_dir
+
+    return None
+
+
 @portal_bp.route("/hr/employees/<int:user_id>/attachments/<int:att_id>/download")
 @login_required
 @_perm(HR_EMP_READ)
 def hr_employee_attachment_download(user_id: int, att_id: int):
     att = EmployeeAttachment.query.filter_by(id=att_id, user_id=user_id).first_or_404()
-    dirp = _employee_upload_dir(user_id)
-    return send_from_directory(dirp, att.stored_name, as_attachment=True, download_name=att.original_name)
+    dirp = _employee_attachment_directory(att)
+    if not dirp:
+        abort(404)
+    return send_from_directory(
+        str(dirp),
+        att.stored_name,
+        as_attachment=True,
+        download_name=att.original_name,
+    )
+
+
+@portal_bp.route("/hr/employees/<int:user_id>/attachments/<int:att_id>/preview")
+@login_required
+@_perm(HR_EMP_READ)
+def hr_employee_attachment_preview(user_id: int, att_id: int):
+    """Render browser-safe employee attachments inline.
+
+    PDF, image and plain-text files are shown by the browser.  Word/Excel files
+    are converted to a temporary inline PDF using the shared Office preview
+    service.  Other formats get a clear fallback page with the existing
+    download action instead of being forced to download without explanation.
+    """
+    att = EmployeeAttachment.query.filter_by(id=att_id, user_id=user_id).first_or_404()
+    dirp = _employee_attachment_directory(att)
+    if not dirp:
+        abort(404)
+
+    mimetype = mimetypes.guess_type(att.original_name or att.stored_name)[0]
+    mimetype = mimetype or "application/octet-stream"
+    source_path = dirp / att.stored_name
+    download_url = url_for(
+        "portal.hr_employee_attachment_download",
+        user_id=user_id,
+        att_id=att.id,
+    )
+
+    preview_error = None
+    if is_office_previewable(att.original_name, mimetype):
+        try:
+            pdf_bytes = convert_office_to_pdf(
+                source_path,
+                original_name=att.original_name,
+            )
+        except (OfficePreviewError, OSError) as exc:
+            current_app.logger.warning(
+                "Office preview failed for employee attachment %s: %s",
+                att.id,
+                exc,
+            )
+            preview_error = "تعذر إنشاء معاينة PDF لهذا الملف. يمكنك تنزيل الملف الأصلي."
+        else:
+            pdf_name = office_pdf_filename(att.original_name)
+            response = send_file(
+                BytesIO(pdf_bytes),
+                mimetype="application/pdf",
+                as_attachment=False,
+                download_name=pdf_name,
+                conditional=False,
+            )
+            response.headers["Content-Disposition"] = (
+                f"inline; filename*=UTF-8''{quote(pdf_name)}"
+            )
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            return response
+
+    if not is_safe_inline_mimetype(mimetype):
+        return render_template(
+            "portal/hr/employee/attachment_preview_unavailable.html",
+            user_id=user_id,
+            a=att,
+            mimetype=mimetype,
+            download_url=download_url,
+            preview_error=preview_error,
+        )
+
+    response = send_from_directory(
+        str(dirp),
+        att.stored_name,
+        as_attachment=False,
+        download_name=att.original_name,
+        mimetype=mimetype,
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 
@@ -29521,12 +29713,26 @@ def hr_employee_attachment_edit(user_id: int, att_id: int):
         return redirect(url_for("portal.hr_employee_payslips", user_id=user_id))
 
     lookups = {
-        "ATTACH_TYPE": _hr_lookup_items("ATTACH_TYPE"),
+        "ATTACH_TYPE": _lookup_items("ATTACH_TYPE", active_only=False),
     }
 
     if request.method == "POST":
-        a.attachment_type_lookup_id = _i(request.form.get("attachment_type_lookup_id"))
-        a.note = _s(request.form.get("note"))
+        classification_id = _to_int(
+            request.form.get("classification_lookup_id")
+            or request.form.get("attachment_type_lookup_id")
+        )
+        if classification_id is not None:
+            classification = (
+                HRLookupItem.query
+                .filter_by(id=classification_id, category="ATTACH_TYPE")
+                .first()
+            )
+            if not classification:
+                flash("فئة تصنيف المرفق غير صالحة.", "danger")
+                return redirect(request.url)
+
+        a.attachment_type_lookup_id = classification_id
+        a.note = _to_str(request.form.get("note"))
         a.updated_by_id = current_user.id
         sync_employee_attachment_to_archive(a)
         db.session.commit()

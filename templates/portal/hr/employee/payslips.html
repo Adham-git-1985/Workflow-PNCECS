@@ -70,6 +70,9 @@
                       </td>
                       <td>{{ a.uploaded_at.strftime('%Y-%m-%d') if a.uploaded_at else '—' }}</td>
                       <td>
+                        <a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener"
+                           href="{{ url_for('portal.hr_employee_attachment_preview', user_id=u.id, att_id=a.id) }}"
+                           title="معاينة" aria-label="معاينة {{ a.original_name }}"><i class="bi bi-eye"></i></a>
                         <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_employee_attachment_download', user_id=u.id, att_id=a.id) }}"><i class="bi bi-download"></i></a>
 
                         {% if a.is_published %}
