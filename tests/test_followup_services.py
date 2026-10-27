@@ -66,6 +66,8 @@ class FollowupServicesTests(unittest.TestCase):
         self.assertNotIn("تفاصيل المعاملة:", analysis["suggestions"][2])
         self.assertIn("استكمال مراجعة المواصفات الفنية", analysis["suggestions"][2])
         self.assertIn("شملت أبرز الأعمال خلال الفترة", analysis["summary"])
+        self.assertLessEqual(len(analysis["summary"]), 240)
+        self.assertLessEqual(len(analysis["suggestions"][2]), 240)
 
     def test_analysis_uses_openai_for_natural_rewrites_when_explicitly_enabled(self):
         app = Flask(__name__)
