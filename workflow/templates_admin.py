@@ -134,8 +134,13 @@ def _parse_start_access_form():
             if not selected_ids:
                 continue
             valid_query = db.session.query(model.id).filter(model.id.in_(selected_ids))
-            if hasattr(model, "is_active"):
-                valid_query = valid_query.filter(model.is_active.is_(True))
+            # ``User`` inherits Flask-Login's ``is_active`` Python property,
+            # while the organization models expose ``is_active`` as a mapped
+            # SQLAlchemy column.  Only mapped column expressions support
+            # ``.is_(True)``.
+            active_expression = getattr(model, "is_active", None)
+            if hasattr(active_expression, "is_"):
+                valid_query = valid_query.filter(active_expression.is_(True))
             valid_ids = {int(row_id) for (row_id,) in valid_query.all()}
             if valid_ids != selected_ids:
                 raise ValueError("توجد جهة أو شخص غير صالح ضمن صلاحية بدء المسار.")

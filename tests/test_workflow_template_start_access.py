@@ -20,6 +20,7 @@ from workflow.template_access import (
     can_user_start_template,
     user_organization_scope,
 )
+from workflow.templates_admin import _parse_start_access_form
 
 
 class WorkflowTemplateStartAccessTests(unittest.TestCase):
@@ -168,6 +169,20 @@ class WorkflowTemplateStartAccessTests(unittest.TestCase):
             rules=(("ORGANIZATION", self.organization_a.id),),
         )
         self.assertTrue(can_user_start_template(self.department_user, template))
+
+    def test_start_access_form_accepts_user_audience(self):
+        with self.app.test_request_context(
+            "/workflow/templates/new",
+            method="POST",
+            data={
+                "start_access_mode": START_ACCESS_SELECTED,
+                "start_user_ids": str(self.direct_user.id),
+            },
+        ):
+            mode, rules = _parse_start_access_form()
+
+        self.assertEqual(mode, START_ACCESS_SELECTED)
+        self.assertEqual(rules, [("USER", self.direct_user.id)])
 
 
 if __name__ == "__main__":
