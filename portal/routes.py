@@ -3859,9 +3859,9 @@ def _meeting_has_edit_permission(row: PortalMeeting, user_id: int | None = None)
     uid = user_id if user_id is not None else getattr(current_user, "id", None)
     if not uid:
         return False
+    if getattr(row, "created_by_user_id", None) == uid:
+        return True
     try:
-        if _meeting_manage_allowed():
-            return True
         if current_user.has_perm(PORTAL_MEETING_EDIT):
             return True
     except Exception:
@@ -3880,13 +3880,12 @@ def _meeting_can_manage(row: PortalMeeting) -> bool:
 
 
 def _meeting_can_manage_permissions(row: PortalMeeting) -> bool:
-    """Only the organizer or a system meetings manager may grant edit access."""
+    """Only the organizer or a system administrator may grant edit access."""
     uid = getattr(current_user, "id", None)
     return bool(
         uid
         and (
             getattr(row, "created_by_user_id", None) == uid
-            or _meeting_manage_allowed()
             or _meeting_admin_view_allowed()
         )
     )

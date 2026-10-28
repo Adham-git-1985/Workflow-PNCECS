@@ -380,6 +380,24 @@ class MeetingVisibilityTests(unittest.TestCase):
         for stored_path in _meeting_minutes_file_path(row).parent.iterdir():
             stored_path.unlink(missing_ok=True)
 
+    def test_global_meetings_manager_cannot_edit_without_meeting_permission(self):
+        db.session.add(UserPermission(
+            user_id=self.invitee.id,
+            key="PORTAL_MEETINGS_MANAGE",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        client = self.app.test_client()
+        self._login(client, self.invitee.id)
+        edit_url = f"/portal/meetings/{self.meeting.id}/edit"
+
+        view = client.get(f"/portal/meetings/{self.meeting.id}")
+        self.assertEqual(view.status_code, 200)
+        self.assertNotIn(edit_url.encode("utf-8"), view.data)
+        self.assertEqual(client.get(edit_url).status_code, 403)
+        self.assertEqual(client.post(edit_url).status_code, 403)
+
     def test_meeting_notification_is_added_to_employee_email_queue(self):
         created = _meeting_notify_users(
             [self.invitee.id],
