@@ -321,6 +321,37 @@ class User(db.Model, UserMixin):
         if key == "HR_PAYSLIP_VIEW":
             return _cache_result(True)
 
+        def _eval(perms_list) -> bool:
+            if key in perms_list:
+                return True
+            actions = ("READ", "CREATE", "UPDATE", "DELETE")
+            for act in actions:
+                suffix = "_" + act
+                if key.endswith(suffix):
+                    base = key[: -len(suffix)]
+                    return f"{base}_MANAGE" in perms_list
+            if key.endswith("_MANAGE"):
+                base = key[: -len("_MANAGE")]
+                return all(f"{base}_{act}" in perms_list for act in actions)
+            return False
+
+        role_raw = (getattr(self, "role", "") or "").strip()
+        effective_permission_cache = _request_authorization_cache(
+            "_effective_permission_keys"
+        )
+        effective_cache_key = (
+            (cache_key[0], role_raw)
+            if effective_permission_cache is not None and cache_key is not None
+            else None
+        )
+        effective_permissions = (
+            effective_permission_cache.get(effective_cache_key)
+            if effective_permission_cache is not None and effective_cache_key is not None
+            else None
+        )
+        if effective_permissions is not None:
+            return _cache_result(_eval(effective_permissions))
+
         perms = [
             (p.key or "").strip().upper()
             for p in (self.permissions or [])
@@ -330,7 +361,6 @@ class User(db.Model, UserMixin):
         # Merge ROLE permissions (RolePermission) so role-based permissions are honored
         # This keeps template checks (current_user.has_perm) and perm_required consistent with /admin/permissions.
         try:
-            role_raw = (getattr(self, "role", "") or "").strip()
             role = role_raw.lower()
             if role:
                 role_variants = role_storage_variants(role_raw) or {role}
@@ -412,21 +442,10 @@ class User(db.Model, UserMixin):
         except Exception:
             pass
 
-        def _eval(perms_list: list[str]) -> bool:
-            if key in perms_list:
-                return True
-            actions = ("READ", "CREATE", "UPDATE", "DELETE")
-            for act in actions:
-                suffix = "_" + act
-                if key.endswith(suffix):
-                    base = key[: -len(suffix)]
-                    return f"{base}_MANAGE" in perms_list
-            if key.endswith("_MANAGE"):
-                base = key[: -len("_MANAGE")]
-                return all(f"{base}_{act}" in perms_list for act in actions)
-            return False
-
-        return _cache_result(_eval(perms))
+        effective_permissions = frozenset(perms)
+        if effective_permission_cache is not None and effective_cache_key is not None:
+            effective_permission_cache[effective_cache_key] = effective_permissions
+        return _cache_result(_eval(effective_permissions))
 
     def has_role(self, role_name):
         """Return True if the user has the given role.
@@ -1741,6 +1760,15 @@ class WorkflowTemplate(db.Model):
     name = db.Column(db.String(200), nullable=False)
     is_active = db.Column(db.Boolean, default=True)
 
+    # Who may start a request from this predefined workflow template.
+    # NONE is the safe default: an administrator must explicitly choose who
+    # may start a predefined path.
+    start_access_mode = db.Column(
+        db.String(20),
+        nullable=False,
+        default="NONE",
+    )
+
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -1752,6 +1780,58 @@ class WorkflowTemplate(db.Model):
         backref="template",
         cascade="all, delete-orphan",
         order_by="WorkflowTemplateStep.step_order"
+    )
+
+    start_access_rules = db.relationship(
+        "WorkflowTemplateStartAccess",
+        back_populates="template",
+        cascade="all, delete-orphan",
+        order_by="WorkflowTemplateStartAccess.audience_type, WorkflowTemplateStartAccess.audience_id",
+    )
+
+
+class WorkflowTemplateStartAccess(db.Model):
+    """One selected audience entry allowed to start a workflow template.
+
+    ``audience_id`` is polymorphic by design: its meaning is determined by
+    ``audience_type`` (organization, directorate, department, section, or user).  The
+    template's ``start_access_mode`` stores the special NONE/ALL cases.
+    """
+
+    __tablename__ = "workflow_template_start_access"
+
+    id = db.Column(db.Integer, primary_key=True)
+    template_id = db.Column(
+        db.Integer,
+        db.ForeignKey("workflow_templates.id"),
+        nullable=False,
+        index=True,
+    )
+    audience_type = db.Column(db.String(20), nullable=False)
+    audience_id = db.Column(db.Integer, nullable=False)
+
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    template = db.relationship("WorkflowTemplate", back_populates="start_access_rules")
+    created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "template_id",
+            "audience_type",
+            "audience_id",
+            name="uq_workflow_template_start_access_audience",
+        ),
+        db.CheckConstraint(
+            "audience_type IN ('ORGANIZATION','DIRECTORATE','DEPARTMENT','SECTION','USER')",
+            name="ck_workflow_template_start_access_type",
+        ),
+        db.Index(
+            "ix_workflow_template_start_access_template_type",
+            "template_id",
+            "audience_type",
+        ),
     )
 
 
@@ -1825,6 +1905,19 @@ class RequestEscalation(db.Model):
     targets = db.Column(db.Text, nullable=True)
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        # The admin list is ordered by this pair on every page load.
+        db.Index("ix_request_escalation_created_id", "created_at", "id"),
+        # Request/step views filter by request_id and optionally step_order.
+        db.Index(
+            "ix_request_escalation_request_step_created",
+            "request_id",
+            "step_order",
+            "created_at",
+            "id",
+        ),
+    )
 
     request = db.relationship("WorkflowRequest", backref="escalations")
     from_user = db.relationship("User", foreign_keys=[from_user_id], lazy="joined")
@@ -4872,7 +4965,7 @@ class HRAttendanceDeductionConfig(db.Model):
 
     # Reference-system settings (the default is configurable; the product
     # default is 6.5 hours -> 1 leave day).
-    deduction_style = db.Column(db.String(40), default="AGGREGATE", nullable=False)  # AGGREGATE / PER_CATEGORY
+    deduction_style = db.Column(db.String(40), default="AGGREGATE", nullable=False)  # AGGREGATE / LATE_EARLY / PER_CATEGORY
     hours_per_day = db.Column(db.Float, default=6.5, nullable=False)
 
     # New leave-deduction policy fields.  Keep the older source/carry fields
@@ -4890,7 +4983,10 @@ class HRAttendanceDeductionConfig(db.Model):
     special_permission_source = db.Column(db.String(20), default="SALARY", nullable=False)
     unauthorized_permission_source = db.Column(db.String(20), default="SALARY", nullable=False)
 
-    carry_method = db.Column(db.String(40), default="CARRY_TO_NEXT", nullable=False)  # CARRY_TO_NEXT / WITHIN_MONTH
+    # Source bucket(s) that receive the remainder after the selected grouping:
+    # DEPARTURES_ONLY / LATE_EARLY_ONLY / ALL / NONE. The old
+    # CARRY_TO_NEXT/WITHIN_MONTH values are read as legacy values.
+    carry_method = db.Column(db.String(40), default="NONE", nullable=False)
 
     # Monthly permission allowance and the leave type consumed before salary.
     permission_allowance_hours = db.Column(db.Float, default=6.0, nullable=False)
@@ -7649,7 +7745,7 @@ class TransportPermit(db.Model):
     return_at = db.Column(db.DateTime, nullable=True, index=True)
 
     status = db.Column(db.String(20), nullable=False, default="DRAFT", index=True)  # DRAFT/SUBMITTED/APPROVED/REJECTED/CANCELLED/COMPLETED
-    approval_stage = db.Column(db.String(30), nullable=False, default="MANAGER", index=True)
+    approval_stage = db.Column(db.String(30), nullable=False, default="TRANSPORT", index=True)
     manager_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
     # Frozen snapshot of all responsible managers for a submitted movement.
     manager_user_ids = db.Column(db.Text, nullable=True)

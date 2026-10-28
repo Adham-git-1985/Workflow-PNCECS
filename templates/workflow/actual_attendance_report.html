@@ -1,0 +1,221 @@
+{% extends "layout.html" %}
+{% block title %}تقرير الدوام الفعلي الأسبوعي{% endblock %}
+{% block extra_css %}
+<style>
+  .actual-attendance-print-heading { display: none; }
+  .actual-attendance-table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid #4d463d;
+    color: #241f19;
+  }
+  .actual-attendance-table th,
+  .actual-attendance-table td {
+    border: 1px solid #6e665b;
+    padding: 3px 4px;
+    text-align: center;
+    vertical-align: middle;
+  }
+  .actual-attendance-table thead th {
+    background: #e1a52a;
+    font-weight: 700;
+    text-align: center;
+    vertical-align: middle;
+  }
+  .actual-attendance-table .group-name {
+    width: 25%;
+    min-width: 190px;
+    background: #fff;
+    vertical-align: middle;
+    font-weight: 700;
+  }
+  .actual-attendance-table thead .group-name { background: #e1a52a; }
+  .actual-attendance-table .day-heading { width: 15%; }
+  .actual-attendance-table .day-heading small { display: block; color: #6c757d; font-weight: 400; }
+  .actual-attendance-table .names-cell { line-height: 1.25; }
+  .actual-attendance-table .name-line { white-space: nowrap; }
+  .actual-attendance-table .section-band td {
+    height: 8px;
+    padding: 0;
+    background: #e1a52a;
+    border-color: #6e665b;
+  }
+  .actual-attendance-table .count-row th,
+  .actual-attendance-table .count-row td {
+    background: #fff;
+    font-weight: 700;
+    text-align: center;
+  }
+  .actual-attendance-table .grand-total-row th,
+  .actual-attendance-table .grand-total-row td,
+  .actual-attendance-table .grand-name-row th,
+  .actual-attendance-table .grand-name-row td {
+    background: #e1e5c8;
+    font-weight: 700;
+    text-align: center;
+  }
+  .actual-attendance-table .number-cell { width: 25%; }
+
+  @media print {
+    @page { size: A4 landscape; margin: 4mm; }
+    *, *::before, *::after {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    body { padding-top: 0 !important; background: #fff !important; }
+    .main-header, .admin-sidebar, .offcanvas, .main-footer, .breadcrumb,
+    .actual-attendance-screen-header { display: none !important; }
+    .admin-wrapper, .admin-content, #app-main, #actual-attendance-print {
+      display: block !important;
+      width: 100% !important;
+      max-width: none !important;
+      min-height: 0 !important;
+      height: auto !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      overflow: visible !important;
+    }
+    .actual-attendance-page { width: 100% !important; max-width: none !important; margin: 0 !important; }
+    .actual-attendance-print-heading { display: none !important; }
+    .actual-attendance-print .no-print { display: none !important; }
+    .actual-attendance-print .card {
+      border: 0 !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      background: #fff !important;
+      color: #111 !important;
+      margin: 0 !important;
+    }
+    .actual-attendance-print .card-header { display: none !important; }
+    .actual-attendance-print .table-responsive { overflow: visible !important; }
+    .actual-attendance-print table {
+      width: 100% !important;
+      height: calc(100vh - 8mm) !important;
+      min-width: 0 !important;
+      table-layout: fixed;
+      font-size: 6.8pt !important;
+    }
+    .actual-attendance-print th,
+    .actual-attendance-print td {
+      padding: 1px 2px !important;
+      white-space: normal !important;
+      overflow-wrap: normal;
+      word-break: normal;
+      line-height: 1.05 !important;
+    }
+    .actual-attendance-print tr { break-inside: avoid; page-break-inside: avoid; }
+    .actual-attendance-print thead { display: table-header-group; }
+    .actual-attendance-print .day-heading { width: 15% !important; }
+    .actual-attendance-print .day-heading small { display: none !important; }
+    .actual-attendance-print .group-name,
+    .actual-attendance-print .number-cell {
+      width: 25% !important;
+      min-width: 0 !important;
+    }
+    .actual-attendance-print .name-line {
+      white-space: nowrap;
+      font-size: 6.5pt !important;
+    }
+    .actual-attendance-print .section-band td {
+      height: 2.5mm !important;
+      padding: 0 !important;
+    }
+  }
+</style>
+{% endblock %}
+{% block content %}
+
+<div class="actual-attendance-page" dir="rtl">
+  <div class="actual-attendance-screen-header d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3 no-print">
+    <div>
+      <h3 class="mb-1"><i class="bi bi-calendar2-week"></i> تقرير الدوام الفعلي الأسبوعي</h3>
+      <div class="text-muted">من جدول الدوام الفعلي — من {{ period_start.strftime('%d/%m/%Y') }} إلى {{ period_end.strftime('%d/%m/%Y') }}</div>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('workflow.workflow_reports') }}"><i class="bi bi-arrow-right"></i> فهرس التقارير</a>
+      <button class="btn btn-primary" type="button" onclick="wfPrintSmart('#actual-attendance-print')"><i class="bi bi-printer"></i> طباعة التقرير</button>
+    </div>
+  </div>
+
+  <section id="actual-attendance-print" class="actual-attendance-print">
+    <div class="actual-attendance-print-heading">
+      <h1>تقرير الدوام الفعلي الأسبوعي</h1>
+      <p>الموظفون المدرجون في جدول الدوام الساري للحضور الحضوري، موزعون حسب الجهة.</p>
+      <div>الفترة: {{ period_start.strftime('%d/%m/%Y') }} — {{ period_end.strftime('%d/%m/%Y') }}</div>
+    </div>
+
+    <div class="card shadow-sm mb-3 no-print">
+      <div class="card-body">
+        <form method="get" class="row g-2 align-items-end">
+          <div class="col-md-5 col-lg-3">
+            <label class="form-label" for="actual-attendance-week-start">أسبوع التقرير</label>
+            <input id="actual-attendance-week-start" class="form-control" type="date" name="week_start" value="{{ period_start.isoformat() }}">
+          </div>
+          <div class="col-md-3 col-lg-2"><button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض الأسبوع</button></div>
+          <div class="col-md-3 col-lg-2"><a class="btn btn-outline-secondary w-100" href="{{ url_for('workflow.workflow_actual_attendance_report') }}">الأسبوع الحالي</a></div>
+          <div class="col-12 col-lg text-muted small align-self-center">
+            المصدر: جدول الدوام الساري. يظهر الحضور الحضوري فقط؛ أيام العمل عن بُعد والعطلة لا تظهر.
+          </div>
+        </form>
+      </div>
+    </div>
+
+    {% if not has_data %}
+    <div class="alert alert-info no-print">
+      لا توجد خطط دوام معتمدة في الفترة المحددة. يمكنك اختيار أسبوع آخر من حقل التاريخ أعلاه.
+    </div>
+    {% endif %}
+
+    <div class="card shadow-sm mb-3">
+      <div class="card-header bg-white">
+        <strong>جدول الدوام حسب الجهة</strong>
+        <span class="badge text-bg-secondary">{{ total_attendance }} موظف مجدول</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table mb-0 actual-attendance-table" dir="rtl">
+          <thead>
+            <tr>
+              <th class="group-name"></th>
+              {% for day in days %}
+              <th class="day-heading">{{ day.label }}<small>{{ day.date.strftime('%d/%m/%Y') }}</small></th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for group in groups %}
+            {% if not loop.first %}
+            <tr class="section-band" aria-hidden="true"><td colspan="6"></td></tr>
+            {% endif %}
+            {% for row in group.rows %}
+            <tr class="employee-row">
+              {% if loop.first %}<th class="group-name" rowspan="{{ group.row_count }}">{{ group.label }}</th>{% endif %}
+              {% for name in row.names %}
+              <td class="names-cell">{% if name %}<div class="name-line">{{ name }}</div>{% endif %}</td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+            <tr class="count-row">
+              <th>العدد</th>
+              {% for day in group.days %}<td>{{ day.count }}</td>{% endfor %}
+            </tr>
+            {% endfor %}
+            <tr class="section-band" aria-hidden="true"><td colspan="6"></td></tr>
+            <tr class="grand-total-row">
+              <th>الإجمالي الكلي</th>
+              {% for count in total_counts %}<td>{{ count }}</td>{% endfor %}
+            </tr>
+            {% for row in leadership_rows %}
+            <tr class="grand-name-row">
+              <th class="number-cell">{{ row.number }}</th>
+              {% for name in row.names %}<td>{{ name }}</td>{% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}

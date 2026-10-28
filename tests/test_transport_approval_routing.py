@@ -9,6 +9,7 @@ from extensions import db
 from models import (
     MessageRecipient,
     Notification,
+    NotificationEmailDelivery,
     Role,
     RolePermission,
     SystemSetting,
@@ -19,9 +20,12 @@ from models import (
 from portal.transport import (
     _can_process_movement,
     _can_read_movement_requests,
+    _can_view_movement,
     _movement_recipient_ids,
+    _notify_direct_managers_for_review,
     _notify_next_movement_stage,
 )
+from services.notification_email import TRANSPORT_MOVEMENT_EMAIL_MODE
 
 
 class TransportApprovalRoutingTests(unittest.TestCase):
@@ -124,22 +128,48 @@ class TransportApprovalRoutingTests(unittest.TestCase):
         db.session.commit()
 
     def test_recipients_follow_the_configured_approval_path(self):
-        self.assertEqual(_movement_recipient_ids(self.permit), [self.direct_manager.id])
+        # The direct manager is no longer an approval stage.  Even legacy rows
+        # that still carry MANAGER are routed to the operational team.
+        self.assertEqual(_movement_recipient_ids(self.permit), [self.other_approver.id])
 
         self.permit.approval_stage = "TRANSPORT"
         self._set_approver("TRANSPORT_MANAGER_USER_ID", self.transport_manager.id)
         self._set_approver("TRANSPORT_DIRECTOR_USER_ID", self.transport_alternate.id)
         self.assertEqual(_movement_recipient_ids(self.permit), [self.transport_manager.id])
 
-        self.permit.approval_stage = "ADMIN"
+        self.permit.approval_stage = "ADMIN_INFO"
         self._set_approver("TRANSPORT_ADMIN_USER_ID", self.administrative_manager.id)
         self.assertEqual(_movement_recipient_ids(self.permit), [self.administrative_manager.id])
+
+    def test_direct_manager_is_view_only_and_cannot_decide(self):
+        with self.app.test_request_context():
+            login_user(self.direct_manager)
+            self.assertTrue(_can_view_movement(self.permit))
+            self.assertFalse(_can_process_movement(self.permit))
+            logout_user()
+
+    def test_direct_manager_review_notice_is_queued_for_email(self):
+        with self.app.test_request_context(), patch(
+            "portal.transport.url_for",
+            return_value=f"/portal/transport/permits/{self.permit.id}",
+        ):
+            login_user(self.requester)
+            _notify_direct_managers_for_review(self.permit, [self.direct_manager.id])
+            db.session.commit()
+            logout_user()
+
+        notification = Notification.query.filter_by(user_id=self.direct_manager.id).one()
+        self.assertEqual(notification.email_delivery_mode, TRANSPORT_MOVEMENT_EMAIL_MODE)
+        self.assertEqual(notification.type, "TRANSPORT_MOVEMENT_INFO")
+        self.assertIn("للاطلاع فقط", notification.message)
+        delivery = NotificationEmailDelivery.query.filter_by(notification_id=notification.id).one()
+        self.assertEqual(delivery.status, "PENDING")
 
     def test_unconfigured_stages_route_to_explicit_permission_holders(self):
         self.permit.approval_stage = "TRANSPORT"
         self.assertEqual(_movement_recipient_ids(self.permit), [self.other_approver.id])
 
-        self.permit.approval_stage = "ADMIN"
+        self.permit.approval_stage = "ADMIN_INFO"
         self.assertEqual(_movement_recipient_ids(self.permit), [self.other_approver.id])
 
     def test_alternate_receives_and_can_process_when_no_primary_is_assigned(self):
@@ -217,6 +247,34 @@ class TransportApprovalRoutingTests(unittest.TestCase):
             self.assertTrue(_can_process_movement(self.permit))
             logout_user()
 
+    def test_direct_transport_assignment_survives_a_false_permission_resolver(self):
+        self.permit.approval_stage = "TRANSPORT"
+        db.session.add(UserPermission(
+            user_id=self.transport_manager.id,
+            key="TRANSPORT_MANAGER_APPROVE",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context(), patch.object(User, "has_perm", return_value=False):
+            login_user(self.transport_manager)
+            self.assertTrue(_can_process_movement(self.permit))
+            logout_user()
+
+    def test_transport_manager_permission_processes_any_submitted_stage(self):
+        self.permit.approval_stage = "MANAGER"
+        db.session.add(UserPermission(
+            user_id=self.transport_manager.id,
+            key="TRANSPORT_MANAGER_APPROVE",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context():
+            login_user(self.transport_manager)
+            self.assertTrue(_can_process_movement(self.permit))
+            logout_user()
+
     def test_requester_cannot_process_own_permit(self):
         db.session.add(UserPermission(
             user_id=self.requester.id,
@@ -228,4 +286,53 @@ class TransportApprovalRoutingTests(unittest.TestCase):
         with self.app.test_request_context():
             login_user(self.requester)
             self.assertFalse(_can_process_movement(self.permit))
+            logout_user()
+
+    def test_transport_manager_can_process_own_submitted_permit(self):
+        db.session.add(UserPermission(
+            user_id=self.requester.id,
+            key="TRANSPORT_MANAGER_APPROVE",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context():
+            login_user(self.requester)
+            self.assertTrue(_can_process_movement(self.permit))
+            logout_user()
+
+    def test_selected_working_identity_can_process_requester_session(self):
+        """Approval uses the selected identity, not the technical login account."""
+        db.session.add(UserPermission(
+            user_id=self.transport_manager.id,
+            key="TRANSPORT_MANAGER_APPROVE",
+            is_allowed=True,
+        ))
+        self.permit.approval_stage = "TRANSPORT"
+        db.session.commit()
+
+        with self.app.test_request_context(), patch(
+            "portal.transport.get_authorization_user",
+            return_value=self.transport_manager,
+        ):
+            login_user(self.requester)
+            self.assertTrue(_can_process_movement(self.permit))
+            logout_user()
+
+    def test_effective_working_identity_can_process_requester_session(self):
+        """Approval follows the identity displayed by the application shell."""
+        db.session.add(UserPermission(
+            user_id=self.transport_manager.id,
+            key="TRANSPORT_MANAGER_APPROVE",
+            is_allowed=True,
+        ))
+        self.permit.approval_stage = "TRANSPORT"
+        db.session.commit()
+
+        with self.app.test_request_context(), patch(
+            "portal.transport.get_effective_user",
+            return_value=self.transport_manager,
+        ):
+            login_user(self.requester)
+            self.assertTrue(_can_process_movement(self.permit))
             logout_user()

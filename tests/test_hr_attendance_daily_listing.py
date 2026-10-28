@@ -1030,13 +1030,14 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
             event_dt=datetime(2026, 9, 11, 8, 10),
             event_type="IN",
         )
+        departure = AttendanceEvent(
+            user_id=employee.id,
+            event_dt=datetime(2026, 9, 11, 15, 0),
+            event_type="OUT",
+        )
         db.session.add_all((
             arrival,
-            AttendanceEvent(
-                user_id=employee.id,
-                event_dt=datetime(2026, 9, 11, 15, 0),
-                event_type="OUT",
-            ),
+            departure,
         ))
         db.session.commit()
 
@@ -1056,6 +1057,18 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
             arrival.event_dt = datetime(2026, 9, 11, 8, 20)
             db.session.flush()
             self.assertEqual(_summary_compute_one(employee.id, "2026-09-11")["late_minutes"], 20)
+            arrival.event_dt = datetime(2026, 9, 11, 8, 16)
+            departure.event_dt = datetime(2026, 9, 11, 14, 45)
+            db.session.flush()
+            result = _summary_compute_one(employee.id, "2026-09-11")
+            self.assertEqual(result["late_minutes"], 16)
+            self.assertEqual(result["early_leave_minutes"], 0)
+
+            departure.event_dt = datetime(2026, 9, 11, 14, 30)
+            db.session.flush()
+            result = _summary_compute_one(employee.id, "2026-09-11")
+            self.assertEqual(result["late_minutes"], 16)
+            self.assertEqual(result["early_leave_minutes"], 30)
 
     def test_remote_schedule_calculates_late_arrival_from_its_start_time(self):
         employee = User(

@@ -1446,6 +1446,9 @@ def _ensure_runtime_schema():
                     db.session.rollback()
 
             for table, col, ctype in [
+                # Predefined workflow template start-access policy
+                ("workflow_templates", "start_access_mode", "TEXT NOT NULL DEFAULT 'NONE'"),
+
                 # Committee columns
                 ("workflow_template_steps", "approver_committee_id", "INTEGER"),
                 ("workflow_template_steps", "committee_delivery_mode", "TEXT"),
@@ -1748,7 +1751,7 @@ def _ensure_runtime_schema():
                     _add_column_retry("transport_trip", col, ctype)
 
             for col, ctype in [
-                ("approval_stage", "TEXT NOT NULL DEFAULT 'MANAGER'"),
+                ("approval_stage", "TEXT NOT NULL DEFAULT 'TRANSPORT'"),
                 ("manager_user_id", "INTEGER"),
                 ("manager_user_ids", "TEXT"),
             ]:

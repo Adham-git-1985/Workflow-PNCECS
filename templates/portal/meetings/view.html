@@ -3,15 +3,26 @@
 
 {% block content %}
 {% set participant_ids = row.participants|map(attribute='user_id')|list %}
+{% set meeting_creator = row.created_by.name if row.created_by and row.created_by.name else (row.created_by.email if row.created_by else '-') %}
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
   <div>
     <h4 class="mb-1"><i class="bi bi-calendar-event"></i> {{ row.title }}</h4>
-    <div class="text-muted small">
-      {{ row.start_at.strftime('%Y-%m-%d %H:%M') if row.start_at else '' }}
-      {% if row.end_at %} - {{ row.end_at.strftime('%H:%M') if row.end_at.date() == row.start_at.date() else row.end_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
-      {% if row.location %}<span class="mx-1">|</span><i class="bi bi-geo-alt"></i> {{ row.location }}{% endif %}
+    <div class="d-flex flex-wrap gap-2 mt-3">
+      <div class="border border-primary-subtle bg-primary-subtle rounded-3 px-3 py-2 flex-fill" style="min-width: 17rem;">
+        <div class="small text-primary-emphasis fw-semibold"><i class="bi bi-clock-fill"></i> وقت الاجتماع</div>
+        <div class="fs-4 fw-bold text-dark" dir="ltr">
+          {{ row.start_at.strftime('%Y-%m-%d %H:%M') if row.start_at else '' }}
+          {% if row.end_at %}<span class="fs-5 text-secondary"> - {{ row.end_at.strftime('%H:%M') if row.end_at.date() == row.start_at.date() else row.end_at.strftime('%Y-%m-%d %H:%M') }}</span>{% endif %}
+        </div>
+        {% if row.location %}
+          <div class="small text-secondary mt-1"><i class="bi bi-geo-alt"></i> {{ row.location }}</div>
+        {% endif %}
+      </div>
+      <div class="border rounded-3 px-3 py-2 flex-fill" style="min-width: 17rem;">
+        <div class="small text-muted fw-semibold"><i class="bi bi-person-fill"></i> منشئ الاجتماع:</div>
+        <div class="fs-5 fw-bold text-dark mt-1">{{ meeting_creator }}</div>
+      </div>
     </div>
-    <div class="text-muted small mt-1"><i class="bi bi-person-fill"></i> الداعي: {{ row.created_by.name if row.created_by and row.created_by.name else (row.created_by.email if row.created_by else '-') }}</div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
     <span class="badge text-bg-secondary align-self-center">{{ status_labels.get(row.status, row.status) }}</span>
@@ -35,6 +46,9 @@
       </a>
     {% endif %}
     {% if can_manage %}
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.meeting_edit', meeting_id=row.id) }}">
+        <i class="bi bi-pencil-square"></i> تعديل الاجتماع
+      </a>
       <form method="post" action="{{ url_for('portal.meeting_send_reminder', meeting_id=row.id) }}">
         <button class="btn btn-outline-warning" type="submit">
           <i class="bi bi-bell"></i> إرسال تذكير

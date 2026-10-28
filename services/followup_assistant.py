@@ -13,8 +13,13 @@ from typing import Any
 from flask import current_app
 
 
-_MAX_SUGGESTION_CHARS = 420
-_MAX_SUMMARY_ITEM_CHARS = 120
+# Keep generated text usable inside the report form.  These are deliberately
+# character limits (rather than word limits) because the Arabic textarea is
+# rendered at different widths on desktop and mobile; 240 characters keeps
+# the result to roughly one or two lines in the report.
+_MAX_SUGGESTION_CHARS = 240
+_MAX_REPORT_SUMMARY_CHARS = 240
+_MAX_SUMMARY_ITEM_CHARS = 70
 _DETAIL_LABEL = re.compile(
     r"^(?:تفاصيل(?:\s+المعاملة|\s+المهمة|\s+البند)?|ملاحظة(?:\s+الإجراء)?|الوصف)\s*[:：\-–—]\s*",
     flags=re.IGNORECASE,
@@ -93,7 +98,8 @@ _FOLLOWUP_REWRITE_INSTRUCTIONS = """
 1. حافظ على الفكرة والحقائق والأسماء والأرقام والتواريخ كما وردت؛ لا تضف أي معلومة
    غير موجودة ولا تستنتج سبباً أو نتيجة.
 2. احذف الحشو والتكرار والعبارات العامية وصيغة المتكلم، واجعل النتيجة جملة واحدة
-   قصيرة تصلح للعرض في تقرير إنجاز.
+   قصيرة تصلح للعرض في تقرير إنجاز، ولا تتجاوز تقريباً 240 حرفاً (سطر واحد أو
+   سطرين كحد أقصى).
 3. إذا كانت الحالة COMPLETED فاكتب الإنجاز بصيغة ماضية مناسبة. وإذا كانت
    IN_PROGRESS أو INCOMPLETE فحافظ على معنى أن العمل قيد التنفيذ أو غير مكتمل.
 4. لا تستخدم عناوين مثل «الصياغة المقترحة»، ولا ترقيماً، ولا علامات Markdown، ولا
@@ -277,7 +283,9 @@ def _rewrite_item(item) -> str:
     ]
     if details:
         suggestion += f"؛ وشمل ذلك {'، '.join(details)}"
-    suggestion = _shorten(suggestion, _MAX_SUGGESTION_CHARS)
+    # Reserve one character for the final full stop so the value also fits
+    # the textarea maxlength.
+    suggestion = _shorten(suggestion, _MAX_SUGGESTION_CHARS - 1)
     return suggestion if suggestion.endswith((".", "؟", "!", "…")) else f"{suggestion}."
 
 
@@ -289,6 +297,48 @@ def _summary_focus(suggestion: str) -> str:
     )
     focus = re.sub(r"[.؟!…]+$", "", focus)
     return _shorten(focus, _MAX_SUMMARY_ITEM_CHARS)
+
+
+def _build_report_summary(included_items, suggestions: dict[int, str]) -> str:
+    """Return a short, report-level description of what happened.
+
+    The button is useful even when the optional hosted model is disabled, so
+    the local result must have the same compact shape as the model result.
+    Keep it to at most two sentences and bound the total length for the
+    summary textarea.
+    """
+    included_items = list(included_items or [])
+    completed = [
+        item for item in included_items
+        if (getattr(item, "status", "") or "").upper() == "COMPLETED"
+    ]
+    incomplete = [item for item in included_items if item not in completed]
+    summary_items = [
+        _summary_focus(suggestions[int(item.id)])
+        for item in included_items[:2]
+        if getattr(item, "id", None)
+        and int(item.id) in suggestions
+        and _summary_focus(suggestions[int(item.id)])
+    ]
+
+    if summary_items:
+        first_sentence = f"شملت أبرز الأعمال خلال الفترة: {'؛ '.join(summary_items)}."
+    elif included_items:
+        first_sentence = "تمت متابعة بنود تقرير الإنجاز خلال الفترة."
+    else:
+        return "لا توجد إنجازات مدرجة في التقرير حالياً."
+
+    if incomplete and completed:
+        second_sentence = f"تم إنجاز {len(completed)} بند، وهناك بند أو أكثر يحتاج متابعة."
+    elif incomplete:
+        second_sentence = "هناك بند أو أكثر يحتاج متابعة قبل الإغلاق."
+    else:
+        second_sentence = f"تم إنجاز {len(completed)} بند."
+
+    return _shorten(
+        f"{first_sentence} {second_sentence}",
+        _MAX_REPORT_SUMMARY_CHARS,
+    )
 
 
 def _build_local_analysis(items) -> dict[str, object]:
@@ -317,22 +367,7 @@ def _build_local_analysis(items) -> dict[str, object]:
         if getattr(item, "id", None):
             suggestions[int(item.id)] = _rewrite_item(item)
 
-    summary_items = [
-        _summary_focus(suggestions[int(item.id)])
-        for item in included_items[:5]
-        if getattr(item, "id", None) and int(item.id) in suggestions
-    ]
-    if summary_items:
-        summary = f"شملت أبرز الأعمال خلال الفترة: {'؛ '.join(summary_items)}."
-    elif included_items:
-        summary = "تمت مراجعة بنود التقرير، ولا توجد صياغات مكتملة متاحة حالياً."
-    else:
-        summary = "لا توجد بنود مضافة بعد؛ أضف الإنجازات أو استخرجها من المهام المكتملة."
-
-    if completed:
-        summary += f" بلغ عدد البنود المنجزة {len(completed)}."
-    if incomplete:
-        summary += f" وهناك {len(incomplete)} بند يحتاج متابعة."
+    summary = _build_report_summary(included_items, suggestions)
 
     notes = []
     if duplicate_messages:
@@ -441,10 +476,15 @@ def _clean_ai_suggestion(value: Any) -> str | None:
     if not text:
         return None
     try:
-        limit = max(120, int(_followup_config("FOLLOWUPS_AI_MAX_SUGGESTION_CHARS", _MAX_SUGGESTION_CHARS)))
+        limit = min(
+            _MAX_SUGGESTION_CHARS,
+            max(120, int(_followup_config("FOLLOWUPS_AI_MAX_SUGGESTION_CHARS", _MAX_SUGGESTION_CHARS))),
+        )
     except (TypeError, ValueError):
         limit = _MAX_SUGGESTION_CHARS
-    text = _shorten(text, limit)
+    # Reserve one character for the final full stop so model output cannot
+    # overflow the report field by a single character.
+    text = _shorten(text, max(1, limit - 1))
     return text if text.endswith((".", "؟", "!", "…")) else f"{text}."
 
 
@@ -582,4 +622,10 @@ def build_followup_analysis(items, *, user: Any | None = None) -> dict[str, obje
         analysis["provider"] = "openai"
     else:
         analysis["provider"] = "local"
+    # Rebuild the report-level text after applying model suggestions so the
+    # visible summary is concise regardless of which provider was used.
+    analysis["summary"] = _build_report_summary(
+        [item for item in items if getattr(item, "is_included", True)],
+        analysis["suggestions"],
+    )
     return analysis

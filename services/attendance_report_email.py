@@ -671,7 +671,10 @@ def _load_attendance_rows(report_day: date) -> tuple[list[dict], list[dict], lis
                     else getattr(schedule, "grace_minutes", 0)
                 )
                 grace = int(grace_value or 0)
-                late_minutes = max(0, actual_minutes - start_minutes - grace)
+                measured_late = max(0, actual_minutes - start_minutes)
+                # Match the attendance summary: grace decides whether the
+                # delay is charged, but is not subtracted from its duration.
+                late_minutes = measured_late if measured_late > grace else 0
             except Exception:
                 pass
 

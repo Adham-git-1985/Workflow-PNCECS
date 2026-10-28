@@ -116,6 +116,10 @@ WORKFLOW_ACCOMPLISHMENT_ACTIONS = {
     "STEP_REJECTED": "اتخاذ قرار في خطوة",
     "PARALLEL_SYNC_RESPONDED": "متابعة خطوة متزامنة",
     "WORKFLOW_COMPLETED": "إكمال مسار معاملة",
+    # A mention response is recorded as its own audit event.  It must be
+    # imported for the mentioned employee even though it does not approve or
+    # reject the workflow step itself.
+    "WORKFLOW_MENTION_TASK_COMPLETED": "متابعة المنشن والاستجابة له",
 }
 
 
@@ -1385,9 +1389,14 @@ def followups_update(report_id: int):
         if action == "ai":
             _run_followup_assistant(report)
             db.session.commit()
-            flash("تمت إعادة صياغة الإنجازات باختصار ووضوح. راجعها وعدّلها إن رغبت، ثم اضغط اعتماد الصياغات على الإنجازات.", "success")
+            flash("تمت إعادة صياغة الإنجازات في سطر أو سطرين. راجع الصياغة المختصرة وعدّلها ثم احفظ التقرير.", "success")
         elif action == "apply_ai":
             applied_count = _apply_assistant_suggestions(report)
+            # The generated summary is posted back in employee_summary from
+            # the visible textarea. Once the user saves/applies it, it is no
+            # longer a pending suggestion.
+            report.ai_summary = None
+            report.ai_notes = None
             db.session.commit()
             if applied_count:
                 flash(f"تم تفريغ {applied_count} صياغة معتمدة على المهام وحفظها.", "success")
@@ -1425,11 +1434,18 @@ def followups_update(report_id: int):
             report.status = "SUBMITTED"
             report.submitted_at = datetime.utcnow()
             report.reviewed_at = None
+            report.ai_summary = None
+            report.ai_notes = None
             recipients = set(report_manager_ids or [manager.id])
             _notify(recipients, f"تم إرسال تقرير إنجاز من {_display_user(report.employee)} للمراجعة.", "FOLLOWUP_SUBMITTED", report)
             db.session.commit()
             flash("تم إرسال التقرير إلى المدير المباشر.", "success")
         else:
+            # Saving, submitting, or otherwise leaving the AI action means
+            # the visible summary has been reviewed and can become the normal
+            # employee summary instead of remaining a stale suggestion.
+            report.ai_summary = None
+            report.ai_notes = None
             db.session.commit()
             flash("تم حفظ المسودة.", "success")
     except ValueError as exc:

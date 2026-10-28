@@ -1,13 +1,17 @@
 {% extends "portal/layout.html" %}
-{% set is_edit = is_edit|default(false) %}
+{% set is_edit = is_edit|default(editing|default(false)) %}
+{% set editing = editing|default(is_edit) %}
 {% block title %}{{ 'تعديل الاجتماع' if is_edit else 'اجتماع جديد' }}{% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
   <div>
     <h4 class="mb-1"><i class="bi bi-{{ 'pencil-square' if is_edit else 'plus-circle' }}"></i> {{ 'تعديل الاجتماع' if is_edit else 'اجتماع جديد' }}</h4>
+    {% if is_edit %}
+      <div class="text-muted small">يمكن تغيير الموعد أو أي من بيانات الاجتماع، وسيتم إشعار المشاركين عند تغيير الموعد.</div>
+    {% endif %}
   </div>
-  <a class="btn btn-outline-secondary" href="{{ url_for('portal.meetings_dashboard') }}">
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.meeting_view', meeting_id=(meeting_id if meeting_id is defined else row.id)) if is_edit else url_for('portal.meetings_dashboard') }}">
     <i class="bi bi-arrow-right"></i> رجوع
   </a>
 </div>
@@ -25,10 +29,15 @@
           <textarea class="form-control" name="description" rows="4">{{ form.description }}</textarea>
         </div>
         {% if not is_edit %}
-        <div class="mb-3">
-          <label class="form-label">الأجندة الأولية</label>
-          <textarea class="form-control" name="agenda_lines" rows="6" placeholder="بند في كل سطر">{{ form.agenda_lines }}</textarea>
-        </div>
+          <div class="mb-3">
+            <label class="form-label">الأجندة الأولية</label>
+            <textarea class="form-control" name="agenda_lines" rows="6" placeholder="بند في كل سطر">{{ form.agenda_lines }}</textarea>
+          </div>
+        {% else %}
+          <div class="alert alert-info mb-0">
+            <i class="bi bi-info-circle"></i>
+            سيبقى المشاركون والأجندة والمرفقات كما هي. استخدم أدواتها في صفحة الاجتماع لتعديلها.
+          </div>
         {% endif %}
       </div>
     </div>

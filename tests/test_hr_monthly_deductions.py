@@ -13,10 +13,13 @@ from werkzeug.exceptions import Forbidden
 from extensions import db
 from models import (
     AttendanceDailySummary,
+    AttendanceEvent,
     EmployeeFile,
     HRAttendanceDeductionConfig,
     HRAttendanceDeductionItem,
     HRAttendanceDeductionRun,
+    HRAttendanceScheduleDay,
+    HRAttendanceSchedulePlan,
     HRAttendanceSpecialCase,
     HRLeaveBalance,
     HRLeaveBalanceAdjustment,
@@ -50,6 +53,11 @@ from portal.routes import (
     _deduction_pending_approval_summary,
     _notify_deduction_pending_users,
     _monthly_attendance_deduction_breakdown,
+    _leave_deduction_components,
+    _leave_deduction_policy_comparison,
+    _leave_deduction_policy_snapshot_from_config,
+    _deduction_full_day_minutes,
+    _leave_deduction_carry_flags,
     _has_manual_deduction_operation,
     run_automatic_leave_deduction_cycle,
     _one_time_leave_error,
@@ -155,6 +163,374 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
                     status="OK",
                 ))
             current_day += timedelta(days=1)
+
+    def test_policy_comparison_detects_legacy_draft_against_current_settings(self):
+        config = HRAttendanceDeductionConfig(
+            deduction_style="LATE_EARLY",
+            hours_per_day=6.5,
+            source_selection_json=json.dumps(["DEPARTURES", "LATE", "EARLY"]),
+            leave_type_selection_json=json.dumps([]),
+            deduction_sequence="LEAVE_ONLY",
+            carry_method="LATE_EARLY_ONLY",
+            permission_allowance_hours=6.0,
+        )
+        db.session.add(config)
+        db.session.commit()
+
+        comparison = _leave_deduction_policy_comparison(
+            {
+                "deduction_style": "AGGREGATE",
+                "hours_per_day": 7.0,
+                "permission_allowance_hours": 6.0,
+                "deduction_sequence": "LEAVE_THEN_SALARY",
+                "carry_method": "CARRY_TO_NEXT",
+            },
+            config,
+        )
+
+        self.assertTrue(comparison["mismatch"])
+        self.assertEqual(comparison["applied"]["hours_per_day"], 7.0)
+        self.assertEqual(comparison["current"]["hours_per_day"], 6.5)
+        self.assertIn("LATE_EARLY", comparison["current"]["style"])
+
+    def test_current_policy_snapshot_matches_current_settings(self):
+        config = HRAttendanceDeductionConfig(
+            deduction_style="LATE_EARLY",
+            hours_per_day=6.5,
+            source_selection_json=json.dumps(["DEPARTURES", "LATE", "EARLY"]),
+            leave_type_selection_json=json.dumps([]),
+            deduction_sequence="LEAVE_ONLY",
+            carry_method="LATE_EARLY_ONLY",
+            permission_allowance_hours=6.0,
+        )
+        db.session.add(config)
+        db.session.commit()
+        snapshot = _leave_deduction_policy_snapshot_from_config(
+            config,
+            2026,
+            9,
+        )
+
+        comparison = _leave_deduction_policy_comparison(snapshot, config)
+
+        self.assertFalse(comparison["mismatch"])
+        self.assertEqual(snapshot["hours_per_day"], 6.5)
+        self.assertEqual(snapshot["selected_sources"], ["DEPARTURES", "LATE", "EARLY"])
+        self.assertEqual(snapshot["carry_policy"], "LATE_EARLY_ONLY")
+
+    def test_legacy_chargeable_minutes_display_only_complete_days(self):
+        item = HRAttendanceDeductionItem(chargeable_minutes=979)
+
+        self.assertEqual(
+            _deduction_full_day_minutes(
+                item,
+                {"hours_per_day": 7.0, "minutes_per_day": 420},
+            ),
+            840,
+        )
+
+    def test_current_grouped_policy_produces_complete_days_and_source_remainder(self):
+        raw = {
+            "permission_minutes": 747,
+            "late_minutes": 209,
+            "early_leave_minutes": 383,
+            "absent_days": 0,
+            "excluded_minutes": 0,
+            "details": {"days": [], "departures": []},
+        }
+        with patch("portal.routes._monthly_attendance_deduction_breakdown", return_value=raw):
+            result = _leave_deduction_components(
+                self.user.id,
+                2026,
+                9,
+                390,
+                ["DEPARTURES", "LATE", "EARLY"],
+                "LATE_EARLY",
+                carry_policy="LATE_EARLY_ONLY",
+            )
+
+        self.assertEqual(result["chargeable_minutes"], 780)
+        self.assertEqual(result["deduction_days"], 2)
+        self.assertEqual(result["remainder_minutes"], 202)
+        self.assertEqual(result["carry_out"], {"DEPARTURES": 0, "LATE": 0, "EARLY": 202})
+
+    def test_schedule_absence_review_finds_missing_published_work_day_without_auto_charging(self):
+        plan = HRAttendanceSchedulePlan(
+            user_id=self.user.id,
+            period_start="2026-09-01",
+            period_end="2026-09-07",
+            version_no=1,
+            status="FINAL_APPROVED",
+            request_type="BASELINE",
+        )
+        db.session.add(plan)
+        db.session.flush()
+        for day_text, day_type in (
+            ("2026-09-01", "WORK"),
+            ("2026-09-03", "WORK"),
+            ("2026-09-02", "OFF"),
+            ("2026-09-04", "OFF"),
+            ("2026-09-05", "OFF"),
+            ("2026-09-06", "OFF"),
+            ("2026-09-07", "OFF"),
+        ):
+            db.session.add(HRAttendanceScheduleDay(
+                plan_id=plan.id,
+                work_date=day_text,
+                day_type=day_type,
+                schedule_id=self.schedule.id if day_type == "WORK" else None,
+                start_time="08:00" if day_type == "WORK" else None,
+                end_time="15:00" if day_type == "WORK" else None,
+            ))
+        closing_plan = HRAttendanceSchedulePlan(
+            user_id=self.user.id,
+            period_start="2026-09-08",
+            period_end="2026-09-14",
+            version_no=1,
+            status="FINAL_APPROVED",
+            request_type="BASELINE",
+        )
+        db.session.add(closing_plan)
+        db.session.flush()
+        for offset in range(7):
+            work_day = date(2026, 9, 8) + timedelta(days=offset)
+            db.session.add(HRAttendanceScheduleDay(
+                plan_id=closing_plan.id,
+                work_date=work_day.isoformat(),
+                day_type="OFF",
+            ))
+        db.session.add_all((
+            AttendanceDailySummary(
+                user_id=self.user.id,
+                day="2026-09-01",
+                first_in=datetime(2026, 9, 1, 8),
+                last_out=datetime(2026, 9, 1, 15),
+                status="OK",
+            ),
+        ))
+        db.session.commit()
+
+        raw = {
+            "permission_minutes": 0,
+            "late_minutes": 0,
+            "early_leave_minutes": 0,
+            "absent_days": 0,
+            "excluded_minutes": 0,
+            "details": {"days": [], "departures": []},
+        }
+        with patch("portal.routes._monthly_attendance_deduction_breakdown", return_value=raw):
+            review = _leave_deduction_components(
+                self.user.id,
+                2026,
+                9,
+                390,
+                ["DEPARTURES"],
+                schedule_absence_review=True,
+            )
+            selected = _leave_deduction_components(
+                self.user.id,
+                2026,
+                9,
+                390,
+                ["DEPARTURES"],
+                schedule_absence_review=True,
+                selected_schedule_absence_days=["2026-09-03"],
+            )
+
+        self.assertEqual(review["schedule_absence_summary"]["scheduled_work_days"], 2)
+        self.assertEqual(review["schedule_absence_summary"]["attended_work_days"], 1)
+        self.assertEqual(review["schedule_absence_summary"]["missing_candidate_days"], 1)
+        self.assertEqual(review["schedule_absence_candidates"][0]["day"], "2026-09-03")
+        self.assertEqual(review["deduction_days"], 0)
+        self.assertEqual(selected["selected_schedule_absence_days"], ["2026-09-03"])
+        self.assertEqual(selected["deduction_days"], 1)
+        self.assertEqual(selected["chargeable_minutes"], 390)
+
+    def test_schedule_absence_review_excludes_approved_leave(self):
+        plan = HRAttendanceSchedulePlan(
+            user_id=self.user.id,
+            period_start="2026-09-01",
+            period_end="2026-09-07",
+            version_no=1,
+            status="FINAL_APPROVED",
+            request_type="BASELINE",
+        )
+        sick = HRLeaveType(code="SCHEDULE_SICK", name_ar="إجازة مرضية", is_active=True)
+        db.session.add_all((plan, sick))
+        db.session.flush()
+        for day_text, day_type in (
+            ("2026-09-01", "WORK"),
+            ("2026-09-02", "OFF"),
+            ("2026-09-03", "OFF"),
+            ("2026-09-04", "OFF"),
+            ("2026-09-05", "OFF"),
+            ("2026-09-06", "OFF"),
+            ("2026-09-07", "OFF"),
+        ):
+            db.session.add(HRAttendanceScheduleDay(
+                plan_id=plan.id,
+                work_date=day_text,
+                day_type=day_type,
+                schedule_id=self.schedule.id if day_type == "WORK" else None,
+            ))
+        closing_plan = HRAttendanceSchedulePlan(
+            user_id=self.user.id,
+            period_start="2026-09-08",
+            period_end="2026-09-14",
+            version_no=1,
+            status="FINAL_APPROVED",
+            request_type="BASELINE",
+        )
+        db.session.add(closing_plan)
+        db.session.flush()
+        for offset in range(7):
+            work_day = date(2026, 9, 8) + timedelta(days=offset)
+            db.session.add(HRAttendanceScheduleDay(
+                plan_id=closing_plan.id,
+                work_date=work_day.isoformat(),
+                day_type="OFF",
+            ))
+        db.session.add(HRLeaveRequest(
+            user_id=self.user.id,
+            leave_type_id=sick.id,
+            start_date="2026-09-01",
+            end_date="2026-09-01",
+            days=1,
+            status="APPROVED",
+        ))
+        db.session.commit()
+
+        raw = {
+            "permission_minutes": 0,
+            "late_minutes": 0,
+            "early_leave_minutes": 0,
+            "absent_days": 0,
+            "excluded_minutes": 0,
+            "details": {"days": [], "departures": []},
+        }
+        with patch("portal.routes._monthly_attendance_deduction_breakdown", return_value=raw):
+            result = _leave_deduction_components(
+                self.user.id,
+                2026,
+                9,
+                390,
+                ["DEPARTURES"],
+                schedule_absence_review=True,
+            )
+
+        self.assertEqual(result["schedule_absence_candidates"], [])
+        self.assertEqual(result["schedule_absence_summary"]["excused_work_days"], 1)
+
+    def test_late_and_early_can_complete_a_day_without_combining_departures(self):
+        raw = {
+            "permission_minutes": 180,
+            "late_minutes": 200,
+            "early_leave_minutes": 300,
+            "absent_days": 0,
+            "excluded_minutes": 0,
+            "details": {"days": [], "departures": []},
+        }
+        with patch("portal.routes._monthly_attendance_deduction_breakdown", return_value=raw):
+            result = _leave_deduction_components(
+                self.user.id,
+                2026,
+                3,
+                420,
+                ["DEPARTURES", "LATE", "EARLY"],
+                "LATE_EARLY",
+                carry_departures=True,
+                carry_late=False,
+                carry_early=True,
+                carry_in={"DEPARTURES": 0, "LATE": 0, "EARLY": 0},
+            )
+
+        self.assertEqual(result["deduction_days"], 1)
+        self.assertEqual(result["consumed"], {"DEPARTURES": 0, "LATE": 200, "EARLY": 220})
+        self.assertEqual(result["carry_out"], {"DEPARTURES": 180, "LATE": 0, "EARLY": 80})
+        self.assertEqual(result["details"]["deduction_style"], "LATE_EARLY")
+        self.assertIn("التأخير + الخروج المبكر", result["details"]["formula"])
+
+    def test_grouped_fraction_carry_policy_selects_requested_buckets(self):
+        raw = {
+            "permission_minutes": 180,
+            "late_minutes": 200,
+            "early_leave_minutes": 300,
+            "absent_days": 0,
+            "excluded_minutes": 0,
+            "details": {"days": [], "departures": []},
+        }
+        expected = {
+            "DEPARTURES_ONLY": {"DEPARTURES": 180, "LATE": 0, "EARLY": 0},
+            "LATE_EARLY_ONLY": {"DEPARTURES": 0, "LATE": 0, "EARLY": 80},
+            "ALL": {"DEPARTURES": 180, "LATE": 0, "EARLY": 80},
+            "NONE": {"DEPARTURES": 0, "LATE": 0, "EARLY": 0},
+        }
+        for policy, expected_carry in expected.items():
+            flags = _leave_deduction_carry_flags(policy)
+            with patch("portal.routes._monthly_attendance_deduction_breakdown", return_value=raw):
+                result = _leave_deduction_components(
+                    self.user.id,
+                    2026,
+                    3,
+                    420,
+                    ["DEPARTURES", "LATE", "EARLY"],
+                    "LATE_EARLY",
+                    carry_departures=flags["DEPARTURES"],
+                    carry_late=flags["LATE"],
+                    carry_early=flags["EARLY"],
+                    carry_in={"DEPARTURES": 0, "LATE": 0, "EARLY": 0},
+                )
+
+            self.assertEqual(result["deduction_days"], 1)
+            self.assertEqual(result["carry_policy"], policy)
+            self.assertEqual(result["details"]["carry_policy"], policy)
+            self.assertEqual(result["carry_out"], expected_carry)
+
+    def test_grouped_fraction_is_read_from_previous_final_cycle(self):
+        previous_run = HRAttendanceDeductionRun(
+            year=2026,
+            month=2,
+            status="FINAL",
+            execution_mode="MANUAL",
+        )
+        db.session.add(previous_run)
+        db.session.flush()
+        db.session.add(HRAttendanceDeductionItem(
+            run_id=previous_run.id,
+            user_id=self.user.id,
+            carry_departure_minutes=60,
+            carry_late_minutes=0,
+            carry_early_leave_minutes=0,
+            details_json=json.dumps({
+                "source_summary": {
+                    "DEPARTURES": {"carry_out_minutes": 60},
+                },
+            }),
+        ))
+        db.session.commit()
+
+        raw = {
+            "permission_minutes": 360,
+            "late_minutes": 0,
+            "early_leave_minutes": 0,
+            "absent_days": 0,
+            "excluded_minutes": 0,
+            "details": {"days": [], "departures": []},
+        }
+        with patch("portal.routes._monthly_attendance_deduction_breakdown", return_value=raw):
+            result = _leave_deduction_components(
+                self.user.id,
+                2026,
+                3,
+                420,
+                ["DEPARTURES", "LATE", "EARLY"],
+                "LATE_EARLY",
+                carry_policy="DEPARTURES_ONLY",
+            )
+
+        self.assertEqual(result["carry_in"], {"DEPARTURES": 60, "LATE": 0, "EARLY": 0})
+        self.assertEqual(result["deduction_days"], 1)
+        self.assertEqual(result["carry_out"], {"DEPARTURES": 0, "LATE": 0, "EARLY": 0})
 
     def test_automatic_cycle_cannot_run_before_a_manual_cycle(self):
         config = HRAttendanceDeductionConfig(automatic_enabled=True)
@@ -364,6 +740,49 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
         )
         self.assertEqual(live[self.user.id]["count"], 1)
         self.assertEqual(live[self.user.id]["minutes"], 60)
+
+    def test_breakdown_recomputes_stale_summary_with_grace_as_threshold(self):
+        self.schedule.grace_minutes = 15
+        self.schedule.start_grace_minutes = 15
+        self.schedule.end_grace_minutes = 15
+        day = "2026-03-02"
+        db.session.add_all((
+            # This is the old cached result: 20 minutes early minus the
+            # 15-minute grace period.
+            AttendanceDailySummary(
+                user_id=self.user.id,
+                day=day,
+                first_in=datetime(2026, 3, 2, 8, 12),
+                last_out=datetime(2026, 3, 2, 14, 40),
+                early_leave_minutes=5,
+                work_minutes=388,
+                status="OK",
+            ),
+            AttendanceEvent(
+                user_id=self.user.id,
+                event_dt=datetime(2026, 3, 2, 8, 12),
+                event_type="IN",
+            ),
+            AttendanceEvent(
+                user_id=self.user.id,
+                event_dt=datetime(2026, 3, 2, 14, 40),
+                event_type="OUT",
+            ),
+        ))
+        db.session.commit()
+
+        result = _monthly_attendance_deduction_breakdown(
+            self.user.id,
+            2026,
+            3,
+            minutes_per_day=420,
+            allowance_minutes=0,
+        )
+
+        day_detail = next(row for row in result["details"]["days"] if row["day"] == day)
+        self.assertEqual(day_detail["early_minutes"], 20)
+        self.assertEqual(result["early_leave_minutes"], 20)
+        self.assertEqual(result["details"]["attendance_calculation_version"], 2)
 
     def test_preview_reports_pending_permissions_separately_from_approved_sources(self):
         permission_type = HRPermissionType(
@@ -1159,6 +1578,63 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
         self.assertEqual(run.status, "DRAFT")
         self.assertEqual(item.late_minutes, 30)
         self.assertTrue(item.details_json)
+
+
+    def test_refresh_can_apply_current_policy_to_a_legacy_draft(self):
+        admin = User(
+            email="policy-refresh-admin@example.test",
+            name="Policy Refresh Admin",
+            password_hash="not-used",
+            role="SUPER_ADMIN",
+        )
+        config = HRAttendanceDeductionConfig(
+            deduction_style="LATE_EARLY",
+            hours_per_day=6.5,
+            source_selection_json=json.dumps(["DEPARTURES", "LATE", "EARLY"]),
+            leave_type_selection_json=json.dumps([]),
+            deduction_sequence="LEAVE_ONLY",
+            carry_method="LATE_EARLY_ONLY",
+        )
+        run = HRAttendanceDeductionRun(
+            year=2026,
+            month=3,
+            status="DRAFT",
+            execution_mode="MANUAL",
+            config_snapshot_json=json.dumps({
+                "deduction_style": "AGGREGATE",
+                "hours_per_day": 7.0,
+                "deduction_sequence": "LEAVE_THEN_SALARY",
+            }),
+        )
+        db.session.add_all((admin, config, run))
+        db.session.flush()
+        db.session.add(HRAttendanceDeductionItem(
+            run_id=run.id,
+            user_id=self.user.id,
+            chargeable_minutes=979,
+            details_json=json.dumps({}, ensure_ascii=False),
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context(
+            f"/portal/hr/deductions/{run.id}/refresh",
+            method="POST",
+            data={"sync_policy": "1"},
+        ):
+            login_user(admin)
+            response = hr_deduction_refresh(run.id)
+            logout_user()
+
+        self.assertEqual(response.status_code, 302)
+        snapshot = json.loads(run.config_snapshot_json)
+        self.assertEqual(snapshot["policy_version"], 2)
+        self.assertEqual(snapshot["hours_per_day"], 6.5)
+        self.assertEqual(snapshot["selected_sources"], ["DEPARTURES", "LATE", "EARLY"])
+        self.assertEqual(snapshot["carry_policy"], "LATE_EARLY_ONLY")
+        self.assertTrue(run.carry_late)
+        self.assertTrue(run.carry_early)
+        self.assertFalse(run.carry_departures)
+        self.assertEqual(run.status, "DRAFT")
 
 
     def test_annual_balance_splits_2026_then_approves_current_closing_balance_for_2027(self):

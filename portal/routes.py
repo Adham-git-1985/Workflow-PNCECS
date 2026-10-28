@@ -351,6 +351,10 @@ from workflow.engine import (
     resolve_template_participant_user_ids,
     start_workflow_for_request,
 )
+from workflow.template_access import (
+    can_user_start_template,
+    filter_startable_templates,
+)
 from services.correspondence_procedure import (
     ACTION_LABELS as CORR_ACTION_LABELS,
     FINALIZE_ACTIONS as CORR_FINALIZE_ACTIONS,
@@ -367,6 +371,7 @@ from services.workflow_confidentiality import (
 )
 from services.correspondence_workflow import (
     correspondence_target_user_ids,
+    filter_correspondence_notification_user_ids,
     sync_correspondence_from_workflow,
 )
 from services.circulars import (
@@ -1783,13 +1788,14 @@ def _ensure_corr_attachments_archived(attachments: list[CorrAttachment]) -> list
     return archived_files
 
 
-def _active_workflow_templates() -> list[WorkflowTemplate]:
-    return (
+def _active_workflow_templates(user=None) -> list[WorkflowTemplate]:
+    templates = (
         WorkflowTemplate.query
         .filter_by(is_active=True)
         .order_by(WorkflowTemplate.name.asc())
         .all()
     )
+    return filter_startable_templates(user or current_user, templates)
 
 
 def _corr_workflow_templates() -> list[WorkflowTemplate]:
@@ -2286,6 +2292,9 @@ def _start_corr_workflow(
 
     if not template:
         flash("يرجى اختيار قالب مسار فعال.", "danger")
+        return None
+    if not can_user_start_template(current_user, template):
+        flash("لا تملك صلاحية بدء هذا المسار. اختر مسارًا مسموحًا لك أو راجع الإدارة.", "danger")
         return None
 
     runtime_steps = _corr_workflow_runtime_steps(template, item)
@@ -4177,6 +4186,9 @@ def _start_meeting_workflow(row: PortalMeeting, source_type: str, template_id: s
     if not template:
         flash("يرجى اختيار قالب مسار فعال.", "danger")
         return None
+    if not can_user_start_template(current_user, template):
+        flash("لا تملك صلاحية بدء هذا المسار. اختر مسارًا مسموحًا لك أو راجع الإدارة.", "danger")
+        return None
 
     payload = _meeting_workflow_payload(row, source_type, task_id)
     if not payload:
@@ -4987,7 +4999,7 @@ def _access_service_defs():
                 ("APPROVE", "اعتماد أذون الحركة", ["TRANSPORT_READ", "TRANSPORT_APPROVE"]),
                 ("TRANSPORT_MANAGER", "مسؤول الحركة والنقل (تعيين سائق)", ["TRANSPORT_READ", "TRANSPORT_MANAGER_APPROVE"]),
                 ("TRANSPORT_DIRECTOR", "مدير النقل البديل", ["TRANSPORT_READ", "TRANSPORT_DIRECTOR_APPROVE"]),
-                ("ADMIN_APPROVE", "مدير الشؤون الإدارية (اعتماد نهائي)", ["TRANSPORT_READ", "TRANSPORT_ADMIN_APPROVE"]),
+                ("ADMIN_APPROVE", "مدير الشؤون الإدارية (للاطلاع)", ["TRANSPORT_READ", "TRANSPORT_ADMIN_APPROVE"]),
                 ("TRACKING", "التتبع (الخيار C)", ["TRANSPORT_READ", "TRANSPORT_TRACKING_READ", "TRANSPORT_TRACKING_MANAGE"]),
             ],
         },
@@ -7141,42 +7153,101 @@ def meeting_edit(meeting_id: int):
             "location": (request.form.get("location") or "").strip(),
             "start_at": (request.form.get("start_at") or "").strip(),
             "end_at": (request.form.get("end_at") or "").strip(),
-            "reminder_minutes_before": (request.form.get("reminder_minutes_before") or "60").strip(),
+            "reminder_minutes_before": (
+                request.form.get("reminder_minutes_before")
+                or str(row.reminder_minutes_before or 0)
+            ).strip(),
         })
         start_at = _parse_dt_local(form["start_at"])
         end_at = _parse_dt_local(form["end_at"])
         try:
-            reminder_minutes = max(0, int(form["reminder_minutes_before"] or 60))
+            reminder_minutes = max(0, int(form["reminder_minutes_before"] or 0))
         except Exception:
-            reminder_minutes = 60
+            reminder_minutes = 0
 
         if not form["title"]:
             flash("عنوان الاجتماع مطلوب.", "danger")
-        elif not start_at:
+            return render_template("portal/meetings/form.html", form=form, users=users, row=row, is_edit=True, editing=True, meeting_id=row.id, form_action=url_for("portal.meeting_edit", meeting_id=row.id))
+        if not start_at:
             flash("موعد بداية الاجتماع مطلوب.", "danger")
-        elif end_at and end_at <= start_at:
+            return render_template("portal/meetings/form.html", form=form, users=users, row=row, is_edit=True, editing=True, meeting_id=row.id, form_action=url_for("portal.meeting_edit", meeting_id=row.id))
+        if form["end_at"] and not end_at:
+            flash("صيغة موعد نهاية الاجتماع غير صحيحة.", "warning")
+            return render_template("portal/meetings/form.html", form=form, users=users, row=row, is_edit=True, editing=True, meeting_id=row.id, form_action=url_for("portal.meeting_edit", meeting_id=row.id))
+        if end_at and end_at <= start_at:
             flash("وقت نهاية الاجتماع يجب أن يكون بعد وقت البداية.", "warning")
-        else:
-            try:
-                row.title = form["title"][:200]
-                row.description = form["description"] or None
-                row.location = form["location"] or None
-                row.start_at = start_at
-                row.end_at = end_at
-                row.reminder_minutes_before = reminder_minutes
-                _portal_audit(
-                    "MEETING_UPDATE",
-                    note=f"meeting_id={row.id}",
-                    target_type="PORTAL_MEETING",
-                    target_id=row.id,
+            return render_template("portal/meetings/form.html", form=form, users=users, row=row, is_edit=True, editing=True, meeting_id=row.id, form_action=url_for("portal.meeting_edit", meeting_id=row.id))
+
+        old_start_at = row.start_at
+        old_end_at = row.end_at
+        old_reminder_minutes = row.reminder_minutes_before
+        old_title = row.title
+        old_description = row.description
+        old_location = row.location
+        schedule_changed = start_at != old_start_at or end_at != old_end_at
+        details_changed = (
+            form["title"][:200] != old_title
+            or (form["description"] or None) != old_description
+            or (form["location"] or None) != old_location
+        )
+
+        row.title = form["title"][:200]
+        row.description = form["description"] or None
+        row.location = form["location"] or None
+        row.start_at = start_at
+        row.end_at = end_at
+        row.reminder_minutes_before = reminder_minutes
+        if schedule_changed:
+            # A rescheduled meeting must be eligible for its reminder again.
+            row.reminder_sent_at = None
+
+        try:
+            changes = []
+            if schedule_changed:
+                changes.append(f"when={_meeting_when_label(row)}")
+            if details_changed:
+                changes.append("details=updated")
+            if reminder_minutes != old_reminder_minutes:
+                changes.append(f"reminder_minutes={reminder_minutes}")
+            _portal_audit(
+                "MEETING_UPDATE",
+                note=f"meeting_id={row.id} " + " ".join(changes),
+                target_type="PORTAL_MEETING",
+                target_id=row.id,
+            )
+
+            if schedule_changed or details_changed:
+                recipient_ids = [
+                    uid for uid in _meeting_audience_user_ids(row)
+                    if int(uid) != int(getattr(current_user, "id", 0) or 0)
+                ]
+                intro = (
+                    "تم تعديل موعد الاجتماع التالي."
+                    if schedule_changed
+                    else "تم تحديث بيانات الاجتماع التالي."
                 )
-                db.session.commit()
-                flash("تم تحديث بيانات الاجتماع.", "success")
-                return redirect(url_for("portal.meeting_view", meeting_id=row.id))
-            except Exception:
-                db.session.rollback()
-                current_app.logger.exception("Failed to update meeting %s", row.id)
-                flash("تعذر تحديث الاجتماع.", "danger")
+                _meeting_notify_users(
+                    recipient_ids,
+                    f"تحديث اجتماع: {row.title} - {_meeting_when_label(row)}",
+                    level="INFO",
+                    subject=f"تحديث اجتماع: {row.title}",
+                    body=_meeting_message_body(row, intro),
+                    sender_id=getattr(current_user, "id", None),
+                    link_url=notification_target_path("PORTAL_MEETING", row.id),
+                )
+
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception("Failed to update meeting %s", meeting_id)
+            flash("تعذر تحديث الاجتماع.", "danger")
+            return render_template("portal/meetings/form.html", form=form, users=users, row=row, is_edit=True, editing=True, meeting_id=row.id, form_action=url_for("portal.meeting_edit", meeting_id=row.id))
+
+        if schedule_changed:
+            flash("تم تعديل موعد الاجتماع وإشعار المشاركين.", "success")
+        else:
+            flash("تم تحديث بيانات الاجتماع.", "success")
+        return redirect(url_for("portal.meeting_view", meeting_id=row.id))
 
     return render_template(
         "portal/meetings/form.html",
@@ -7184,6 +7255,8 @@ def meeting_edit(meeting_id: int):
         users=users,
         row=row,
         is_edit=True,
+        editing=True,
+        meeting_id=row.id,
         form_action=url_for("portal.meeting_edit", meeting_id=row.id),
     )
 
@@ -14421,6 +14494,7 @@ _DIWAN_OFFICIAL_SYMBOLS = (
     ('W', 'إجازة بدون راتب'),
     ('M', 'إجازة أمومة'),
     ('A', 'حادث عمل'),
+    ('-', 'غياب بدون إذن'),
     ('T', 'إجازة طارئة'),
     ('R', 'مهمة عمل'),
     ('P', 'إيقاف عن العمل'),
@@ -14518,7 +14592,7 @@ def _diwan_official_leave_symbol(leave_type) -> str:
         ('B', ('مرافقة زوج', 'مرافقه زوج', 'ambassador spouse')),
         ('K', ('كورونا', 'covid', 'corona')),
         ('Y', ('ابوة', 'ابوه', 'paternity')),
-        ('L', ('سنوي', 'annual', 'personal')),
+        ('L', ('سنوي', 'سنوية', 'خارجية', 'annual', 'personal', 'overseas', 'external')),
     )
     for symbol, keywords in mappings:
         if any(keyword in compact or keyword in raw for keyword in keywords):
@@ -14608,7 +14682,7 @@ def _diwan_official_month_rows(user_ids, start: date, end: date, summaries, depa
 
     special_by_key: dict[tuple[int, str], str] = {}
     special_symbols = {
-        'PRESENT': '+', 'ABSENT': '', 'MISSION': 'R', 'HOLIDAY': 'v',
+        'PRESENT': '+', 'ABSENT': '-', 'MISSION': 'R', 'HOLIDAY': 'v',
         'OFF': 'F', 'LEAVE': 'L', 'SUSPENDED': 'P',
     }
     special_rows = (
@@ -14702,7 +14776,7 @@ def _diwan_official_month_rows(user_ids, start: date, end: date, summaries, depa
                 symbol = '*'
                 missing_attendance = True
             elif (summary.status or '').upper() == 'ABSENT':
-                symbol = ''
+                symbol = '-'
                 missing_attendance = True
             elif (summary.status or '').upper() == 'INCOMPLETE' or not summary.first_in or not summary.last_out:
                 # The Diwan key reserves x for lateness.  A partial clocking
@@ -14859,6 +14933,7 @@ def _export_diwan_official_attendance_xlsx(
     symbol_fills = {
         '+': PatternFill('solid', fgColor='E2F0D9'),
         '*': PatternFill('solid', fgColor='D9EAD3'),
+        '-': PatternFill('solid', fgColor='F4CCCC'),
         'x': PatternFill('solid', fgColor='FFF2CC'),
         'E': PatternFill('solid', fgColor='FCE4D6'),
         'F': PatternFill('solid', fgColor='E7E6E6'),
@@ -17182,11 +17257,12 @@ def hr_deductions_settings():
     cfg = HRAttendanceDeductionConfig.query.order_by(HRAttendanceDeductionConfig.updated_at.desc()).first()
 
     style_opts = [
-        ('AGGREGATE', 'احتساب يوم خصم عن كل عدد الساعات المحدد من كافة المصادر مجتمعة'),
+        ('AGGREGATE', 'احتساب يوم خصم عن كل عدد الساعات المحدد من كافة المصادر المختارة مجتمعة'),
+        ('LATE_EARLY', 'تجميع التأخير والخروج المبكر معاً، مع إبقاء المغادرات مستقلة'),
         ('PER_CATEGORY', 'احتساب يوم خصم عن كل عدد الساعات المحدد لكل مصدر على حدة'),
     ]
     source_opts = [('LEAVE', 'من الإجازات'), ('SALARY', 'من الراتب')]
-    carry_opts = [('CARRY_TO_NEXT', 'تحويل من الشهر الحالي إلى القادم'), ('WITHIN_MONTH', 'ضمن نفس الشهر فقط')]
+    carry_opts = list(_LEAVE_DEDUCTION_CARRY_POLICY_OPTIONS)
 
     if request.method == 'POST':
         if not _hr_can_manage_deductions():
@@ -17258,12 +17334,16 @@ def hr_deductions_settings():
             v = (request.form.get(name) or '').strip().upper()
             return v if v in allowed else default
 
-        deduction_style = _pick('deduction_style', 'AGGREGATE', {'AGGREGATE', 'PER_CATEGORY'})
+        deduction_style = _pick('deduction_style', 'AGGREGATE', {'AGGREGATE', 'LATE_EARLY', 'PER_CATEGORY'})
         late_source = _pick('late_source', 'SALARY', {'LEAVE', 'SALARY'})
         early_source = _pick('early_source', 'SALARY', {'LEAVE', 'SALARY'})
         special_permission_source = _pick('special_permission_source', 'SALARY', {'LEAVE', 'SALARY'})
         unauthorized_permission_source = _pick('unauthorized_permission_source', 'SALARY', {'LEAVE', 'SALARY'})
-        carry_method = _pick('carry_method', 'CARRY_TO_NEXT', {'CARRY_TO_NEXT', 'WITHIN_MONTH'})
+        carry_method = _leave_deduction_carry_policy_from_form(
+            request.form,
+            _leave_deduction_carry_policy_from_config(cfg),
+            ('default_carry_departures', 'default_carry_late', 'default_carry_early'),
+        )
         deduction_sequence = _pick(
             'deduction_sequence',
             'LEAVE_ONLY',
@@ -17320,9 +17400,10 @@ def hr_deductions_settings():
         cfg.require_approval = True
         cfg.source_selection_json = json.dumps(selected_sources, ensure_ascii=False)
         cfg.automatic_enabled = bool(automatic_requested and has_final_deduction)
-        cfg.default_carry_departures = bool(request.form.get('default_carry_departures'))
-        cfg.default_carry_late = bool(request.form.get('default_carry_late'))
-        cfg.default_carry_early = bool(request.form.get('default_carry_early'))
+        carry_flags = _leave_deduction_carry_flags(carry_method)
+        cfg.default_carry_departures = carry_flags['DEPARTURES']
+        cfg.default_carry_late = carry_flags['LATE']
+        cfg.default_carry_early = carry_flags['EARLY']
         cfg.note = (request.form.get('note') or '').strip() or None
 
         cfg.updated_at = datetime.utcnow()
@@ -17343,6 +17424,7 @@ def hr_deductions_settings():
         style_opts=style_opts,
         source_opts=source_opts,
         carry_opts=carry_opts,
+        selected_carry_policy=_leave_deduction_carry_policy_from_config(cfg),
         deduction_source_opts=[
             ('DEPARTURES', 'المغادرات المعتمدة'),
             ('LATE', 'ساعات التأخير الصباحي'),
@@ -17385,7 +17467,7 @@ def hr_deductions_run():
             early_source='SALARY',
             special_permission_source='SALARY',
             unauthorized_permission_source='SALARY',
-            carry_method='CARRY_TO_NEXT',
+            carry_method='NONE',
             hours_per_day=6.5,
             permission_allowance_hours=0.0,
             annual_leave_type_id=_permission_excess_leave_type_id(),
@@ -17453,6 +17535,9 @@ def hr_deductions_run():
         selected_sources = _leave_deduction_sources(request.form.getlist('source_selection'))
         if not selected_sources:
             selected_sources = _leave_deduction_sources(cfg.source_selection_json) or ['DEPARTURES']
+        schedule_absence_review = (request.form.get('schedule_absence_review') or '').strip().lower() in {
+            '1', 'true', 'yes', 'on'
+        }
         replacement_raw = (request.form.get('replacement_of_run_id') or '').strip()
         replacement_id = int(replacement_raw) if replacement_raw.isdigit() else None
         if replacement_id:
@@ -17497,6 +17582,12 @@ def hr_deductions_run():
                 'warning',
             )
             return redirect(url_for('portal.hr_deductions_view', run_id=existing_overlap.id))
+        carry_policy = _leave_deduction_carry_policy_from_form(
+            request.form,
+            _leave_deduction_carry_policy_from_config(cfg),
+            ('carry_departures', 'carry_late', 'carry_early'),
+        )
+        carry_flags = _leave_deduction_carry_flags(carry_policy)
         run = _create_leave_deduction_draft(
             cfg,
             selected_ids,
@@ -17505,12 +17596,14 @@ def hr_deductions_run():
             actor_id=getattr(current_user, 'id', None),
             note=(request.form.get('note') or '').strip() or None,
             selected_sources=selected_sources,
-            carry_departures=bool(request.form.get('carry_departures')),
-            carry_late=bool(request.form.get('carry_late')),
-            carry_early=bool(request.form.get('carry_early')),
+            carry_policy=carry_policy,
+            carry_departures=carry_flags['DEPARTURES'],
+            carry_late=carry_flags['LATE'],
+            carry_early=carry_flags['EARLY'],
             execution_mode='ADJUSTMENT' if replacement_id else 'MANUAL',
             replacement_of_run_id=replacement_id,
             deduction_leave_type_id=requested_leave_type_id,
+            schedule_absence_review=schedule_absence_review,
         )
         db.session.commit()
 
@@ -17544,6 +17637,8 @@ def hr_deductions_run():
         matching_users_count=matching_users_count,
         can_manage=_hr_can_manage_deductions(),
         selected_sources=_leave_deduction_sources(cfg.source_selection_json) or ['DEPARTURES'],
+        carry_opts=list(_LEAVE_DEDUCTION_CARRY_POLICY_OPTIONS),
+        selected_carry_policy=_leave_deduction_carry_policy_from_config(cfg),
         selected_source_labels={
             'DEPARTURES': 'المغادرات', 'LATE': 'التأخير', 'EARLY': 'الخروج المبكر',
         },
@@ -17552,6 +17647,7 @@ def hr_deductions_run():
             ('LATE', 'التأخير الصباحي'),
             ('EARLY', 'الخروج المبكر'),
         ],
+        schedule_absence_review=False,
         replacement_of_run_id=(request.args.get('replacement_of_run_id') or '').strip(),
         leave_types=available_leave_types,
         selected_leave_type_id=selected_leave_type_id,
@@ -17563,11 +17659,25 @@ def hr_deductions_run():
 @_perm(HR_ATTENDANCE_DEDUCTIONS_MANAGE)
 def hr_deductions_view(run_id: int):
     run = HRAttendanceDeductionRun.query.get_or_404(run_id)
+    try:
+        run_policy_snapshot = json.loads(run.config_snapshot_json or '{}')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        run_policy_snapshot = {}
+    current_policy_config = (
+        HRAttendanceDeductionConfig.query
+        .order_by(HRAttendanceDeductionConfig.updated_at.desc())
+        .first()
+    )
+    policy_comparison = _leave_deduction_policy_comparison(
+        run_policy_snapshot,
+        current_policy_config,
+    )
     exempt_user_ids = _attendance_exempt_user_ids()
     visible_items = [
         item for item in run.items
         if int(item.user_id) not in exempt_user_ids
     ]
+    can_approve = _hr_can_manage_deductions()
 
     # A final run is never recalculated in the background.  Source verification
     # is deliberately explicit because recalculating a large run on every
@@ -17595,14 +17705,51 @@ def hr_deductions_view(run_id: int):
                 selected_sources,
                 (snapshot.get('deduction_style') or 'AGGREGATE').upper(),
                 bool(run.carry_departures), bool(run.carry_late), bool(run.carry_early),
+                schedule_absence_review=bool(snapshot.get('schedule_absence_review', False)),
+                selected_schedule_absence_days=previous.get('selected_schedule_absence_days') or [],
             )
-            if (previous.get('days') or []) != (fresh['details'].get('days') or []) or (previous.get('departures') or []) != (fresh['details'].get('departures') or []) or (previous.get('source_summary') or {}) != (fresh['details'].get('source_summary') or {}):
+            if _deduction_source_signature(previous) != _deduction_source_signature(fresh['details']):
                 changed = True
                 break
         if changed and not run.needs_review:
             run.needs_review = True
             run.review_reason = 'تغيرت بيانات الحضور أو المغادرات المعتمدة بعد اعتماد العملية؛ يلزم عكسها وإنشاء تصحيح يدوي.'
             db.session.commit()
+
+    # Drafts are safe to refresh because they have not changed any balance.
+    # Older drafts may contain attendance details calculated before the grace
+    # period became a threshold. Finalized runs remain immutable and use the
+    # explicit source-verification action above.
+    if (run.status or '').upper() == 'DRAFT' and can_approve and visible_items:
+        stale_items = []
+        for item in visible_items:
+            if _is_attendance_exempt_user(item.user_id):
+                continue
+            try:
+                item_details = json.loads(item.details_json or '{}')
+            except (TypeError, ValueError, json.JSONDecodeError):
+                item_details = {}
+            if _deduction_details_need_attendance_refresh(item_details):
+                stale_items.append(item)
+
+        if stale_items:
+            try:
+                for item in stale_items:
+                    _refresh_deduction_draft_item(run, item, run_policy_snapshot)
+                _refresh_deduction_run_totals(run)
+                _portal_audit(
+                    'HR_DEDUCTION_DRAFT_AUTO_REFRESH',
+                    f'تحديث تلقائي لمسودة خصومات {run.year}-{run.month:02d} بعد تغيير قاعدة احتساب الحضور',
+                    target_type='HR_ATT_DEDUCTION_RUN',
+                    target_id=run.id,
+                )
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception(
+                    'Failed to refresh stale attendance details for deduction draft %s',
+                    run.id,
+                )
 
     export = (request.args.get('export') or '').strip().lower()
     if export in ('1', 'csv'):
@@ -17641,13 +17788,17 @@ def hr_deductions_view(run_id: int):
             download_name=f"deductions_{run.year:04d}_{run.month:02d}.csv",
         )
 
-    can_approve = _hr_can_manage_deductions()
     details_by_item = {}
+    full_day_minutes_by_item = {}
     for item in visible_items:
         try:
             details_by_item[item.id] = json.loads(item.details_json or '{}')
         except (TypeError, ValueError, json.JSONDecodeError):
             details_by_item[item.id] = {}
+        full_day_minutes_by_item[item.id] = _deduction_full_day_minutes(
+            item,
+            details_by_item[item.id],
+        )
     live_departures_by_user = {}
     pending_approval_by_user = {}
     if (run.status or '').upper() == 'DRAFT' and visible_items:
@@ -17675,6 +17826,8 @@ def hr_deductions_view(run_id: int):
         details_by_item=details_by_item,
         live_departures_by_user=live_departures_by_user,
         pending_approval_by_user=pending_approval_by_user,
+        policy_comparison=policy_comparison,
+        full_day_minutes_by_item=full_day_minutes_by_item,
     )
 
 
@@ -17682,7 +17835,7 @@ def hr_deductions_view(run_id: int):
 @login_required
 @_perm(HR_ATTENDANCE_DEDUCTIONS_MANAGE)
 def hr_deduction_refresh(run_id: int):
-    """Explicitly refresh a draft from the current approved source data."""
+    """Explicitly refresh a draft from approved sources and, when requested, policy."""
     run = HRAttendanceDeductionRun.query.get_or_404(run_id)
     if (run.status or '').upper() != 'DRAFT':
         flash('يمكن تحديث المعاينة قبل الاعتماد فقط.', 'warning')
@@ -17693,7 +17846,37 @@ def hr_deduction_refresh(run_id: int):
     except (TypeError, ValueError, json.JSONDecodeError):
         snapshot = {}
 
-    changed = False
+    sync_policy = (request.form.get('sync_policy') or '').strip().lower() in {
+        '1', 'true', 'yes', 'on'
+    }
+    policy_updated = False
+    if sync_policy:
+        preserve_schedule_absence_review = bool(snapshot.get('schedule_absence_review'))
+        current_cfg = (
+            HRAttendanceDeductionConfig.query
+            .order_by(HRAttendanceDeductionConfig.updated_at.desc())
+            .first()
+        )
+        if not current_cfg:
+            flash('لا توجد سياسة خصم محفوظة لإعادة تطبيقها على هذه المسودة.', 'warning')
+            return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
+        snapshot = _leave_deduction_policy_snapshot_from_config(
+            current_cfg,
+            run.year,
+            run.month,
+            execution_mode=run.execution_mode or 'MANUAL',
+        )
+        snapshot['schedule_absence_review'] = preserve_schedule_absence_review
+        run.config_snapshot_json = json.dumps(snapshot, ensure_ascii=False)
+        carry_flags = _leave_deduction_carry_flags(snapshot.get('carry_policy'))
+        run.carry_departures = carry_flags['DEPARTURES']
+        run.carry_late = carry_flags['LATE']
+        run.carry_early = carry_flags['EARLY']
+        for item in run.items:
+            item.deduction_leave_type_id = snapshot.get('annual_leave_type_id')
+        policy_updated = True
+
+    changed = policy_updated
     for item in run.items:
         if _is_attendance_exempt_user(item.user_id):
             continue
@@ -17701,20 +17884,34 @@ def hr_deduction_refresh(run_id: int):
 
     _refresh_deduction_run_totals(run)
     _portal_audit(
-        'HR_DEDUCTION_DRAFT_REFRESH',
-        f'تحديث معاينة خصومات {run.year}-{run.month:02d} من بيانات المصادر الحالية',
+        'HR_DEDUCTION_DRAFT_REFRESH_POLICY' if policy_updated else 'HR_DEDUCTION_DRAFT_REFRESH',
+        (
+            f'تحديث معاينة خصومات {run.year}-{run.month:02d} مع إعادة تطبيق السياسة الحالية'
+            if policy_updated
+            else f'تحديث معاينة خصومات {run.year}-{run.month:02d} من بيانات المصادر الحالية'
+        ),
         target_type='HR_ATT_DEDUCTION_RUN',
         target_id=run.id,
     )
     db.session.commit()
     if changed:
-        flash('تم تحديث المعاينة من بيانات الدوام والمغادرات المعتمدة. لم يتغير الرصيد قبل الاعتماد.', 'success')
+        if policy_updated:
+            flash('تمت إعادة تطبيق السياسة الحالية وتحديث المعاينة. لم يتغير الرصيد قبل الاعتماد.', 'success')
+        else:
+            flash('تم تحديث المعاينة من بيانات الدوام والمغادرات المعتمدة. لم يتغير الرصيد قبل الاعتماد.', 'success')
     else:
         flash('تم تحديث المعاينة؛ لم يظهر اختلاف في بيانات المصادر.', 'info')
     return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
 
 
 def _refresh_deduction_run_totals(run: HRAttendanceDeductionRun) -> None:
+    def _selected_schedule_absence_count(item) -> int:
+        try:
+            details = json.loads(item.details_json or '{}')
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return 0
+        return len(details.get('selected_schedule_absence_days') or [])
+
     payload = {
         'employees_count': len(run.items),
         'total_leave_deduction_days': round(sum(float(x.leave_deduction_days or 0) for x in run.items), 4),
@@ -17725,6 +17922,7 @@ def _refresh_deduction_run_totals(run: HRAttendanceDeductionRun) -> None:
                 'chargeable_minutes': int(x.chargeable_minutes or 0),
                 'leave_deduction_days': float(x.leave_deduction_days or 0),
                 'salary_deduction_days': float(x.salary_deduction_days or 0),
+                'schedule_absence_deduction_days': _selected_schedule_absence_count(x),
             }
             for x in run.items
         ],
@@ -17760,11 +17958,23 @@ def _deduction_source_signature(details: dict) -> dict:
     """Return only source data used to detect a stale deduction draft."""
     details = details or {}
     return {
+        'attendance_calculation_version': details.get('attendance_calculation_version', 0),
         'days': details.get('days') or [],
         'departures': details.get('departures') or [],
         'summary': details.get('summary') or {},
         'source_summary': details.get('source_summary') or {},
+        'schedule_absences': details.get('schedule_absences') or [],
+        'selected_schedule_absence_days': details.get('selected_schedule_absence_days') or [],
     }
+
+
+def _deduction_details_need_attendance_refresh(details: dict | None) -> bool:
+    """Return whether a draft was calculated before the current attendance formula."""
+    try:
+        version = int((details or {}).get('attendance_calculation_version') or 0)
+    except (TypeError, ValueError):
+        version = 0
+    return version < _ATTENDANCE_DEDUCTION_CALCULATION_VERSION
 
 
 def _refresh_deduction_draft_item(
@@ -17774,10 +17984,9 @@ def _refresh_deduction_draft_item(
 ) -> bool:
     """Refresh one draft item from current approved/corrected source data.
 
-    This is intentionally called only by an explicit HR action.  Opening a
-    draft must remain read-only so a large run does not repeat attendance
-    queries on every page view.  Existing manual overrides are retained and
-    re-applied after the source details are refreshed.
+    Draft refreshes are limited to safe, unfinalized runs.  Existing manual
+    overrides are retained and re-applied after the source details are
+    refreshed.
     """
     try:
         previous_details = json.loads(item.details_json or '{}')
@@ -17877,6 +18086,8 @@ def _refresh_deduction_draft_item(
         bool(run.carry_departures),
         bool(run.carry_late),
         bool(run.carry_early),
+        schedule_absence_review=bool(snapshot.get('schedule_absence_review', False)),
+        selected_schedule_absence_days=previous_details.get('selected_schedule_absence_days') or [],
     )
     fresh_details = fresh['details']
     fresh_source = _deduction_source_signature(fresh_details)
@@ -17938,6 +18149,60 @@ def _refresh_deduction_draft_item(
         fresh_details['manual_override'] = manual_override
     item.details_json = json.dumps(fresh_details, ensure_ascii=False)
     return source_changed
+
+
+@portal_bp.route('/hr/deductions/<int:run_id>/items/<int:item_id>/schedule-absence', methods=['POST'])
+@login_required
+@_perm(HR_ATTENDANCE_DEDUCTIONS_MANAGE)
+def hr_deduction_schedule_absence_update(run_id: int, item_id: int):
+    """Save HR's explicit date selection for scheduled missing attendance."""
+    run = HRAttendanceDeductionRun.query.get_or_404(run_id)
+    item = HRAttendanceDeductionItem.query.filter_by(id=item_id, run_id=run.id).first_or_404()
+    if (run.status or '').upper() != 'DRAFT':
+        flash('لا يمكن تعديل أيام الدوام بعد اعتماد العملية.', 'warning')
+        return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
+    if _is_attendance_exempt_user(item.user_id):
+        flash('هذا المستخدم مستثنى من احتسابات الدوام.', 'warning')
+        return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
+
+    try:
+        snapshot = json.loads(run.config_snapshot_json or '{}')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        snapshot = {}
+    if not bool(snapshot.get('schedule_absence_review')):
+        flash('لم تُفعّل مراجعة أيام الدوام غير المحضورة لهذه المسودة.', 'info')
+        return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
+
+    try:
+        details = json.loads(item.details_json or '{}')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        details = {}
+    candidate_days = {
+        str(candidate.get('day'))
+        for candidate in (details.get('schedule_absences') or [])
+        if candidate.get('day')
+    }
+    selected_days = sorted({
+        str(value).strip()
+        for value in request.form.getlist('selected_schedule_absence_days')
+        if str(value).strip() in candidate_days
+    })
+    details['selected_schedule_absence_days'] = selected_days
+    item.details_json = json.dumps(details, ensure_ascii=False)
+    _refresh_deduction_draft_item(run, item, snapshot)
+    _refresh_deduction_run_totals(run)
+    _portal_audit(
+        'HR_DEDUCTION_SCHEDULE_ABSENCE_SELECTION',
+        f'اختيار أيام دوام غير محضورة للموظف #{item.user_id}: {", ".join(selected_days) or "لا يوجد"}',
+        target_type='HR_ATT_DEDUCTION_RUN',
+        target_id=run.id,
+    )
+    db.session.commit()
+    if selected_days:
+        flash(f'تم حفظ اختيار {len(selected_days)} يوم/أيام كخصم مقترح. لا يتأثر الرصيد قبل اعتماد العملية.', 'success')
+    else:
+        flash('تم إلغاء اختيار أيام الدوام غير المحضورة لهذا الموظف. لا يتأثر الرصيد قبل اعتماد العملية.', 'success')
+    return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
 
 
 @portal_bp.route('/hr/deductions/<int:run_id>/items/<int:item_id>/adjust', methods=['POST'])
@@ -18038,6 +18303,26 @@ def hr_deduction_approve(run_id: int):
     run = HRAttendanceDeductionRun.query.get_or_404(run_id)
     if (run.status or '').upper() != 'DRAFT':
         flash('عملية الخصم معتمدة مسبقاً.', 'info')
+        return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
+
+    try:
+        saved_policy_snapshot = json.loads(run.config_snapshot_json or '{}')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        saved_policy_snapshot = {}
+    current_policy_config = (
+        HRAttendanceDeductionConfig.query
+        .order_by(HRAttendanceDeductionConfig.updated_at.desc())
+        .first()
+    )
+    if _leave_deduction_policy_comparison(
+        saved_policy_snapshot,
+        current_policy_config,
+    ).get('mismatch'):
+        flash(
+            'لا يمكن اعتماد المسودة لأن السياسة المحفوظة معها تختلف عن السياسة الحالية. '
+            'استخدم «إعادة تطبيق السياسة الحالية» ثم راجع النتائج قبل الاعتماد.',
+            'warning',
+        )
         return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
 
     exempt_items = [
@@ -18167,6 +18452,8 @@ def hr_deduction_approve(run_id: int):
             'departures': previous_details.get('departures') or [],
             'summary': previous_details.get('summary') or {},
             'source_summary': previous_details.get('source_summary') or {},
+            'schedule_absences': previous_details.get('schedule_absences') or [],
+            'selected_schedule_absence_days': previous_details.get('selected_schedule_absence_days') or [],
         }
         if legacy_policy:
             legacy_minutes_per_day = max(1, int(round(float(snapshot.get('hours_per_day') or 7.0) * 60)))
@@ -18186,6 +18473,8 @@ def hr_deduction_approve(run_id: int):
                 'departures': fresh_details.get('departures') or [],
                 'summary': fresh_details.get('summary') or {},
                 'source_summary': previous_details.get('source_summary') or {},
+                'schedule_absences': fresh_details.get('schedule_absences') or [],
+                'selected_schedule_absence_days': fresh_details.get('selected_schedule_absence_days') or [],
             }
             if previous_source != fresh_source or allowance_minutes != int(item.permission_allowance_minutes or 0):
                 source_data_changed = True
@@ -18239,6 +18528,8 @@ def hr_deduction_approve(run_id: int):
             bool(run.carry_departures),
             bool(run.carry_late),
             bool(run.carry_early),
+            schedule_absence_review=bool(snapshot.get('schedule_absence_review', False)),
+            selected_schedule_absence_days=previous_details.get('selected_schedule_absence_days') or [],
         )
         fresh_details = fresh['details']
         fresh_source = {
@@ -18246,6 +18537,8 @@ def hr_deduction_approve(run_id: int):
             'departures': fresh_details.get('departures') or [],
             'summary': fresh_details.get('summary') or {},
             'source_summary': fresh_details.get('source_summary') or {},
+            'schedule_absences': fresh_details.get('schedule_absences') or [],
+            'selected_schedule_absence_days': fresh_details.get('selected_schedule_absence_days') or [],
         }
         if previous_source != fresh_source:
             source_data_changed = True
@@ -18484,9 +18777,13 @@ def _attendance_deduction_report_rows(year: int | None = None, month: int | None
             except (TypeError, ValueError, json.JSONDecodeError):
                 details = {}
             source_summary = details.get('source_summary') or {}
-            remainder_minutes = sum(
-                int((source_summary.get(code) or {}).get('remainder_minutes') or 0)
-                for code in _LEAVE_DEDUCTION_SOURCE_ORDER
+            policy_display = _leave_deduction_policy_display(snapshot)
+            remainder_minutes = int(
+                getattr(item, 'remainder_minutes', 0)
+                or sum(
+                    int((source_summary.get(code) or {}).get('carry_out_minutes') or 0)
+                    for code in _LEAVE_DEDUCTION_SOURCE_ORDER
+                )
             )
             carry_minutes = {
                 code: int((source_summary.get(code) or {}).get('carry_out_minutes') or 0)
@@ -18494,6 +18791,16 @@ def _attendance_deduction_report_rows(year: int | None = None, month: int | None
             }
             actor = run.approved_by or run.created_by or run.reversed_by
             leave_type = item.deduction_leave_type
+            threshold_hours = float(
+                details.get('hours_per_day') or snapshot.get('hours_per_day') or 6.5
+            )
+            full_day_minutes = _deduction_full_day_minutes(item, details)
+            threshold_minutes = max(1, int(round(threshold_hours * 60)))
+            deducted_days = (
+                full_day_minutes / threshold_minutes
+                if policy_display['legacy']
+                else float(item.leave_deduction_days or 0)
+            )
             rows.append({
                 'run': run,
                 'item': item,
@@ -18508,9 +18815,9 @@ def _attendance_deduction_report_rows(year: int | None = None, month: int | None
                 'late_hours': round((int(item.late_minutes or 0) / 60), 2),
                 'early_minutes': int(item.early_leave_minutes or 0),
                 'early_hours': round((int(item.early_leave_minutes or 0) / 60), 2),
-                'deducted_days': float(item.leave_deduction_days or 0),
-                'threshold_hours': float(details.get('hours_per_day') or snapshot.get('hours_per_day') or 6.5),
-                'chargeable_hours': round((int(item.chargeable_minutes or 0) / 60), 2),
+                'deducted_days': deducted_days,
+                'threshold_hours': threshold_hours,
+                'chargeable_hours': round((full_day_minutes / 60), 2),
                 'excess_minutes': remainder_minutes,
                 'excess_hours': round(remainder_minutes / 60, 2),
                 'carry_departures': carry_minutes['DEPARTURES'],
@@ -18518,7 +18825,14 @@ def _attendance_deduction_report_rows(year: int | None = None, month: int | None
                 'carry_early': carry_minutes['EARLY'],
                 'carry_any': any(carry_minutes.values()),
                 'carry_label': 'نعم' if any(carry_minutes.values()) else 'لا',
-                'selected_sources': '، '.join(_LEAVE_DEDUCTION_SOURCE_LABELS[code] for code in (details.get('selected_sources') or snapshot.get('selected_sources') or [])),
+                'selected_sources': (
+                    policy_display['sources_label']
+                    if policy_display['legacy']
+                    else '، '.join(
+                        _LEAVE_DEDUCTION_SOURCE_LABELS[code]
+                        for code in (details.get('selected_sources') or snapshot.get('selected_sources') or [])
+                    )
+                ),
                 'status_label': f"{run.status} / {run.operation_type or 'NORMAL'}",
                 'actor': getattr(actor, 'full_name', None) or getattr(actor, 'name', None) or getattr(actor, 'email', None) or ('تشغيل تلقائي' if run.execution_mode == 'AUTO' else ''),
             })
@@ -22212,13 +22526,21 @@ def _my_attendance_month_rows(
             if day_obj == reference_day and not current_day_has_evidence:
                 continue
 
-            row = _my_attendance_display_row(stored_row)
-            if not stored_row:
-                row.user_id = user_id
-                row.day = day_str
-
-            if (has_event or has_manual) and not (row.first_in or row.last_out):
-                row = _my_attendance_display_row(values=_summary_compute_one(user_id, day_str))
+            # AttendanceDailySummary is a cache.  When raw clock evidence (or
+            # an approved manual correction) exists, rebuild the row from the
+            # current attendance rules instead of trusting a value calculated
+            # by an older rule set.  This is especially important after a
+            # grace-period policy change: the stored row may still contain the
+            # old "early minus grace" value.
+            if has_event or has_manual:
+                row = _my_attendance_display_row(
+                    values=_summary_compute_one(user_id, day_str)
+                )
+            else:
+                row = _my_attendance_display_row(stored_row)
+                if not stored_row:
+                    row.user_id = user_id
+                    row.day = day_str
 
             if classification in {"WEEKLY_OFF", "OFFICIAL_HOLIDAY", "SCHEDULED_OFF"}:
                 row.status = classification
@@ -22818,6 +23140,7 @@ def _monthly_attendance_deduction_breakdown(
             "remainder_minutes": 0,
             "details": {
                 "version": 1,
+                "attendance_calculation_version": _ATTENDANCE_DEDUCTION_CALCULATION_VERSION,
                 "period": f"{year:04d}-{month:02d}",
                 "minutes_per_day": minutes_per_day,
                 "formula": "الموظف مستثنى من احتساب الدوام والإجازات",
@@ -22952,6 +23275,7 @@ def _monthly_attendance_deduction_breakdown(
         "remainder_minutes": chargeable_minutes % max(1, minutes_per_day),
         "details": {
             "version": 1,
+            "attendance_calculation_version": _ATTENDANCE_DEDUCTION_CALCULATION_VERSION,
             "period": f"{year:04d}-{month:02d}",
             "minutes_per_day": minutes_per_day,
             "formula": "التأخير + الخروج المبكر + المغادرات الخاصة بعد السماح + الغياب",
@@ -22978,11 +23302,101 @@ def _monthly_attendance_deduction_breakdown(
 
 
 _LEAVE_DEDUCTION_SOURCE_ORDER = ("DEPARTURES", "LATE", "EARLY")
+# Bump this whenever the attendance component formula changes. Drafts keep
+# their source details as an audit snapshot, so the version lets us refresh
+# old draft rows once without rewriting finalized operations.
+_ATTENDANCE_DEDUCTION_CALCULATION_VERSION = 2
 _LEAVE_DEDUCTION_SOURCE_LABELS = {
     "DEPARTURES": "المغادرات المعتمدة",
     "LATE": "التأخير الصباحي",
     "EARLY": "الخروج المبكر",
 }
+_LEAVE_DEDUCTION_STYLES = {"AGGREGATE", "LATE_EARLY", "PER_CATEGORY"}
+_LEAVE_DEDUCTION_CARRY_POLICIES = {
+    "DEPARTURES_ONLY": {"DEPARTURES": True, "LATE": False, "EARLY": False},
+    "LATE_EARLY_ONLY": {"DEPARTURES": False, "LATE": True, "EARLY": True},
+    "ALL": {"DEPARTURES": True, "LATE": True, "EARLY": True},
+    "NONE": {"DEPARTURES": False, "LATE": False, "EARLY": False},
+}
+_LEAVE_DEDUCTION_CARRY_POLICY_OPTIONS = (
+    ("DEPARTURES_ONLY", "ترحيل المغادرات فقط"),
+    ("LATE_EARLY_ONLY", "ترحيل التأخير والخروج المبكر فقط"),
+    ("ALL", "ترحيل جميع المصادر"),
+    ("NONE", "عدم الترحيل"),
+)
+
+
+def _leave_deduction_style(value) -> str:
+    """Normalize the grouping mode saved in a policy snapshot."""
+    style = str(value or "AGGREGATE").strip().upper()
+    return style if style in _LEAVE_DEDUCTION_STYLES else "AGGREGATE"
+
+
+def _leave_deduction_carry_policy(
+    value=None,
+    *,
+    carry_departures: bool = False,
+    carry_late: bool = False,
+    carry_early: bool = False,
+) -> str:
+    """Normalize the source buckets that receive a grouped remainder.
+
+    ``CARRY_TO_NEXT`` and ``WITHIN_MONTH`` were the values used by the old
+    screen. They are treated as legacy values and fall back to the old
+    per-source flags, so existing configurations are not lost.
+    """
+    policy = str(value or "").strip().upper()
+    if policy in _LEAVE_DEDUCTION_CARRY_POLICIES:
+        return policy
+    flags = {
+        "DEPARTURES": bool(carry_departures),
+        "LATE": bool(carry_late),
+        "EARLY": bool(carry_early),
+    }
+    if flags == _LEAVE_DEDUCTION_CARRY_POLICIES["ALL"]:
+        return "ALL"
+    if flags == _LEAVE_DEDUCTION_CARRY_POLICIES["LATE_EARLY_ONLY"]:
+        return "LATE_EARLY_ONLY"
+    if flags == _LEAVE_DEDUCTION_CARRY_POLICIES["DEPARTURES_ONLY"]:
+        return "DEPARTURES_ONLY"
+    if not any(flags.values()):
+        return "NONE"
+    # Legacy combinations such as late-only are folded into the supported
+    # lateness/early-departure bucket.
+    return "ALL" if flags["DEPARTURES"] else "LATE_EARLY_ONLY"
+
+
+def _leave_deduction_carry_flags(policy=None, **legacy_flags) -> dict[str, bool]:
+    """Return the three source flags represented by a carry policy."""
+    normalized = _leave_deduction_carry_policy(policy, **legacy_flags)
+    return dict(_LEAVE_DEDUCTION_CARRY_POLICIES[normalized])
+
+
+def _leave_deduction_carry_policy_from_config(cfg) -> str:
+    return _leave_deduction_carry_policy(
+        getattr(cfg, "carry_method", None) if cfg else None,
+        carry_departures=getattr(cfg, "default_carry_departures", False) if cfg else False,
+        carry_late=getattr(cfg, "default_carry_late", False) if cfg else False,
+        carry_early=getattr(cfg, "default_carry_early", False) if cfg else False,
+    )
+
+
+def _leave_deduction_carry_policy_from_form(
+    form,
+    fallback: str,
+    legacy_names: tuple[str, str, str],
+) -> str:
+    """Read the new select and support forms from the old checkbox UI."""
+    posted = str(form.get("carry_method") or "").strip().upper()
+    if posted in _LEAVE_DEDUCTION_CARRY_POLICIES:
+        return posted
+    if any(name in form for name in legacy_names):
+        return _leave_deduction_carry_policy(
+            carry_departures=bool(form.get(legacy_names[0])),
+            carry_late=bool(form.get(legacy_names[1])),
+            carry_early=bool(form.get(legacy_names[2])),
+        )
+    return _leave_deduction_carry_policy(fallback)
 
 
 def _leave_deduction_sources(value) -> list[str]:
@@ -23000,6 +23414,275 @@ def _leave_deduction_sources(value) -> list[str]:
         if code in _LEAVE_DEDUCTION_SOURCE_ORDER and code not in selected:
             selected.append(code)
     return [code for code in _LEAVE_DEDUCTION_SOURCE_ORDER if code in selected]
+
+
+def _leave_deduction_policy_snapshot_from_config(
+    cfg: HRAttendanceDeductionConfig | None,
+    year: int | None = None,
+    month: int | None = None,
+    *,
+    selected_sources: list[str] | None = None,
+    carry_policy: str | None = None,
+    execution_mode: str = "MANUAL",
+    deduction_leave_type_id: int | None = None,
+) -> dict:
+    """Build the immutable policy snapshot used by a deduction draft.
+
+    Keeping this in one place is important: the settings page, a refreshed
+    draft, and a newly-created draft must describe the same policy.  Older
+    drafts intentionally keep their historical snapshot until an HR user
+    explicitly asks to apply the current policy.
+    """
+    if cfg is None:
+        return {
+            "policy_version": 2,
+            "deduction_style": "AGGREGATE",
+            "hours_per_day": 6.5,
+            "selected_sources": ["DEPARTURES"],
+            "annual_leave_type_id": None,
+            "enabled_leave_type_ids": [],
+            "deduction_sequence": "LEAVE_ONLY",
+            "carry_departures": False,
+            "carry_late": False,
+            "carry_early": False,
+            "carry_policy": "NONE",
+            "permission_allowance_hours": 0.0,
+            "execution_mode": execution_mode,
+            "gregorian_period": f"{year:04d}-{month:02d}" if year and month else None,
+            "exclusion_policy_version": 1,
+        }
+
+    enabled_leave_type_ids = _leave_deduction_leave_type_ids(cfg)
+    selection_was_saved = getattr(cfg, "leave_type_selection_json", None) is not None
+    requested_leave_type_id = (
+        _leave_balance_owner_id(deduction_leave_type_id)
+        if deduction_leave_type_id
+        else _leave_balance_owner_id(getattr(cfg, "annual_leave_type_id", None))
+    )
+    if enabled_leave_type_ids:
+        annual_leave_type_id = requested_leave_type_id
+        if annual_leave_type_id not in enabled_leave_type_ids:
+            annual_leave_type_id = enabled_leave_type_ids[0]
+    elif selection_was_saved:
+        annual_leave_type_id = None
+    else:
+        annual_leave_type_id = requested_leave_type_id or _permission_excess_leave_type_id()
+
+    selected = _leave_deduction_sources(
+        selected_sources
+        if selected_sources is not None
+        else getattr(cfg, "source_selection_json", None)
+    ) or ["DEPARTURES"]
+    configured_carry_policy = _leave_deduction_carry_policy_from_config(cfg)
+    normalized_carry_policy = _leave_deduction_carry_policy(
+        carry_policy or configured_carry_policy,
+        carry_departures=bool(getattr(cfg, "default_carry_departures", False)),
+        carry_late=bool(getattr(cfg, "default_carry_late", False)),
+        carry_early=bool(getattr(cfg, "default_carry_early", False)),
+    )
+    carry_flags = _leave_deduction_carry_flags(normalized_carry_policy)
+    try:
+        hours_per_day = float(getattr(cfg, "hours_per_day", 6.5) or 6.5)
+    except (TypeError, ValueError):
+        hours_per_day = 6.5
+    if hours_per_day <= 0:
+        hours_per_day = 6.5
+    try:
+        permission_allowance_hours = float(
+            getattr(cfg, "permission_allowance_hours", 0.0) or 0.0
+        )
+    except (TypeError, ValueError):
+        permission_allowance_hours = 0.0
+    if permission_allowance_hours < 0:
+        permission_allowance_hours = 0.0
+
+    return {
+        "policy_version": 2,
+        "deduction_style": _leave_deduction_style(
+            getattr(cfg, "deduction_style", None)
+        ),
+        "hours_per_day": hours_per_day,
+        "selected_sources": selected,
+        "annual_leave_type_id": annual_leave_type_id,
+        "enabled_leave_type_ids": enabled_leave_type_ids,
+        "deduction_sequence": str(
+            getattr(cfg, "deduction_sequence", None) or "LEAVE_ONLY"
+        ).upper(),
+        "carry_departures": carry_flags["DEPARTURES"],
+        "carry_late": carry_flags["LATE"],
+        "carry_early": carry_flags["EARLY"],
+        "carry_policy": normalized_carry_policy,
+        # This value belongs to the legacy allowance model.  It is retained
+        # in the snapshot for audit clarity; policy version 2 does not apply
+        # it unless the selected legacy policy is used.
+        "permission_allowance_hours": permission_allowance_hours,
+        "execution_mode": execution_mode,
+        "gregorian_period": f"{year:04d}-{month:02d}" if year and month else None,
+        "exclusion_policy_version": 1,
+    }
+
+
+def _leave_deduction_policy_display(snapshot: dict | None) -> dict:
+    """Return stable, human-readable policy values for the review screen."""
+    snapshot = snapshot or {}
+    legacy = not snapshot.get("selected_sources") and not snapshot.get("policy_version")
+    try:
+        hours_per_day = float(snapshot.get("hours_per_day") or (7.0 if legacy else 6.5))
+    except (TypeError, ValueError):
+        hours_per_day = 7.0 if legacy else 6.5
+    if hours_per_day <= 0:
+        hours_per_day = 7.0 if legacy else 6.5
+
+    style = _leave_deduction_style(snapshot.get("deduction_style"))
+    style_labels = {
+        "AGGREGATE": "تجميع كل المصادر المختارة",
+        "LATE_EARLY": "تجميع التأخير والخروج المبكر معاً والمغادرات مستقلة",
+        "PER_CATEGORY": "احتساب كل مصدر على حدة",
+    }
+    source_labels = {
+        "DEPARTURES": "المغادرات المعتمدة",
+        "LATE": "التأخير الصباحي",
+        "EARLY": "الخروج المبكر",
+    }
+    if legacy:
+        selected_sources = []
+        sources_label = "الصيغة القديمة: التأخير + الخروج المبكر + المغادرات بعد السماح + الغياب"
+        carry_policy = str(
+            snapshot.get("carry_method") or snapshot.get("carry_policy") or "NONE"
+        ).upper()
+    else:
+        selected_sources = _leave_deduction_sources(snapshot.get("selected_sources")) or [
+            "DEPARTURES"
+        ]
+        sources_label = "، ".join(source_labels[code] for code in selected_sources)
+        carry_policy = _leave_deduction_carry_policy(
+            snapshot.get("carry_policy") or snapshot.get("carry_method"),
+            carry_departures=bool(snapshot.get("carry_departures")),
+            carry_late=bool(snapshot.get("carry_late")),
+            carry_early=bool(snapshot.get("carry_early")),
+        )
+    carry_labels = {
+        "DEPARTURES_ONLY": "ترحيل المغادرات فقط",
+        "LATE_EARLY_ONLY": "ترحيل التأخير والخروج المبكر فقط",
+        "ALL": "ترحيل جميع المصادر",
+        "NONE": "عدم الترحيل",
+        "CARRY_TO_NEXT": "الترحيل إلى الدورة التالية (قديم)",
+        "WITHIN_MONTH": "ضمن نفس الشهر فقط (قديم)",
+    }
+    sequence = str(
+        snapshot.get("deduction_sequence") or ("LEAVE_THEN_SALARY" if legacy else "LEAVE_ONLY")
+    ).upper()
+    sequence_labels = {
+        "LEAVE_ONLY": "من نوع الإجازة المحدد فقط",
+        "LEAVE_THEN_SALARY": "من الإجازة أولاً ثم الراتب",
+        "SALARY_ONLY": "من الراتب مباشرة",
+    }
+    try:
+        allowance_hours = float(snapshot.get("permission_allowance_hours") or 0.0)
+    except (TypeError, ValueError):
+        allowance_hours = 0.0
+    summary = (
+        f"{hours_per_day:.2f} ساعة/يوم · {style_labels.get(style, style)} · "
+        f"المصادر: {sources_label} · {sequence_labels.get(sequence, sequence)} · "
+        f"{carry_labels.get(carry_policy, carry_policy)}"
+    )
+    if allowance_hours:
+        summary += (
+            f" · سماح المغادرات القديم: {allowance_hours:.2f} ساعة"
+            if legacy
+            else f" · السماح القديم {allowance_hours:.2f} ساعة (لا يطبق على هذه السياسة)"
+        )
+    if legacy:
+        summary = f"{summary} · سياسة قديمة"
+    return {
+        "legacy": legacy,
+        "hours_per_day": round(hours_per_day, 4),
+        "style": style,
+        "style_label": style_labels.get(style, style),
+        "selected_sources": selected_sources,
+        "sources_label": sources_label,
+        "deduction_sequence": sequence,
+        "deduction_sequence_label": sequence_labels.get(sequence, sequence),
+        "carry_policy": carry_policy,
+        "carry_policy_label": carry_labels.get(carry_policy, carry_policy),
+        "permission_allowance_hours": round(allowance_hours, 4),
+        "summary": summary,
+    }
+
+
+def _leave_deduction_policy_signature(snapshot: dict | None) -> tuple:
+    """Return only policy fields that change a draft's calculation."""
+    display = _leave_deduction_policy_display(snapshot)
+    snapshot = snapshot or {}
+    if display["legacy"]:
+        return (
+            "legacy",
+            display["hours_per_day"],
+            str(snapshot.get("deduction_style") or "AGGREGATE").upper(),
+            str(snapshot.get("deduction_sequence") or "LEAVE_THEN_SALARY").upper(),
+            display["carry_policy"],
+            round(display["permission_allowance_hours"], 4),
+        )
+    enabled = tuple(
+        int(value)
+        for value in (snapshot.get("enabled_leave_type_ids") or [])
+        if str(value).isdigit()
+    )
+    try:
+        annual_leave_type_id = int(snapshot.get("annual_leave_type_id"))
+    except (TypeError, ValueError):
+        annual_leave_type_id = None
+    return (
+        "modern",
+        display["hours_per_day"],
+        display["style"],
+        tuple(display["selected_sources"]),
+        display["deduction_sequence"],
+        display["carry_policy"],
+        annual_leave_type_id,
+        enabled,
+    )
+
+
+def _leave_deduction_policy_comparison(snapshot: dict | None, cfg) -> dict:
+    """Compare a draft's saved policy with the currently configured policy."""
+    applied = _leave_deduction_policy_display(snapshot)
+    if not cfg:
+        return {"mismatch": False, "applied": applied, "current": None}
+    current_snapshot = _leave_deduction_policy_snapshot_from_config(cfg)
+    current = _leave_deduction_policy_display(current_snapshot)
+    return {
+        "mismatch": _leave_deduction_policy_signature(snapshot)
+        != _leave_deduction_policy_signature(current_snapshot),
+        "applied": applied,
+        "current": current,
+    }
+
+
+def _deduction_full_day_minutes(item, details: dict | None) -> int:
+    """Return only complete deduction-day minutes for display and reports.
+
+    Legacy rows stored all chargeable source minutes in ``chargeable_minutes``
+    and kept the fraction separately.  Policy-version-2 rows already store
+    complete-day minutes.  Flooring by the saved threshold makes both shapes
+    display consistently without changing the stored audit values.
+    """
+    details = details or {}
+    try:
+        threshold = int(details.get("minutes_per_day") or 0)
+    except (TypeError, ValueError):
+        threshold = 0
+    if threshold <= 0:
+        try:
+            threshold = int(round(float(details.get("hours_per_day") or 6.5) * 60))
+        except (TypeError, ValueError):
+            threshold = 390
+    threshold = max(1, threshold)
+    try:
+        chargeable = max(0, int(item.chargeable_minutes or 0))
+    except (TypeError, ValueError):
+        chargeable = 0
+    return (chargeable // threshold) * threshold
 
 
 def _leave_deduction_leave_type_ids(cfg: HRAttendanceDeductionConfig | None) -> list[int]:
@@ -23124,6 +23807,172 @@ def _leave_deduction_previous_carry(user_id: int, year: int, month: int) -> dict
     return result
 
 
+def _deduction_schedule_absence_review(
+    user_id: int,
+    year: int,
+    month: int,
+) -> dict:
+    """Find scheduled office days with no attendance or leave evidence.
+
+    This is deliberately a review-only source.  It reads the published
+    employee schedule and returns candidates, but no candidate is chargeable
+    until HR explicitly selects its date on the draft review screen.
+    Remote days are not treated as missing punches because they do not require
+    a time-clock record in the attendance model.
+    """
+    empty = {
+        "candidates": [],
+        "summary": {
+            "scheduled_work_days": 0,
+            "attended_work_days": 0,
+            "excused_work_days": 0,
+            "missing_candidate_days": 0,
+        },
+    }
+    if _is_attendance_exempt_user(user_id):
+        return empty
+
+    month_start = date(year, month, 1)
+    month_end = _parse_yyyy_mm_dd(_end_of_month_str(year, month))
+    if not month_end:
+        return empty
+    # Future days cannot be absent yet.  A current day's missing punch is
+    # also left for the next review so HR does not see a transient candidate.
+    evaluation_end = min(month_end, date.today() - timedelta(days=1))
+    if evaluation_end < month_start:
+        return empty
+
+    schedule_map = _approved_schedule_day_map(
+        [int(user_id)],
+        month_start,
+        evaluation_end,
+    )
+    scheduled_days = {
+        day_text
+        for (scheduled_user_id, day_text), schedule_day in schedule_map.items()
+        if int(scheduled_user_id) == int(user_id)
+        and _attendance_schedule_day_kind(schedule_day) == "WORK"
+    }
+    if not scheduled_days:
+        return empty
+
+    attendance_rows = (
+        AttendanceDailySummary.query
+        .filter(AttendanceDailySummary.user_id == int(user_id))
+        .filter(AttendanceDailySummary.day >= month_start.isoformat())
+        .filter(AttendanceDailySummary.day <= evaluation_end.isoformat())
+        .all()
+    )
+    attended_days = {
+        row.day
+        for row in attendance_rows
+        if row.day
+        and (
+            row.first_in is not None
+            or row.last_out is not None
+            or (row.status or "").upper() in {"OK", "PRESENT", "INCOMPLETE"}
+        )
+    }
+
+    event_rows = (
+        AttendanceEvent.query
+        .filter(AttendanceEvent.user_id == int(user_id))
+        .filter(AttendanceEvent.event_dt >= datetime.combine(month_start, datetime.min.time()))
+        .filter(AttendanceEvent.event_dt < datetime.combine(evaluation_end + timedelta(days=1), datetime.min.time()))
+        .all()
+    )
+    for event in event_rows:
+        if event.event_dt and _attendance_event_code(event) not in {"C", "D", "E", "F"}:
+            attended_days.add(event.event_dt.date().isoformat())
+
+    manual_map = _approved_manual_attendance_map(
+        [int(user_id)],
+        month_start,
+        evaluation_end,
+    )
+    attended_days.update(
+        day_text
+        for (manual_user_id, day_text) in manual_map
+        if int(manual_user_id) == int(user_id)
+    )
+
+    special_rows = (
+        HRAttendanceSpecialCase.query
+        .filter(HRAttendanceSpecialCase.user_id == int(user_id))
+        .filter(HRAttendanceSpecialCase.kind == "STATUS")
+        .filter(HRAttendanceSpecialCase.applied.is_(True))
+        .filter(HRAttendanceSpecialCase.day <= evaluation_end.isoformat())
+        .filter(or_(
+            HRAttendanceSpecialCase.day_to.is_(None),
+            HRAttendanceSpecialCase.day_to >= month_start.isoformat(),
+        ))
+        .all()
+    )
+    special_map = _period_rows_by_user_day(special_rows, month_start, evaluation_end)
+    attended_days.update(
+        day_text
+        for (special_user_id, day_text), special in special_map.items()
+        if int(special_user_id) == int(user_id)
+        and (special.status or "").upper() == "PRESENT"
+    )
+
+    active_leaves = (
+        HRLeaveRequest.query
+        .filter(HRLeaveRequest.user_id == int(user_id))
+        .filter(HRLeaveRequest.status.in_(_MY_ATTENDANCE_ACTIVE_LEAVE_STATUSES))
+        .filter(HRLeaveRequest.start_date <= evaluation_end.isoformat())
+        .filter(HRLeaveRequest.end_date >= month_start.isoformat())
+        .all()
+    )
+    leave_map = _period_rows_by_user_day(active_leaves, month_start, evaluation_end)
+    leave_days = {
+        day_text
+        for (_leave_user_id, day_text), leave in leave_map.items()
+        if not _attendance_auto_leave_is_released(leave)
+    }
+
+    candidates = []
+    excused_days = set()
+    for day_text in sorted(scheduled_days):
+        if day_text in attended_days:
+            continue
+        if day_text in leave_days:
+            excused_days.add(day_text)
+            continue
+        exemption = _attendance_exemption_reason(int(user_id), day_text)
+        if exemption:
+            excused_days.add(day_text)
+            continue
+        schedule_day = schedule_map.get((int(user_id), day_text))
+        schedule = getattr(schedule_day, "schedule", None)
+        candidates.append({
+            "day": day_text,
+            "day_type": "WORK",
+            "status": "MISSING_PUNCH",
+            "status_label": "دوام مجدول دون بصمة",
+            "reason_code": "SCHEDULED_WORK_WITHOUT_ATTENDANCE",
+            "reason_label": "يوم دوام مكتبي مجدول بلا حضور أو بصمة، ولا توجد إجازة مسجلة",
+            "schedule_name": (
+                getattr(schedule, "name", None)
+                or "جدول الدوام المعتمد"
+            ),
+            "start_time": getattr(schedule_day, "start_time", None) or getattr(schedule, "start_time", None) or "",
+            "end_time": getattr(schedule_day, "end_time", None) or getattr(schedule, "end_time", None) or "",
+            "note": getattr(schedule_day, "note", None) or "",
+            "selected": False,
+        })
+
+    return {
+        "candidates": candidates,
+        "summary": {
+            "scheduled_work_days": len(scheduled_days),
+            "attended_work_days": len(scheduled_days.intersection(attended_days)),
+            "excused_work_days": len(excused_days),
+            "missing_candidate_days": len(candidates),
+        },
+    }
+
+
 def _leave_deduction_components(
     user_id: int,
     year: int,
@@ -23135,6 +23984,9 @@ def _leave_deduction_components(
     carry_late: bool = False,
     carry_early: bool = False,
     carry_in: dict[str, int] | None = None,
+    carry_policy: str | None = None,
+    schedule_absence_review: bool = False,
+    selected_schedule_absence_days: list[str] | None = None,
 ) -> dict:
     """Calculate only the three explicitly selectable attendance sources.
 
@@ -23144,6 +23996,26 @@ def _leave_deduction_components(
     departures, morning lateness and early departure.
     """
     raw = _monthly_attendance_deduction_breakdown(user_id, year, month, minutes_per_day, 0)
+    schedule_absence_review = bool(schedule_absence_review)
+    schedule_absence_data = (
+        _deduction_schedule_absence_review(user_id, year, month)
+        if schedule_absence_review
+        else {"candidates": [], "summary": {}}
+    )
+    schedule_absence_candidates = schedule_absence_data.get("candidates") or []
+    candidate_days = {
+        str(candidate.get("day"))
+        for candidate in schedule_absence_candidates
+        if candidate.get("day")
+    }
+    selected_schedule_absence_days = sorted({
+        str(day)
+        for day in (selected_schedule_absence_days or [])
+        if str(day) in candidate_days
+    })
+    selected_schedule_absence_day_set = set(selected_schedule_absence_days)
+    for candidate in schedule_absence_candidates:
+        candidate["selected"] = candidate.get("day") in selected_schedule_absence_day_set
     selected = _leave_deduction_sources(selected_sources)
     carry_in = carry_in or _leave_deduction_previous_carry(user_id, year, month)
     current = {
@@ -23151,11 +24023,13 @@ def _leave_deduction_components(
         "LATE": max(0, int(raw.get("late_minutes") or 0)),
         "EARLY": max(0, int(raw.get("early_leave_minutes") or 0)),
     }
-    carry_flags = {
-        "DEPARTURES": bool(carry_departures),
-        "LATE": bool(carry_late),
-        "EARLY": bool(carry_early),
-    }
+    carry_policy = _leave_deduction_carry_policy(
+        carry_policy,
+        carry_departures=carry_departures,
+        carry_late=carry_late,
+        carry_early=carry_early,
+    )
+    carry_flags = _leave_deduction_carry_flags(carry_policy)
     available = {
         code: current[code] + max(0, int(carry_in.get(code, 0) or 0))
         for code in _LEAVE_DEDUCTION_SOURCE_ORDER
@@ -23164,10 +24038,31 @@ def _leave_deduction_components(
     source_remainder = {code: available[code] for code in _LEAVE_DEDUCTION_SOURCE_ORDER}
     threshold = max(1, int(minutes_per_day or 1))
 
-    if (deduction_style or "AGGREGATE").upper() == "PER_CATEGORY":
+    style = _leave_deduction_style(deduction_style)
+    if style == "PER_CATEGORY":
         for code in selected:
             days = available[code] // threshold
             consumed[code] = days * threshold
+            source_remainder[code] = available[code] - consumed[code]
+    elif style == "LATE_EARLY":
+        # Keep approved departures in their own bucket, while allowing
+        # morning lateness and early departure to complete a day together.
+        if "DEPARTURES" in selected:
+            days = available["DEPARTURES"] // threshold
+            consumed["DEPARTURES"] = days * threshold
+            source_remainder["DEPARTURES"] = available["DEPARTURES"] - consumed["DEPARTURES"]
+
+        combined_codes = [code for code in ("LATE", "EARLY") if code in selected]
+        total_available = sum(available[code] for code in combined_codes)
+        total_consumed = (total_available // threshold) * threshold
+        remaining = total_consumed
+        # Allocate the combined consumption in a stable order so the source
+        # summary and carry buckets remain auditable.
+        for code in combined_codes:
+            if remaining <= 0:
+                break
+            consumed[code] = min(available[code], remaining)
+            remaining -= consumed[code]
             source_remainder[code] = available[code] - consumed[code]
     else:
         total_available = sum(available[code] for code in selected)
@@ -23209,7 +24104,10 @@ def _leave_deduction_components(
             "carry_enabled": carry_flags[code],
             "carry_out_minutes": carry_out[code],
         }
+    schedule_absence_minutes = len(selected_schedule_absence_days) * threshold
+    base_chargeable_minutes = sum(consumed.values())
     details = dict(raw.get("details") or {})
+    details["attendance_calculation_version"] = _ATTENDANCE_DEDUCTION_CALCULATION_VERSION
     # Make the individual approved departures auditable.  ``consumed`` can
     # include hours carried from a previous cycle, so only the portion paid
     # by this month's departure records is assigned to these rows.
@@ -23232,30 +24130,51 @@ def _leave_deduction_components(
         departure_current_consumed -= deducted_minutes
     details["policy_version"] = 2
     details["selected_sources"] = selected
-    details["deduction_style"] = (deduction_style or "AGGREGATE").upper()
+    details["deduction_style"] = style
+    details["carry_policy"] = carry_policy
     details["source_summary"] = source_summary
+    details["schedule_absence_review"] = schedule_absence_review
+    details["schedule_absences"] = schedule_absence_candidates
+    details["selected_schedule_absence_days"] = selected_schedule_absence_days
+    details["schedule_absence_summary"] = schedule_absence_data.get("summary") or {}
     details.setdefault("summary", {}).update({
         "selected_source_minutes": sum(available[code] for code in selected),
         "selected_current_minutes": sum(current[code] for code in selected),
         "selected_carry_in_minutes": sum(
             max(0, int(carry_in.get(code, 0) or 0)) for code in selected
         ),
-        "deducted_full_minutes": sum(consumed.values()),
+        "hourly_deducted_full_minutes": base_chargeable_minutes,
+        "schedule_absence_minutes": schedule_absence_minutes,
+        "schedule_absence_deduction_days": len(selected_schedule_absence_days),
+        "deducted_full_minutes": base_chargeable_minutes + schedule_absence_minutes,
     })
-    details["formula"] = "المصادر المختارة ÷ ساعات الاحتساب لليوم؛ يتم احتساب الأيام الكاملة فقط"
+    if schedule_absence_review:
+        details["formula"] = (
+            "مصادر الساعات حسب السياسة، مع أيام دوام مجدولة غير محضورة تُضاف فقط بعد اختيارها يدوياً"
+        )
+    elif style == "LATE_EARLY":
+        details["formula"] = "المغادرات مستقلة؛ التأخير + الخروج المبكر مجتمعان ÷ ساعات الاحتساب لليوم"
+    elif style == "PER_CATEGORY":
+        details["formula"] = "كل مصدر مستقل ÷ ساعات الاحتساب لليوم؛ يتم احتساب الأيام الكاملة لكل مصدر"
+    else:
+        details["formula"] = "المصادر المختارة مجتمعة ÷ ساعات الاحتساب لليوم؛ يتم احتساب الأيام الكاملة فقط"
     details.setdefault("summary", {})["excluded_absence_minutes"] = int(raw.get("absent_days") or 0) * threshold
     return {
         "raw": raw,
         "details": details,
         "selected_sources": selected,
+        "carry_policy": carry_policy,
         "current": current,
         "carry_in": {code: max(0, int(carry_in.get(code, 0) or 0)) for code in _LEAVE_DEDUCTION_SOURCE_ORDER},
         "consumed": consumed,
         "carry_out": carry_out,
         "source_summary": source_summary,
-        "chargeable_minutes": sum(consumed.values()),
-        "deduction_days": sum(consumed.values()) // threshold,
+        "chargeable_minutes": base_chargeable_minutes + schedule_absence_minutes,
+        "deduction_days": (base_chargeable_minutes // threshold) + len(selected_schedule_absence_days),
         "remainder_minutes": sum(carry_out.values()),
+        "schedule_absence_candidates": schedule_absence_candidates,
+        "selected_schedule_absence_days": selected_schedule_absence_days,
+        "schedule_absence_summary": schedule_absence_data.get("summary") or {},
     }
 
 
@@ -23271,11 +24190,13 @@ def _create_leave_deduction_draft(
     carry_departures: bool | None = None,
     carry_late: bool | None = None,
     carry_early: bool | None = None,
+    carry_policy: str | None = None,
     execution_mode: str = "MANUAL",
     replacement_of_run_id: int | None = None,
     deduction_leave_type_id: int | None = None,
     append_to_run: HRAttendanceDeductionRun | None = None,
     policy_snapshot: dict | None = None,
+    schedule_absence_review: bool = False,
 ) -> HRAttendanceDeductionRun:
     """Build a DRAFT without changing a balance; used by manual and monthly jobs."""
     append_mode = append_to_run is not None
@@ -23291,13 +24212,25 @@ def _create_leave_deduction_draft(
         ]
         annual_leave_type_id = _leave_balance_owner_id(snapshot.get("annual_leave_type_id")) if snapshot.get("annual_leave_type_id") else None
         selected_sources = _leave_deduction_sources(snapshot.get("selected_sources")) or ["DEPARTURES"]
-        carry_departures = bool(snapshot.get("carry_departures"))
-        carry_late = bool(snapshot.get("carry_late"))
-        carry_early = bool(snapshot.get("carry_early"))
+        carry_policy = _leave_deduction_carry_policy(
+            snapshot.get("carry_policy") or snapshot.get("carry_method"),
+            carry_departures=bool(snapshot.get("carry_departures")),
+            carry_late=bool(snapshot.get("carry_late")),
+            carry_early=bool(snapshot.get("carry_early")),
+        )
+        carry_flags = _leave_deduction_carry_flags(carry_policy)
+        carry_departures = carry_flags["DEPARTURES"]
+        carry_late = carry_flags["LATE"]
+        carry_early = carry_flags["EARLY"]
         snapshot.setdefault("policy_version", 2)
         snapshot.setdefault("hours_per_day", 6.5)
         snapshot.setdefault("deduction_style", "AGGREGATE")
         snapshot.setdefault("deduction_sequence", "LEAVE_ONLY")
+        snapshot["carry_policy"] = carry_policy
+        snapshot["carry_departures"] = carry_departures
+        snapshot["carry_late"] = carry_late
+        snapshot["carry_early"] = carry_early
+        snapshot["schedule_absence_review"] = bool(snapshot.get("schedule_absence_review", False))
     else:
         enabled_leave_type_ids = _leave_deduction_leave_type_ids(cfg)
         selection_was_saved = getattr(cfg, "leave_type_selection_json", None) is not None
@@ -23320,6 +24253,16 @@ def _create_leave_deduction_draft(
         carry_departures = bool(getattr(cfg, "default_carry_departures", False) if carry_departures is None else carry_departures)
         carry_late = bool(getattr(cfg, "default_carry_late", False) if carry_late is None else carry_late)
         carry_early = bool(getattr(cfg, "default_carry_early", False) if carry_early is None else carry_early)
+        carry_policy = _leave_deduction_carry_policy(
+            carry_policy or getattr(cfg, "carry_method", None),
+            carry_departures=carry_departures,
+            carry_late=carry_late,
+            carry_early=carry_early,
+        )
+        carry_flags = _leave_deduction_carry_flags(carry_policy)
+        carry_departures = carry_flags["DEPARTURES"]
+        carry_late = carry_flags["LATE"]
+        carry_early = carry_flags["EARLY"]
         snapshot = {
             "policy_version": 2,
             "deduction_style": (cfg.deduction_style or "AGGREGATE").upper(),
@@ -23331,9 +24274,14 @@ def _create_leave_deduction_draft(
             "carry_departures": carry_departures,
             "carry_late": carry_late,
             "carry_early": carry_early,
+            "carry_policy": carry_policy,
+            "permission_allowance_hours": float(
+                getattr(cfg, "permission_allowance_hours", 0.0) or 0.0
+            ),
             "execution_mode": execution_mode,
             "gregorian_period": f"{year:04d}-{month:02d}",
             "exclusion_policy_version": 1,
+            "schedule_absence_review": bool(schedule_absence_review),
         }
     if append_mode:
         run = append_to_run
@@ -23374,6 +24322,8 @@ def _create_leave_deduction_draft(
             carry_departures,
             carry_late,
             carry_early,
+            carry_policy=carry_policy,
+            schedule_absence_review=bool(snapshot.get("schedule_absence_review", False)),
         )
         deduction_days = int(components["deduction_days"])
         available_leave_days = 0.0
@@ -23440,6 +24390,7 @@ def _create_leave_deduction_draft(
             "early_minutes": components["current"]["EARLY"],
             "chargeable_minutes": components["chargeable_minutes"],
             "deduction_days": deduction_days,
+            "schedule_absence_deduction_days": len(components.get("selected_schedule_absence_days") or []),
             "leave_deduction_days": leave_days,
             "carry_out_minutes": components["carry_out"],
             "hours_per_day": hours_per_day,
@@ -23652,6 +24603,7 @@ def run_automatic_leave_deduction_cycle() -> int:
             actor_id=None,
             note="اعتماد تلقائي للدورة الشهرية بالإعدادات المحفوظة.",
             selected_sources=selected_sources,
+            carry_policy=_leave_deduction_carry_policy_from_config(cfg),
             carry_departures=bool(getattr(cfg, "default_carry_departures", False)),
             carry_late=bool(getattr(cfg, "default_carry_late", False)),
             carry_early=bool(getattr(cfg, "default_carry_early", False)),
@@ -39572,7 +40524,19 @@ def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
             maternity_minutes = _maternity_departure_allowance_minutes(user_id, day_str)
             if maternity_minutes:
                 evening_intervals.append((en_min - maternity_minutes, en_min))
-            early_leave_minutes = max(0, _uncovered_attendance_minutes(actual_out, en_min, evening_intervals) - end_grace_minutes)
+            uncovered_early = _uncovered_attendance_minutes(
+                actual_out,
+                en_min,
+                evening_intervals,
+            )
+            # The grace period is a threshold, not a deduction from the
+            # measured early departure.  With a 15:00 end and 15 minutes'
+            # grace, 14:45 is zero while 14:30 is 30 minutes early.
+            early_leave_minutes = (
+                uncovered_early
+                if uncovered_early > end_grace_minutes
+                else 0
+            )
 
             thr = schedule.overtime_threshold_minutes
             thr = int(thr) if (thr is not None) else 0
@@ -40866,13 +41830,14 @@ def _corr_apply_confidentiality_form(item, *, is_new: bool = False) -> set[int]:
 
 def _corr_notification_recipient_ids(item, candidate_ids: set[int]) -> set[int]:
     recipients = {int(user_id) for user_id in candidate_ids if user_id}
-    if (getattr(item, "confidentiality", "NORMAL") or "NORMAL").upper() != "SECRET":
-        return recipients
     allowed = _corr_authorized_user_ids(item)
-    for user_id in (getattr(item, "created_by_id", None), getattr(item, "current_assignee_id", None)):
-        if user_id:
-            allowed.add(int(user_id))
-    return recipients.intersection(allowed)
+    return filter_correspondence_notification_user_ids(
+        recipients,
+        confidentiality=getattr(item, "confidentiality", None),
+        created_by_user_id=getattr(item, "created_by_id", None),
+        current_assignee_user_id=getattr(item, "current_assignee_id", None),
+        authorized_user_ids=allowed,
+    )
 
 
 def _corr_notify_new_authorizations(item, before: set[int], after: set[int]) -> None:

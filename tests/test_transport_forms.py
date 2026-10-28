@@ -4,6 +4,7 @@ import unicodedata
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
 import fitz
 from PIL import Image
@@ -16,6 +17,8 @@ from jinja2 import ChoiceLoader, DictLoader
 from extensions import db
 from models import (
     HRLookupItem,
+    Notification,
+    NotificationEmailDelivery,
     SystemSetting,
     TransportDriver,
     TransportMaintenance,
@@ -102,6 +105,12 @@ class TransportReadyFormsTests(unittest.TestCase):
             password_hash="not-used-in-test",
             role="EMPLOYEE",
         )
+        self.direct_manager = User(
+            email="direct-manager@example.test",
+            name="المدير المباشر",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
         self.driver = TransportDriver(name="سائق الاختبار", status="ACTIVE")
         self.vehicle = TransportVehicle(
             plate_no="31-456-78",
@@ -120,6 +129,7 @@ class TransportReadyFormsTests(unittest.TestCase):
             self.admin,
             self.employee,
             self.transport_manager,
+            self.direct_manager,
             self.driver,
             self.vehicle,
         ])
@@ -127,6 +137,11 @@ class TransportReadyFormsTests(unittest.TestCase):
         db.session.add(UserPermission(
             user_id=self.transport_manager.id,
             key="TRANSPORT_UPDATE",
+            is_allowed=True,
+        ))
+        db.session.add(UserPermission(
+            user_id=self.transport_manager.id,
+            key="TRANSPORT_MANAGER_APPROVE",
             is_allowed=True,
         ))
 
@@ -156,6 +171,7 @@ class TransportReadyFormsTests(unittest.TestCase):
             requester_user_id=self.admin.id,
             vehicle_id=self.vehicle.id,
             driver_id=self.driver.id,
+            approver_user_id=self.transport_manager.id,
             origin_text="مقر اللجنة",
             dest_text="وزارة التربية والتعليم",
             purpose="تسليم وثائق رسمية",
@@ -190,6 +206,8 @@ class TransportReadyFormsTests(unittest.TestCase):
         db.session.add(self.employee_permit)
         self.pending_transport_permit = TransportPermit(
             requester_user_id=self.employee.id,
+            manager_user_id=self.direct_manager.id,
+            manager_user_ids=f"[{self.direct_manager.id}]",
             origin_text="مقر اللجنة",
             dest_text="مقر المهمة",
             purpose="طلب بانتظار مسؤول الحركة",
@@ -272,6 +290,17 @@ class TransportReadyFormsTests(unittest.TestCase):
         self.assertIn("\u202a(1)\u202c", body_text)
         self.assertIn("\u202a(1/2026)\u202c", body_text)
         self.assertNotIn("_", body_text)
+
+        table_text = "\n".join(
+            cell.text
+            for table in document.tables
+            for row in table.rows
+            for cell in row.cells
+        )
+        self.assertIn("سائق الاختبار", table_text)
+        self.assertIn("مركبة الاختبار", table_text)
+        self.assertIn("31-456-78", table_text)
+        self.assertIn("اعتماد مسؤول الحركة والنقل: مسؤول الحركة والنقل", table_text)
 
         signature_tables = document.tables[-3:]
         self.assertEqual(len(signature_tables), 3)
@@ -414,24 +443,131 @@ class TransportReadyFormsTests(unittest.TestCase):
         self.assertNotIn('name="driver_id"', body)
         self.assertNotIn(f"/transport/permits/{self.employee_permit.id}/approve", body)
         self.assertNotIn(f"/transport/permits/{self.employee_permit.id}/reject", body)
+        self.assertNotIn(f"/transport/permits/{self.employee_permit.id}/action", body)
 
-    def test_transport_manager_can_open_and_approve_transport_stage(self):
+    def test_direct_manager_receives_view_only_movement_request(self):
         with self.app.test_client() as client:
-            self._login(client, self.transport_manager.id)
+            self._login(client, self.direct_manager.id)
 
             listing = client.get("/portal/transport/permits?status=SUBMITTED")
             self.assertEqual(listing.status_code, 200)
-            listing_body = listing.get_data(as_text=True)
-            self.assertIn(
-                f"/portal/transport/permits/{self.pending_transport_permit.id}/action",
-                listing_body,
+            self.assertIn(f"/portal/transport/permits/{self.pending_transport_permit.id}", listing.get_data(as_text=True))
+
+            detail = client.get(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}"
             )
+
+        self.assertEqual(detail.status_code, 200)
+        body = detail.get_data(as_text=True)
+        self.assertIn("للاطلاع فقط", body)
+        self.assertNotIn(f"/transport/permits/{self.pending_transport_permit.id}/approve", body)
+        self.assertNotIn(f"/transport/permits/{self.pending_transport_permit.id}/reject", body)
+        self.assertNotIn(f"/transport/permits/{self.pending_transport_permit.id}/action", body)
+
+    def test_new_movement_skips_direct_manager_approval_and_sends_notice(self):
+        with self.app.test_client() as client:
+            self._login(client, self.employee.id)
+            with patch(
+                "portal.transport.resolve_responsible_managers",
+                return_value=[self.direct_manager],
+            ):
+                response = client.post(
+                    "/portal/transport/permits/new",
+                    data={
+                        "origin_text": "مقر اللجنة",
+                        "dest_text": "وزارة التربية والتعليم",
+                        "purpose": "طلب حركة جديد للاختبار",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 302)
+        created = (
+            TransportPermit.query
+            .filter_by(requester_user_id=self.employee.id, purpose="طلب حركة جديد للاختبار")
+            .one()
+        )
+        self.assertEqual(created.approval_stage, "TRANSPORT")
+        self.assertEqual(created.manager_user_id, self.direct_manager.id)
+        notification = Notification.query.filter_by(
+            user_id=self.direct_manager.id,
+            target_id=created.id,
+        ).one()
+        self.assertIn("للاطلاع فقط", notification.message)
+        self.assertIsNotNone(
+            NotificationEmailDelivery.query.filter_by(notification_id=notification.id).one()
+        )
+
+    def test_reject_endpoint_accepts_direct_get_and_post_from_detail(self):
+        with self.app.test_client() as client:
+            self._login(client, self.transport_manager.id)
+
+            direct_get = client.get(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}/reject"
+            )
+            self.assertEqual(direct_get.status_code, 302)
+            self.assertIn("#decision", direct_get.headers["Location"])
+
+            response = client.post(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}/reject",
+                data={"decision_note": "لا تتوفر مركبة"},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        db.session.refresh(self.pending_transport_permit)
+        self.assertEqual(self.pending_transport_permit.status, "REJECTED")
+        self.assertEqual(self.pending_transport_permit.approver_user_id, self.transport_manager.id)
+
+    def test_transport_manager_can_open_and_approve_transport_stage(self):
+        UserPermission.query.filter_by(
+            user_id=self.transport_manager.id,
+            key="TRANSPORT_UPDATE",
+        ).delete()
+        db.session.add(SystemSetting(
+            key="TRANSPORT_ADMIN_USER_ID",
+            value=str(self.admin.id),
+        ))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, self.transport_manager.id)
+
+            for listing_url in (
+                "/portal/transport/permits",
+                "/portal/transport/permits?status=SUBMITTED",
+            ):
+                listing = client.get(listing_url)
+                self.assertEqual(listing.status_code, 200)
+                listing_body = listing.get_data(as_text=True)
+                self.assertIn(
+                    f"/portal/transport/permits/{self.pending_transport_permit.id}/action",
+                    listing_body,
+                )
 
             tasks = client.get("/portal/transport/movement-tasks")
             self.assertEqual(tasks.status_code, 200)
             self.assertIn(
                 f"/portal/transport/permits/{self.pending_transport_permit.id}/action",
                 tasks.get_data(as_text=True),
+            )
+
+            detail_view = client.get(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}"
+            )
+            self.assertEqual(detail_view.status_code, 200)
+            detail_view_body = detail_view.get_data(as_text=True)
+            self.assertIn('name="vehicle_id"', detail_view_body)
+            self.assertIn('name="driver_id"', detail_view_body)
+            self.assertIn(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}/approve",
+                detail_view_body,
+            )
+            self.assertIn(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}/reject",
+                detail_view_body,
+            )
+            self.assertIn(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}/action",
+                detail_view_body,
             )
 
             detail = client.get(
@@ -442,14 +578,76 @@ class TransportReadyFormsTests(unittest.TestCase):
 
             response = client.post(
                 f"/portal/transport/permits/{self.pending_transport_permit.id}/approve",
-                data={"driver_id": str(self.driver.id), "decision_note": "تم تعيين السائق"},
+                data={
+                    "vehicle_id": str(self.vehicle.id),
+                    "driver_id": str(self.driver.id),
+                    "decision_note": "تم تعيين السائق",
+                },
+            )
+            self.assertEqual(response.status_code, 302)
+
+            after_approval = client.get(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}"
+            )
+            self.assertEqual(after_approval.status_code, 200)
+            self.assertIn(
+                "تم توجيهه إلى مدير الشؤون الإدارية للاطلاع",
+                after_approval.get_data(as_text=True),
             )
 
-        self.assertEqual(response.status_code, 302)
         db.session.refresh(self.pending_transport_permit)
-        self.assertEqual(self.pending_transport_permit.approval_stage, "ADMIN")
-        self.assertEqual(self.pending_transport_permit.status, "SUBMITTED")
+        self.assertEqual(self.pending_transport_permit.approval_stage, "ADMIN_INFO")
+        self.assertEqual(self.pending_transport_permit.status, "APPROVED")
+        self.assertEqual(self.pending_transport_permit.vehicle_id, self.vehicle.id)
         self.assertEqual(self.pending_transport_permit.driver_id, self.driver.id)
+        self.assertEqual(self.pending_transport_permit.approver_user_id, self.transport_manager.id)
+        self.assertEqual(
+            [item.user_id for item in Notification.query.order_by(Notification.id).all()],
+            [self.admin.id, self.employee.id],
+        )
+
+        with self.app.test_client() as client:
+            self._login(client, self.admin.id)
+            administrative_view = client.get(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}"
+            )
+        self.assertEqual(administrative_view.status_code, 200)
+        self.assertIn(
+            "تم توجيهه إلى مدير الشؤون الإدارية للاطلاع",
+            administrative_view.get_data(as_text=True),
+        )
+
+    def test_transport_manager_permission_finalizes_a_request_from_manager_stage(self):
+        self.pending_transport_permit.approval_stage = "MANAGER"
+        self.pending_transport_permit.manager_user_id = self.admin.id
+        db.session.add(SystemSetting(
+            key="TRANSPORT_ADMIN_USER_ID",
+            value=str(self.admin.id),
+        ))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, self.transport_manager.id)
+            detail = client.get(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}"
+            )
+            self.assertEqual(detail.status_code, 200)
+            self.assertIn('name="vehicle_id"', detail.get_data(as_text=True))
+            self.assertIn('name="driver_id"', detail.get_data(as_text=True))
+
+            response = client.post(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}/approve",
+                data={
+                    "vehicle_id": str(self.vehicle.id),
+                    "driver_id": str(self.driver.id),
+                },
+            )
+            self.assertEqual(response.status_code, 302)
+
+        db.session.refresh(self.pending_transport_permit)
+        self.assertEqual(self.pending_transport_permit.status, "APPROVED")
+        self.assertEqual(self.pending_transport_permit.approval_stage, "ADMIN_INFO")
+        self.assertEqual(self.pending_transport_permit.approver_user_id, self.transport_manager.id)
 
     def test_vehicle_and_driver_license_expiry_fields_are_shown(self):
         with self.app.test_client() as client:

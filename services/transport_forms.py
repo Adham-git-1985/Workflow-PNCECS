@@ -36,7 +36,7 @@ FORM_FONT_SIZE = 16
 
 _BIDI_CONTROL_CHARS = {
     ord(char): None
-    for char in "\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+    for char in "\u200e\u200f\u202b\u202d\u202e\u2066\u2067\u2068\u2069"
 }
 
 
@@ -76,6 +76,35 @@ def _pdf_text(value) -> str:
 def _plain(value, default: str = "-") -> str:
     value = str(value or "").strip()
     return value or default
+
+
+def _movement_vehicle_name(vehicle) -> str:
+    """Return the vehicle name/description and plate for a movement permit."""
+    if vehicle is None:
+        return "-"
+    label = str(getattr(vehicle, "label", None) or "").strip()
+    fallback_name = " ".join(
+        str(value).strip()
+        for value in (getattr(vehicle, "vehicle_type", None), getattr(vehicle, "model", None))
+        if str(value or "").strip()
+    )
+    plate_no = str(getattr(vehicle, "plate_no", None) or "").strip()
+    # Keep mixed Arabic/LTR plate numbers in their natural order in the PDF.
+    # The bidi algorithm consumes the LTR embedding controls, so they do not
+    # become visible glyphs in the rendered permit.
+    plate_display = f"\u202a{plate_no}\u202c" if plate_no else ""
+    parts = [value for value in (label or fallback_name, plate_display) if value]
+    return " - ".join(parts) or "-"
+
+
+def _movement_approver_name(permit) -> str:
+    """Return the transport manager who completed the permit approval."""
+    approver = getattr(permit, "approver", None)
+    for attribute in ("full_name", "name", "email"):
+        value = getattr(approver, attribute, None)
+        if str(value or "").strip():
+            return str(value).strip()
+    return "-"
 
 
 def _styles() -> dict[str, ParagraphStyle]:
@@ -445,7 +474,7 @@ def build_movement_permit_pdf(permit, trip=None, letterhead_path: str | None = N
     ]
     fields = [
         ("اسم السائق", getattr(driver, "name", None)),
-        ("رقم السيارة", getattr(vehicle, "plate_no", None)),
+        ("اسم السيارة ورقمها", _movement_vehicle_name(vehicle)),
         ("اسم الموظف المكلف بالمهمة", requester_name),
         ("خط سير الرحلة مع العنوان المستهدف", route_text),
         ("ساعة بدء المهمة", _time_text(depart_at)),
@@ -476,6 +505,9 @@ def build_movement_permit_pdf(permit, trip=None, letterhead_path: str | None = N
         Spacer(1, 7 * mm),
         _p("توقيع السائق: ______________________________________", styles["body_bold"]),
         Spacer(1, 10 * mm),
-        _p("اعتماد مسؤول الحركة: _______________________________", styles["body_bold"]),
+        _p(
+            f"اعتماد مسؤول الحركة والنقل: {_movement_approver_name(permit)}",
+            styles["body_bold"],
+        ),
     ])
     return _build_document(story, letterhead_path)

@@ -120,7 +120,7 @@ class BaseConfig:
     FOLLOWUPS_AI_MAX_OUTPUT_TOKENS = int(os.getenv("FOLLOWUPS_AI_MAX_OUTPUT_TOKENS", "1800"))
     FOLLOWUPS_AI_MAX_ITEMS = int(os.getenv("FOLLOWUPS_AI_MAX_ITEMS", "40"))
     FOLLOWUPS_AI_MAX_ITEM_CHARS = int(os.getenv("FOLLOWUPS_AI_MAX_ITEM_CHARS", "2400"))
-    FOLLOWUPS_AI_MAX_SUGGESTION_CHARS = int(os.getenv("FOLLOWUPS_AI_MAX_SUGGESTION_CHARS", "420"))
+    FOLLOWUPS_AI_MAX_SUGGESTION_CHARS = int(os.getenv("FOLLOWUPS_AI_MAX_SUGGESTION_CHARS", "240"))
     # Aref document analysis is entirely local. Uploaded files are read in
     # memory, bounded before extraction, and never stored or sent externally.
     ASSISTANT_ANALYSIS_MAX_FILE_BYTES = int(

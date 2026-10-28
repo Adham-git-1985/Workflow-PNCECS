@@ -580,6 +580,9 @@ class FollowupFlowTests(unittest.TestCase):
             by_id = {item.id: item for item in report.items}
             self.assertTrue(by_id[manual_item_id].ai_suggestion)
             self.assertTrue(by_id[system_item_id].ai_suggestion)
+            self.assertTrue(report.ai_summary)
+            self.assertLessEqual(len(report.ai_summary), 240)
+            ai_summary = report.ai_summary
             self.assertEqual(by_id[manual_item_id].title, manual_title)
             self.assertEqual(by_id[system_item_id].title, system_title)
 
@@ -587,6 +590,7 @@ class FollowupFlowTests(unittest.TestCase):
         self.assertEqual(view.status_code, 200)
         self.assertIn(f'name="ai_suggestion_{manual_item_id}"'.encode(), view.data)
         self.assertIn(f'name="ai_suggestion_{system_item_id}"'.encode(), view.data)
+        self.assertIn(ai_summary.encode(), view.data)
         self.assertIn('value="apply_ai"'.encode(), view.data)
 
         edited_manual = "تم إعداد تقرير الإنجازات الشهري ومراجعته."
@@ -695,6 +699,40 @@ class FollowupFlowTests(unittest.TestCase):
                 "ملاحظة محدّثة من مسار",
                 EmployeeFollowupReport.query.one().items[0].title,
             )
+
+    def test_new_report_imports_completed_mention_response(self):
+        with self.app.app_context():
+            workflow_request = WorkflowRequest(
+                requester_id=self.manager_id,
+                title="معاملة استجابة المنشن",
+                description="متابعة أضيفت عبر المنشن",
+                status="IN_PROGRESS",
+            )
+            db.session.add(workflow_request)
+            db.session.flush()
+            db.session.add(AuditLog(
+                request_id=workflow_request.id,
+                user_id=self.employee_id,
+                action="WORKFLOW_MENTION_TASK_COMPLETED",
+                note="الخطوة=2 | تمت المتابعة عبر المنشن بعد إضافة تعليق",
+                created_at=datetime(2026, 9, 4, 11, 15),
+            ))
+            db.session.commit()
+
+        response = self.employee_client.post(
+            "/portal/followups/new",
+            data={"period_start": "2026-09-01", "period_end": "2026-09-05"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        with self.app.app_context():
+            report = EmployeeFollowupReport.query.one()
+            self.assertEqual(len(report.items), 1)
+            imported_item = report.items[0]
+            self.assertEqual(imported_item.source_type, "WORKFLOW_AUDIT")
+            self.assertIn("متابعة المنشن والاستجابة له", imported_item.title)
+            self.assertIn("معاملة استجابة المنشن", imported_item.title)
+            self.assertEqual(imported_item.completed_on.isoformat(), "2026-09-04")
 
     def test_word_export_filename_uses_the_requested_period_format(self):
         report = EmployeeFollowupReport(
