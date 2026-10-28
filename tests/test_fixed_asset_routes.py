@@ -211,6 +211,7 @@ class FixedAssetRouteTests(unittest.TestCase):
         self.assertIn(b"FA-FILTER-001", response.data)
         self.assertNotIn(b"FA-FILTER-002", response.data)
         self.assertIn(b'name="custodian_user_id"', response.data)
+        self.assertIn("موظف الأصول الأول".encode("utf-8"), response.data)
 
     def test_optional_asset_image_is_served_and_returned_with_qr_lookup(self):
         image_data = io.BytesIO()

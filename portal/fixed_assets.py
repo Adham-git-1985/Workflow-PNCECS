@@ -1109,7 +1109,7 @@ def fixed_asset_list():
         can_manage=current_user.has_perm(STORE_MANAGE),
         can_export=current_user.has_perm(STORE_EXPORT) or current_user.has_perm(STORE_MANAGE),
         can_delete=current_user.has_perm(INVENTORY_FIXED_ASSET_DELETE),
-        **_choices(include_items=False, include_users=False),
+        **_choices(include_items=False, include_users=True),
     )
 
 
