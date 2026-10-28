@@ -16,6 +16,19 @@ RECORDED_ATTENDANCE_LABELS = {
     "ABSENT": "تغيب",
 }
 
+# Keep invitation responses distinct from the two attendance outcomes.  The
+# old fallback treated every value other than ATTENDED as ABSENT, which made a
+# newly invited participant appear to have skipped the meeting.
+MEETING_PARTICIPANT_STATUS_LABELS = {
+    "INVITED": "لم يرد",
+    "ACCEPTED": "قبل الدعوة",
+    "DECLINED": "رفض الدعوة",
+    "PROPOSED": "اقترح موعدًا جديدًا",
+    "ATTENDED": "حضر",
+    "ABSENT": "تغيب",
+    "EXCUSED": "معتذر",
+}
+
 
 EMBEDDED_ATTACHMENT_RELATIONSHIP = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
@@ -118,10 +131,10 @@ def add_embedded_attachments_to_docx(
 
 
 def recorded_attendance_label(status: object) -> str:
-    """Return the binary attendance label used in official minutes."""
+    """Return the participant status label used in official minutes."""
 
     normalized = str(status or "").strip().upper()
-    return RECORDED_ATTENDANCE_LABELS.get(normalized, "تغيب")
+    return MEETING_PARTICIPANT_STATUS_LABELS.get(normalized, "لم يرد")
 
 
 def validate_docx_package(data: bytes) -> None:

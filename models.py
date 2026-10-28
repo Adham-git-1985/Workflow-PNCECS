@@ -6686,6 +6686,20 @@ class PortalMeeting(db.Model):
         lazy="selectin",
         order_by="PortalMeetingAttachment.uploaded_at.desc()",
     )
+    permissions = db.relationship(
+        "PortalMeetingPermission",
+        back_populates="meeting",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="PortalMeetingPermission.id",
+    )
+    minutes_file = db.relationship(
+        "PortalMeetingMinutesFile",
+        back_populates="meeting",
+        cascade="all, delete-orphan",
+        uselist=False,
+        lazy="joined",
+    )
     tasks = db.relationship(
         "PortalMeetingTask",
         back_populates="meeting",
@@ -6693,6 +6707,58 @@ class PortalMeeting(db.Model):
         lazy="selectin",
         order_by="PortalMeetingTask.created_at.desc()",
     )
+
+
+class PortalMeetingPermission(db.Model):
+    """Permission granted to a specific user for a specific meeting."""
+
+    __tablename__ = "portal_meeting_permissions"
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "meeting_id",
+            "user_id",
+            "permission",
+            name="uq_portal_meeting_permission",
+        ),
+        db.Index("ix_portal_meeting_permissions_meeting", "meeting_id"),
+        db.Index("ix_portal_meeting_permissions_user", "user_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    meeting_id = db.Column(db.Integer, db.ForeignKey("portal_meetings.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    permission = db.Column(db.String(80), nullable=False)
+    granted_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    granted_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    meeting = db.relationship("PortalMeeting", back_populates="permissions", lazy="joined")
+    user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
+    granted_by = db.relationship("User", foreign_keys=[granted_by_user_id], lazy="joined")
+
+
+class PortalMeetingMinutesFile(db.Model):
+    """The current user-uploaded official minutes file for a meeting."""
+
+    __tablename__ = "portal_meeting_minutes_files"
+
+    id = db.Column(db.Integer, primary_key=True)
+    meeting_id = db.Column(
+        db.Integer,
+        db.ForeignKey("portal_meetings.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    original_name = db.Column(db.String(255), nullable=False)
+    stored_name = db.Column(db.String(255), nullable=False, unique=True)
+    mime_type = db.Column(db.String(120), nullable=True)
+    file_size = db.Column(db.Integer, nullable=True)
+    uploaded_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    meeting = db.relationship("PortalMeeting", back_populates="minutes_file", lazy="joined")
+    uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_user_id], lazy="joined")
 
 
 class PortalMeetingParticipant(db.Model):

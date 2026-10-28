@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 
 from flask import Flask, g
@@ -12,13 +13,16 @@ from models import (
     NotificationEmailDelivery,
     PortalMeeting,
     PortalMeetingAgendaItem,
+    PortalMeetingAttachment,
+    PortalMeetingMinutesFile,
+    PortalMeetingPermission,
     PortalMeetingParticipant,
     PortalMeetingTask,
     User,
     UserPermission,
 )
 from portal import portal_bp
-from portal.routes import _meeting_notify_users
+from portal.routes import _meeting_minutes_file_path, _meeting_notify_users
 
 
 class MeetingVisibilityTests(unittest.TestCase):
@@ -255,6 +259,76 @@ class MeetingVisibilityTests(unittest.TestCase):
         self.assertEqual(edit_view.status_code, 200)
         self.assertIn(b"editMeetingParticipantPickerSearch", edit_view.data)
         self.assertIn(b"data-participant-search", edit_view.data)
+
+    def test_meeting_edit_permission_works_after_date_and_official_file_can_be_replaced(self):
+        client = self.app.test_client()
+        self.meeting.start_at = datetime.utcnow() - timedelta(days=2)
+        self.meeting.status = "DONE"
+        db.session.add(PortalMeetingPermission(
+            meeting_id=self.meeting.id,
+            user_id=self.outsider.id,
+            permission="PORTAL_MEETING_EDIT",
+            granted_by_user_id=self.organizer.id,
+        ))
+        db.session.commit()
+
+        self._login(client, self.outsider.id)
+        response = client.post(
+            f"/portal/meetings/{self.meeting.id}/edit",
+            data={
+                "title": "Updated after meeting",
+                "description": "Updated description",
+                "location": "Room 2",
+                "start_at": "2026-10-20T10:00",
+                "end_at": "2026-10-20T11:00",
+                "reminder_minutes_before": "30",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(db.session.get(PortalMeeting, self.meeting.id).title, "Updated after meeting")
+
+        self._login(client, self.organizer.id)
+        first_upload = client.post(
+            f"/portal/meetings/{self.meeting.id}/minutes",
+            data={
+                "minutes_text": "minutes",
+                "minutes_file": (BytesIO(b"official one"), "official.txt"),
+                "minutes_files": (BytesIO(b"attachment one"), "attachment.txt"),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(first_upload.status_code, 302)
+        row = db.session.get(PortalMeeting, self.meeting.id)
+        self.assertIsInstance(row.minutes_file, PortalMeetingMinutesFile)
+        old_path = _meeting_minutes_file_path(row)
+        self.assertTrue(old_path and old_path.is_file())
+        attachment = PortalMeetingAttachment.query.filter_by(meeting_id=row.id).one()
+
+        official_response = client.get(f"/portal/meetings/{row.id}/minutes/file")
+        self.assertEqual(official_response.status_code, 200)
+        self.assertEqual(official_response.data, b"official one")
+        self.assertNotIn("attachment", official_response.headers.get("Content-Disposition", "").lower())
+        official_response.close()
+
+        attachment_response = client.get(
+            f"/portal/meetings/{row.id}/minutes/attachments/{attachment.id}/download"
+        )
+        self.assertEqual(attachment_response.status_code, 200)
+        self.assertEqual(attachment_response.data, b"attachment one")
+        attachment_response.close()
+
+        second_upload = client.post(
+            f"/portal/meetings/{row.id}/minutes",
+            data={"minutes_file": (BytesIO(b"official two"), "official-two.txt")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(second_upload.status_code, 302)
+        row = db.session.get(PortalMeeting, row.id)
+        self.assertEqual(row.minutes_file.original_name, "official-two.txt")
+        self.assertEqual(_meeting_minutes_file_path(row).read_bytes(), b"official two")
+        self.assertFalse(old_path.exists())
+        for stored_path in _meeting_minutes_file_path(row).parent.iterdir():
+            stored_path.unlink(missing_ok=True)
 
     def test_meeting_notification_is_added_to_employee_email_queue(self):
         created = _meeting_notify_users(

@@ -37,10 +37,10 @@ class MeetingAgendaOrderTests(unittest.TestCase):
 
 
 class MeetingMinutesTests(unittest.TestCase):
-    def test_recorded_attendance_has_only_attended_or_absent_labels(self):
+    def test_participant_status_labels_keep_no_response_distinct_from_absence(self):
         self.assertEqual(recorded_attendance_label("ATTENDED"), "حضر")
         self.assertEqual(recorded_attendance_label("ABSENT"), "تغيب")
-        self.assertEqual(recorded_attendance_label("INVITED"), "تغيب")
+        self.assertEqual(recorded_attendance_label("INVITED"), "لم يرد")
 
     def test_validate_docx_package_accepts_required_parts(self):
         output = BytesIO()

@@ -24,6 +24,16 @@
     <a class="btn btn-outline-secondary" target="_blank" href="{{ url_for('portal.meeting_minutes_pdf', meeting_id=row.id) }}">
       <i class="bi bi-file-earmark-pdf"></i> PDF
     </a>
+    {% if row.minutes_file %}
+      <a class="btn btn-outline-info" target="_blank" href="{{ url_for('portal.meeting_minutes_file', meeting_id=row.id) }}">
+        <i class="bi bi-file-earmark-check"></i> الملف الرسمي
+      </a>
+    {% endif %}
+    {% if can_manage %}
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.meeting_edit', meeting_id=row.id) }}">
+        <i class="bi bi-pencil-square"></i> تعديل الاجتماع
+      </a>
+    {% endif %}
     {% if can_manage %}
       <form method="post" action="{{ url_for('portal.meeting_send_reminder', meeting_id=row.id) }}">
         <button class="btn btn-outline-warning" type="submit">
@@ -203,6 +213,17 @@
             <input class="form-control" type="file" name="minutes_files" multiple>
             <div class="form-text">يمكن اختيار أكثر من ملف، وتبقى أسماء الملفات الأصلية ظاهرة للمشاركين.</div>
           </div>
+          <div class="mb-3 border rounded-3 p-2 bg-light">
+            <label class="form-label">استبدال ملف المحضر الرسمي</label>
+            {% if row.minutes_file %}
+              <div class="small mb-2">
+                الملف الحالي:
+                <a target="_blank" rel="noopener" href="{{ url_for('portal.meeting_minutes_file', meeting_id=row.id) }}">{{ row.minutes_file.original_name }}</a>
+              </div>
+            {% endif %}
+            <input class="form-control" type="file" name="minutes_file">
+            <div class="form-text">اختياري. عند اختيار ملف جديد سيحل محل الملف الرسمي الحالي، بينما تبقى المرفقات الأخرى محفوظة.</div>
+          </div>
           <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
             <div class="d-flex gap-3 flex-wrap">
               <div class="form-check">
@@ -245,18 +266,20 @@
             </div>
           </div>
 
-          <form method="post" action="{{ url_for('portal.meeting_upload_letterhead') }}" enctype="multipart/form-data" class="row g-2 align-items-end mb-3">
-            <input type="hidden" name="meeting_id" value="{{ row.id }}">
-            <div class="col-12 col-lg-8">
-              <label class="form-label small">رفع ترويسة Word</label>
-              <input class="form-control form-control-sm" type="file" name="letterhead_file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
-            </div>
-            <div class="col-12 col-lg-4 d-grid">
-              <button class="btn btn-sm btn-outline-primary" type="submit">
-                <i class="bi bi-upload"></i> حفظ الترويسة
-              </button>
-            </div>
-          </form>
+          {% if can_manage_letterhead %}
+            <form method="post" action="{{ url_for('portal.meeting_upload_letterhead') }}" enctype="multipart/form-data" class="row g-2 align-items-end mb-3">
+              <input type="hidden" name="meeting_id" value="{{ row.id }}">
+              <div class="col-12 col-lg-8">
+                <label class="form-label small">رفع ترويسة Word</label>
+                <input class="form-control form-control-sm" type="file" name="letterhead_file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+              </div>
+              <div class="col-12 col-lg-4 d-grid">
+                <button class="btn btn-sm btn-outline-primary" type="submit">
+                  <i class="bi bi-upload"></i> حفظ الترويسة
+                </button>
+              </div>
+            </form>
+          {% endif %}
 
           <form method="post" action="{{ url_for('portal.meeting_start_workflow', meeting_id=row.id) }}" class="row g-2 align-items-end">
             <input type="hidden" name="source_type" value="OFFICIAL_MINUTES">
@@ -347,6 +370,13 @@
         </div>
       {% endif %}
 
+      {% if row.minutes_file and not can_manage %}
+        <div class="alert alert-info d-flex justify-content-between align-items-center gap-2">
+          <span><i class="bi bi-file-earmark-check"></i> يوجد ملف رسمي مرفوع للمحضر: <strong>{{ row.minutes_file.original_name }}</strong></span>
+          <a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener" href="{{ url_for('portal.meeting_minutes_file', meeting_id=row.id) }}">فتح الملف</a>
+        </div>
+      {% endif %}
+
       <div class="border-top mt-3 pt-3">
         <div class="fw-bold mb-2"><i class="bi bi-paperclip"></i> مرفقات المحضر</div>
         <div class="small text-muted mb-2">عند تنزيل ملف Word تُضمّن هذه الملفات داخله، ويمكن فتحها بالنقر المزدوج على أيقونتها.</div>
@@ -355,8 +385,8 @@
             {% for attachment in row.attachments %}
               <div class="list-group-item px-0 d-flex justify-content-between align-items-center gap-2">
                 <div class="min-w-0">
-                  <a class="text-decoration-none text-break" href="{{ url_for('portal.meeting_minutes_attachment_download', meeting_id=row.id, attachment_id=attachment.id) }}">
-                    <i class="bi bi-file-earmark-arrow-down"></i> {{ attachment.original_name }}
+                  <a class="text-decoration-none text-break" target="_blank" rel="noopener" href="{{ url_for('portal.meeting_minutes_attachment_download', meeting_id=row.id, attachment_id=attachment.id) }}">
+                    <i class="bi bi-file-earmark-arrow-down"></i> فتح/تنزيل {{ attachment.original_name }}
                   </a>
                   <div class="small text-muted">
                     {% if attachment.file_size is not none %}{{ (attachment.file_size / 1024)|round(1) }} ك.ب{% endif %}
@@ -389,6 +419,7 @@
           <div class="fw-bold mb-2">ردك على دعوة الاجتماع</div>
           <form method="post" action="{{ url_for('portal.meeting_invitation_response', meeting_id=row.id) }}" class="vstack gap-2">
             <select class="form-select" name="response" data-meeting-response-select>
+              <option value="INVITED" disabled {% if current_participant.attendance_status == 'INVITED' %}selected{% endif %}>لم يرد بعد</option>
               <option value="ACCEPTED" {% if current_participant.attendance_status == 'ACCEPTED' %}selected{% endif %}>قبول الدعوة</option>
               <option value="DECLINED" {% if current_participant.attendance_status == 'DECLINED' %}selected{% endif %}>رفض الدعوة</option>
               <option value="PROPOSED" {% if current_participant.attendance_status == 'PROPOSED' %}selected{% endif %}>اقتراح موعد جديد</option>
@@ -410,14 +441,33 @@
           </div>
         </form>
 
+        {% if can_manage_permissions %}
+          <form method="post" action="{{ url_for('portal.meeting_update_permissions', meeting_id=row.id) }}" class="border rounded-3 p-2 mb-3">
+            <div class="fw-semibold small mb-1"><i class="bi bi-shield-check"></i> صلاحية تعديل الاجتماع</div>
+            <div class="small text-muted mb-2">اختر المستخدمين الذين يمكنهم فتح الاجتماع وتعديل بياناته ومحضره حتى بعد انتهائه.</div>
+            <div class="vstack gap-1" style="max-height: 220px; overflow-y: auto;">
+              {% for u in users %}
+                <label class="form-check small">
+                  <input class="form-check-input" type="checkbox" name="edit_permission_user_ids" value="{{ u.id }}" {% if u.id in edit_permission_user_ids %}checked{% endif %} {% if u.id == row.created_by_user_id %}disabled{% endif %}>
+                  <span class="form-check-label">{{ u.name or u.email }}{% if u.id == row.created_by_user_id %} (منشئ الاجتماع){% endif %}</span>
+                </label>
+              {% endfor %}
+            </div>
+            <div class="small text-muted mt-2">منشئ الاجتماع يحتفظ بهذه الصلاحية دائمًا.</div>
+            <div class="d-grid mt-2">
+              <button class="btn btn-sm btn-outline-primary" type="submit">حفظ الصلاحيات</button>
+            </div>
+          </form>
+        {% endif %}
+
         <form method="post" action="{{ url_for('portal.meeting_update_attendance', meeting_id=row.id) }}">
           <div class="vstack gap-2">
             {% for p in row.participants %}
               <div class="border rounded-3 p-2">
                 <div class="fw-bold small">{{ p.user.name if p.user else p.user_id }}</div>
                 <select class="form-select form-select-sm my-2" name="attendance_{{ p.id }}">
-                  {% for key, label in recorded_attendance_labels.items() %}
-                    <option value="{{ key }}" {% if p.attendance_status == key or (key == 'ABSENT' and p.attendance_status not in recorded_attendance_labels) %}selected{% endif %}>{{ label }}</option>
+                  {% for key, label in participant_status_labels.items() %}
+                    <option value="{{ key }}" {% if p.attendance_status == key %}selected{% endif %}>{{ label }}</option>
                   {% endfor %}
                 </select>
                 <input class="form-control form-control-sm" type="text" name="note_{{ p.id }}" maxlength="300" value="{{ p.note or '' }}" placeholder="ملاحظة">
@@ -438,7 +488,7 @@
                   <div class="small text-muted">{{ p.note }}</div>
                 {% endif %}
               </div>
-              <span class="badge text-bg-light border align-self-start">{{ recorded_attendance_labels.get(p.attendance_status, 'تغيب') }}</span>
+              <span class="badge text-bg-light border align-self-start">{{ participant_status_labels.get(p.attendance_status, 'لم يرد') }}</span>
             </div>
           {% endfor %}
         </div>

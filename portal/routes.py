@@ -83,6 +83,7 @@ from utils.office_preview import (
     office_pdf_filename,
 )
 from services.meeting_service import (
+    MEETING_PARTICIPANT_STATUS_LABELS,
     RECORDED_ATTENDANCE_LABELS,
     add_embedded_attachments_to_docx,
     normalize_agenda_order,
@@ -265,6 +266,8 @@ from models import (
     PortalCircular,
     PortalCircularAttachment,
     PortalMeeting,
+    PortalMeetingPermission,
+    PortalMeetingMinutesFile,
     PortalMeetingParticipant,
     PortalMeetingAgendaItem,
     PortalMeetingAttachment,
@@ -464,6 +467,7 @@ PORTAL_ADMIN_PERMISSIONS_MANAGE = "PORTAL_ADMIN_PERMISSIONS_MANAGE"
 
 PORTAL_CIRCULARS_MANAGE = "PORTAL_CIRCULARS_MANAGE"
 PORTAL_MEETINGS_MANAGE = "PORTAL_MEETINGS_MANAGE"
+PORTAL_MEETING_EDIT = "PORTAL_MEETING_EDIT"
 
 HR_READ = "HR_READ"
 HR_ATT_READ = "HR_ATTENDANCE_READ"
@@ -2737,7 +2741,7 @@ MEETING_WORKFLOW_SOURCE_LABELS = {
 }
 
 MEETING_ATTENDANCE_LABELS = {
-    "INVITED": "مدعو",
+    "INVITED": "لم يرد",
     "ACCEPTED": "قبل الدعوة",
     "DECLINED": "رفض الدعوة",
     "PROPOSED": "اقترح موعدًا جديدًا",
@@ -2811,6 +2815,57 @@ def _save_meeting_minutes_attachments(row: PortalMeeting, uploads) -> tuple[int,
         raise
 
     return saved_count, saved_paths
+
+
+def _meeting_minutes_file_path(row: PortalMeeting, minutes_file: PortalMeetingMinutesFile | None = None) -> Path | None:
+    minutes_file = minutes_file or getattr(row, "minutes_file", None)
+    stored_name = (getattr(minutes_file, "stored_name", None) or "").strip()
+    if not stored_name:
+        return None
+    return _meeting_minutes_attachment_dir(row.id) / stored_name
+
+
+def _save_meeting_minutes_file(
+    row: PortalMeeting,
+    upload,
+) -> tuple[PortalMeetingMinutesFile, Path, Path | None]:
+    """Replace the current official minutes file and return old path for cleanup."""
+    original_name = clean_original_filename(getattr(upload, "filename", None))
+    if not original_name or not is_allowed_attachment(original_name):
+        raise ValueError("A valid minutes file is required.")
+
+    previous_path = _meeting_minutes_file_path(row)
+    stored_name = random_storage_name(f"official_minutes_{uuid.uuid4().hex}", original_name)
+    saved_path = _meeting_minutes_attachment_dir(row.id) / stored_name
+    upload.save(str(saved_path))
+
+    mime_type = (getattr(upload, "mimetype", None) or "").strip()
+    if not mime_type:
+        mime_type = mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+
+    replacement = getattr(row, "minutes_file", None)
+    if replacement is None:
+        replacement = PortalMeetingMinutesFile(
+            meeting_id=row.id,
+            original_name=original_name[:255],
+            stored_name=stored_name,
+            mime_type=mime_type[:120],
+            file_size=saved_path.stat().st_size,
+            uploaded_by_user_id=getattr(current_user, "id", None),
+            uploaded_at=datetime.utcnow(),
+        )
+        row.minutes_file = replacement
+        db.session.add(replacement)
+    else:
+        # Reuse the one-to-one row so the unique meeting_id constraint is not
+        # violated while the replacement is being flushed.
+        replacement.original_name = original_name[:255]
+        replacement.stored_name = stored_name
+        replacement.mime_type = mime_type[:120]
+        replacement.file_size = saved_path.stat().st_size
+        replacement.uploaded_by_user_id = getattr(current_user, "id", None)
+        replacement.uploaded_at = datetime.utcnow()
+    return replacement, saved_path, previous_path
 
 
 def _meeting_letterhead_path() -> str | None:
@@ -3602,18 +3657,38 @@ def _ensure_meeting_minutes_archived(row: PortalMeeting, docx_bytes: bytes | Non
         except Exception:
             dept_id = None
 
-        data = docx_bytes or _build_meeting_minutes_docx(row)
-        stored_name = f"meeting_minutes_{row.id}_{uuid.uuid4().hex}.docx"
+        official_file = getattr(row, "minutes_file", None) if docx_bytes is None else None
+        official_path = _meeting_minutes_file_path(row, official_file) if official_file else None
+        if official_file and official_path and official_path.is_file():
+            data = official_path.read_bytes()
+            original_name = (
+                getattr(official_file, "original_name", None)
+                or _meeting_minutes_filename(row, "docx")
+            )
+            mime_type = (
+                getattr(official_file, "mime_type", None)
+                or mimetypes.guess_type(original_name)[0]
+                or "application/octet-stream"
+            )
+        else:
+            data = docx_bytes or _build_meeting_minutes_docx(row)
+            original_name = _meeting_minutes_filename(row, "docx")
+            mime_type = MEETING_MINUTES_DOCX_MIME
+
+        stored_name = random_storage_name(
+            f"meeting_minutes_{row.id}_{uuid.uuid4().hex}",
+            original_name,
+        )
         archive_path = os.path.join(_corr_archive_storage_dir(), stored_name)
         with open(archive_path, "wb") as handle:
             handle.write(data)
 
         archived = ArchivedFile(
-            original_name=_meeting_minutes_filename(row, "docx"),
+            original_name=original_name,
             stored_name=stored_name,
             description=_meeting_minutes_archive_description(row),
             file_path=archive_path,
-            mime_type=MEETING_MINUTES_DOCX_MIME,
+            mime_type=mime_type,
             file_size=os.path.getsize(archive_path),
             owner_id=int(owner_id),
             department_id=dept_id,
@@ -3699,9 +3774,15 @@ def _meeting_access_condition(user_id: int):
         db.session.query(PortalMeetingParticipant.meeting_id)
         .filter(PortalMeetingParticipant.user_id == int(user_id))
     )
+    permission_meeting_ids = (
+        db.session.query(PortalMeetingPermission.meeting_id)
+        .filter(PortalMeetingPermission.user_id == int(user_id))
+        .filter(PortalMeetingPermission.permission == PORTAL_MEETING_EDIT)
+    )
     return or_(
         PortalMeeting.created_by_user_id == int(user_id),
         PortalMeeting.id.in_(participant_meeting_ids),
+        PortalMeeting.id.in_(permission_meeting_ids),
     )
 
 
@@ -3709,6 +3790,12 @@ def _meeting_visible_query(query, user_id: int | None = None):
     """Restrict meetings to their organizer and explicitly invited users."""
     if user_id is None and _meeting_admin_view_allowed():
         return query
+    if user_id is None:
+        try:
+            if current_user.has_perm(PORTAL_MEETING_EDIT):
+                return query
+        except Exception:
+            pass
     uid = user_id if user_id is not None else getattr(current_user, "id", None)
     if not uid:
         return query.filter(PortalMeeting.id == -1)
@@ -3721,21 +3808,78 @@ def _meeting_can_access(row: PortalMeeting) -> bool:
     uid = getattr(current_user, "id", None)
     if not uid:
         return False
+    try:
+        if current_user.has_perm(PORTAL_MEETING_EDIT):
+            return True
+    except Exception:
+        pass
     if getattr(row, "created_by_user_id", None) == uid:
         return True
     try:
         if any(getattr(p, "user_id", None) == uid for p in (row.participants or [])):
+            return True
+        if any(
+            getattr(permission, "user_id", None) == uid
+            and (getattr(permission, "permission", "") or "").strip().upper() == PORTAL_MEETING_EDIT
+            for permission in (row.permissions or [])
+        ):
             return True
     except Exception:
         pass
     return False
 
 
+def _meeting_edit_permission_user_ids(row: PortalMeeting) -> set[int]:
+    """Return users with the meeting-scoped edit permission, including owner."""
+    user_ids: set[int] = set()
+    owner_id = getattr(row, "created_by_user_id", None)
+    if owner_id:
+        user_ids.add(int(owner_id))
+    try:
+        for permission in row.permissions or []:
+            if (getattr(permission, "permission", "") or "").strip().upper() == PORTAL_MEETING_EDIT:
+                user_id = getattr(permission, "user_id", None)
+                if user_id:
+                    user_ids.add(int(user_id))
+    except Exception:
+        pass
+    return user_ids
+
+
+def _meeting_has_edit_permission(row: PortalMeeting, user_id: int | None = None) -> bool:
+    uid = user_id if user_id is not None else getattr(current_user, "id", None)
+    if not uid:
+        return False
+    try:
+        if _meeting_manage_allowed():
+            return True
+        if current_user.has_perm(PORTAL_MEETING_EDIT):
+            return True
+    except Exception:
+        pass
+    return int(uid) in _meeting_edit_permission_user_ids(row)
+
+
 def _meeting_can_manage(row: PortalMeeting) -> bool:
-    """Only the meeting organizer may administer that meeting."""
+    """Return whether the current user may edit this meeting.
+
+    The organizer is granted the meeting-scoped permission automatically.  A
+    direct ``PORTAL_MEETING_EDIT`` permission remains a global fallback for
+    administrators who need to audit or correct any meeting they can open.
+    """
+    return bool(_meeting_has_edit_permission(row))
+
+
+def _meeting_can_manage_permissions(row: PortalMeeting) -> bool:
+    """Only the organizer or a system meetings manager may grant edit access."""
+    uid = getattr(current_user, "id", None)
     return bool(
-        _meeting_manage_allowed()
-        and getattr(row, "created_by_user_id", None) == getattr(current_user, "id", None)
+        uid
+        and (
+            getattr(row, "created_by_user_id", None) == uid
+            or _meeting_manage_allowed()
+            or _meeting_admin_view_allowed()
+        )
     )
 
 
@@ -3986,10 +4130,18 @@ def _meeting_workflow_payload(row: PortalMeeting, source_type: str, task_id: str
 
     elif source == "OFFICIAL_MINUTES":
         title_prefix = "محضر الاجتماع الرسمي"
+        official_file = getattr(row, "minutes_file", None)
+        official_name = getattr(official_file, "original_name", None) if official_file else None
+        official_description = (
+            f"سيتم إرفاق الملف الرسمي المرفوع: {official_name}."
+            if official_name
+            else
+            "سيتم إرفاق ملف Word رسمي يحتوي تفاصيل الاجتماع، المحضر، القرارات، المدعوين، الأجندة، ومهام المتابعة."
+        )
         lines.extend([
             "",
             "ملف المحضر الرسمي:",
-            "سيتم إرفاق ملف Word رسمي يحتوي تفاصيل الاجتماع، المحضر، القرارات، المدعوين، الأجندة، ومهام المتابعة.",
+            official_description,
         ])
 
     elif source == "ALL_TASKS":
@@ -6756,7 +6908,7 @@ def circular_new():
 
 @portal_bp.route("/meetings")
 @login_required
-@_perm_any(PORTAL_READ, PORTAL_MEETINGS_MANAGE)
+@_perm_any(PORTAL_READ, PORTAL_MEETINGS_MANAGE, PORTAL_MEETING_EDIT)
 def meetings_dashboard():
     _send_due_meeting_reminders()
     can_manage = _meeting_manage_allowed()
@@ -6913,6 +7065,18 @@ def meeting_new():
             db.session.add(row)
             db.session.flush()
 
+            # The organizer always receives the meeting-scoped edit
+            # permission, independently of the organizer's current global
+            # portal permissions.
+            organizer_id = getattr(current_user, "id", None)
+            if organizer_id:
+                db.session.add(PortalMeetingPermission(
+                    meeting_id=row.id,
+                    user_id=organizer_id,
+                    permission=PORTAL_MEETING_EDIT,
+                    granted_by_user_id=organizer_id,
+                ))
+
             for uid in participant_ids:
                 db.session.add(PortalMeetingParticipant(
                     meeting_id=row.id,
@@ -6949,6 +7113,81 @@ def meeting_new():
     return render_template("portal/meetings/form.html", form=form, users=users)
 
 
+@portal_bp.route("/meetings/<int:meeting_id>/edit", methods=["GET", "POST"])
+@login_required
+def meeting_edit(meeting_id: int):
+    """Edit a meeting, including after its scheduled date has passed."""
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    if not _meeting_can_access(row):
+        abort(403)
+    _meeting_require_manager(row)
+
+    users = _meeting_user_options()
+    form = {
+        "title": row.title or "",
+        "description": row.description or "",
+        "location": row.location or "",
+        "start_at": row.start_at.strftime("%Y-%m-%dT%H:%M") if row.start_at else "",
+        "end_at": row.end_at.strftime("%Y-%m-%dT%H:%M") if row.end_at else "",
+        "reminder_minutes_before": str(row.reminder_minutes_before or 0),
+        "participant_ids": [str(getattr(p, "user_id", "")) for p in (row.participants or [])],
+        "agenda_lines": "",
+    }
+
+    if request.method == "POST":
+        form.update({
+            "title": (request.form.get("title") or "").strip(),
+            "description": (request.form.get("description") or "").strip(),
+            "location": (request.form.get("location") or "").strip(),
+            "start_at": (request.form.get("start_at") or "").strip(),
+            "end_at": (request.form.get("end_at") or "").strip(),
+            "reminder_minutes_before": (request.form.get("reminder_minutes_before") or "60").strip(),
+        })
+        start_at = _parse_dt_local(form["start_at"])
+        end_at = _parse_dt_local(form["end_at"])
+        try:
+            reminder_minutes = max(0, int(form["reminder_minutes_before"] or 60))
+        except Exception:
+            reminder_minutes = 60
+
+        if not form["title"]:
+            flash("عنوان الاجتماع مطلوب.", "danger")
+        elif not start_at:
+            flash("موعد بداية الاجتماع مطلوب.", "danger")
+        elif end_at and end_at <= start_at:
+            flash("وقت نهاية الاجتماع يجب أن يكون بعد وقت البداية.", "warning")
+        else:
+            try:
+                row.title = form["title"][:200]
+                row.description = form["description"] or None
+                row.location = form["location"] or None
+                row.start_at = start_at
+                row.end_at = end_at
+                row.reminder_minutes_before = reminder_minutes
+                _portal_audit(
+                    "MEETING_UPDATE",
+                    note=f"meeting_id={row.id}",
+                    target_type="PORTAL_MEETING",
+                    target_id=row.id,
+                )
+                db.session.commit()
+                flash("تم تحديث بيانات الاجتماع.", "success")
+                return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception("Failed to update meeting %s", row.id)
+                flash("تعذر تحديث الاجتماع.", "danger")
+
+    return render_template(
+        "portal/meetings/form.html",
+        form=form,
+        users=users,
+        row=row,
+        is_edit=True,
+        form_action=url_for("portal.meeting_edit", meeting_id=row.id),
+    )
+
+
 @portal_bp.route("/meetings/<int:meeting_id>")
 @login_required
 def meeting_view(meeting_id: int):
@@ -6973,6 +7212,9 @@ def meeting_view(meeting_id: int):
         users=_meeting_user_options(),
         task_assignees=_meeting_audience_users(row),
         can_manage=_meeting_can_manage(row),
+        can_manage_permissions=_meeting_can_manage_permissions(row),
+        edit_permission_user_ids=_meeting_edit_permission_user_ids(row),
+        can_manage_letterhead=_meeting_manage_allowed(),
         can_propose_agenda=bool(
             current_participant
             and row.status == "SCHEDULED"
@@ -6987,6 +7229,7 @@ def meeting_view(meeting_id: int):
         meeting_workflow_logs=meeting_workflow_logs,
         meeting_letterhead=_meeting_letterhead_info(),
         attendance_labels=MEETING_ATTENDANCE_LABELS,
+        participant_status_labels=MEETING_PARTICIPANT_STATUS_LABELS,
         recorded_attendance_labels=RECORDED_ATTENDANCE_LABELS,
     )
 
@@ -7119,6 +7362,32 @@ def meeting_minutes_pdf(meeting_id: int):
     )
 
 
+@portal_bp.route("/meetings/<int:meeting_id>/minutes/file")
+@login_required
+def meeting_minutes_file(meeting_id: int):
+    """Open/download the current user-uploaded official minutes file."""
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    if not _meeting_can_access(row):
+        abort(403)
+
+    minutes_file = getattr(row, "minutes_file", None)
+    file_path = _meeting_minutes_file_path(row, minutes_file) if minutes_file else None
+    if not minutes_file or not file_path or not file_path.is_file():
+        abort(404)
+
+    mime_type = getattr(minutes_file, "mime_type", None) or "application/octet-stream"
+    response = send_from_directory(
+        str(file_path.parent),
+        file_path.name,
+        mimetype=mime_type,
+        as_attachment=not is_safe_inline_mimetype(mime_type),
+        download_name=getattr(minutes_file, "original_name", None) or file_path.name,
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
 @portal_bp.route("/meetings/<int:meeting_id>/invitation-response", methods=["POST"])
 @login_required
 def meeting_invitation_response(meeting_id: int):
@@ -7187,7 +7456,6 @@ def meeting_invitation_response(meeting_id: int):
 
 @portal_bp.route("/meetings/<int:meeting_id>/status", methods=["POST"])
 @login_required
-@_perm(PORTAL_MEETINGS_MANAGE)
 def meeting_update_status(meeting_id: int):
     row = PortalMeeting.query.get_or_404(meeting_id)
     _meeting_require_manager(row)
@@ -7213,7 +7481,6 @@ def meeting_update_status(meeting_id: int):
 
 @portal_bp.route("/meetings/<int:meeting_id>/minutes", methods=["POST"])
 @login_required
-@_perm(PORTAL_MEETINGS_MANAGE)
 def meeting_update_minutes(meeting_id: int):
     row = PortalMeeting.query.get_or_404(meeting_id)
     _meeting_require_manager(row)
@@ -7221,6 +7488,9 @@ def meeting_update_minutes(meeting_id: int):
     row.decisions_text = (request.form.get("decisions_text") or "").strip() or None
     saved_paths: list[Path] = []
     attachment_count = 0
+    saved_minutes_file_path: Path | None = None
+    previous_minutes_file_path: Path | None = None
+    minutes_file_replaced = False
     if (request.form.get("mark_done") or "").strip() in ("1", "on"):
         row.status = "DONE"
     try:
@@ -7228,6 +7498,13 @@ def meeting_update_minutes(meeting_id: int):
             row,
             request.files.getlist("minutes_files"),
         )
+        minutes_upload = request.files.get("minutes_file")
+        if minutes_upload and getattr(minutes_upload, "filename", ""):
+            _replacement, saved_minutes_file_path, previous_minutes_file_path = _save_meeting_minutes_file(
+                row,
+                minutes_upload,
+            )
+            minutes_file_replaced = True
         if (request.form.get("notify_minutes") or "").strip() in ("1", "on"):
             _meeting_notify_users(
                 _meeting_participant_user_ids(row),
@@ -7240,7 +7517,10 @@ def meeting_update_minutes(meeting_id: int):
             )
         _portal_audit(
             "MEETING_MINUTES_UPDATE",
-            note=f"meeting_id={row.id} attachments_added={attachment_count}",
+            note=(
+                f"meeting_id={row.id} attachments_added={attachment_count} "
+                f"official_file_replaced={minutes_file_replaced}"
+            ),
             target_type="PORTAL_MEETING",
             target_id=row.id,
         )
@@ -7252,11 +7532,29 @@ def meeting_update_minutes(meeting_id: int):
                 saved_path.unlink(missing_ok=True)
             except OSError:
                 pass
+        if saved_minutes_file_path:
+            try:
+                saved_minutes_file_path.unlink(missing_ok=True)
+            except OSError:
+                pass
         current_app.logger.exception("Failed to save meeting minutes")
         flash("تعذر حفظ المحضر أو مرفقاته.", "danger")
         return redirect(url_for("portal.meeting_view", meeting_id=row.id))
 
-    if attachment_count:
+    if minutes_file_replaced and previous_minutes_file_path:
+        try:
+            previous_minutes_file_path.unlink(missing_ok=True)
+        except OSError:
+            current_app.logger.warning(
+                "Could not remove replaced official meeting minutes file: %s",
+                previous_minutes_file_path,
+            )
+
+    if minutes_file_replaced and attachment_count:
+        flash(f"تم حفظ المحضر واستبدال الملف الرسمي وإضافة {attachment_count} مرفق.", "success")
+    elif minutes_file_replaced:
+        flash("تم حفظ المحضر واستبدال الملف الرسمي.", "success")
+    elif attachment_count:
         flash(f"تم حفظ المحضر والقرارات وإضافة {attachment_count} مرفق.", "success")
     else:
         flash("تم حفظ المحضر والقرارات.", "success")
@@ -7277,14 +7575,13 @@ def meeting_minutes_attachment_download(meeting_id: int, attachment_id: int):
         str(_meeting_minutes_attachment_dir(row.id)),
         attachment.stored_name,
         mimetype=attachment.mime_type or None,
-        as_attachment=True,
+        as_attachment=not is_safe_inline_mimetype(attachment.mime_type),
         download_name=attachment.original_name,
     )
 
 
 @portal_bp.route("/meetings/<int:meeting_id>/minutes/attachments/<int:attachment_id>/delete", methods=["POST"])
 @login_required
-@_perm(PORTAL_MEETINGS_MANAGE)
 def meeting_minutes_attachment_delete(meeting_id: int, attachment_id: int):
     row = PortalMeeting.query.get_or_404(meeting_id)
     _meeting_require_manager(row)
@@ -7319,7 +7616,6 @@ def meeting_minutes_attachment_delete(meeting_id: int, attachment_id: int):
 
 @portal_bp.route("/meetings/<int:meeting_id>/workflow/start", methods=["POST"])
 @login_required
-@_perm(PORTAL_MEETINGS_MANAGE)
 def meeting_start_workflow(meeting_id: int):
     row = PortalMeeting.query.get_or_404(meeting_id)
     _meeting_require_manager(row)
@@ -7341,7 +7637,6 @@ def meeting_start_workflow(meeting_id: int):
 
 @portal_bp.route("/meetings/<int:meeting_id>/participants", methods=["POST"])
 @login_required
-@_perm(PORTAL_MEETINGS_MANAGE)
 def meeting_update_participants(meeting_id: int):
     row = PortalMeeting.query.get_or_404(meeting_id)
     _meeting_require_manager(row)
@@ -7383,15 +7678,66 @@ def meeting_update_participants(meeting_id: int):
     return redirect(url_for("portal.meeting_view", meeting_id=row.id))
 
 
+@portal_bp.route("/meetings/<int:meeting_id>/permissions", methods=["POST"])
+@login_required
+def meeting_update_permissions(meeting_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    if not _meeting_can_access(row):
+        abort(403)
+    if not _meeting_can_manage_permissions(row):
+        abort(403)
+
+    selected: set[int] = set()
+    for value in request.form.getlist("edit_permission_user_ids"):
+        try:
+            user_id = int(value)
+        except Exception:
+            continue
+        if user_id > 0:
+            selected.add(user_id)
+
+    organizer_id = getattr(row, "created_by_user_id", None)
+    if organizer_id:
+        selected.add(int(organizer_id))
+
+    valid_ids = {
+        int(user_id)
+        for (user_id,) in db.session.query(User.id).filter(User.id.in_(selected)).all()
+        if user_id
+    }
+    if organizer_id:
+        valid_ids.add(int(organizer_id))
+
+    db.session.query(PortalMeetingPermission).filter_by(meeting_id=row.id).delete(
+        synchronize_session=False,
+    )
+    for user_id in sorted(valid_ids):
+        db.session.add(PortalMeetingPermission(
+            meeting_id=row.id,
+            user_id=user_id,
+            permission=PORTAL_MEETING_EDIT,
+            granted_by_user_id=getattr(current_user, "id", None),
+        ))
+
+    _portal_audit(
+        "MEETING_PERMISSIONS_UPDATE",
+        note=f"meeting_id={row.id} edit_users={','.join(str(user_id) for user_id in sorted(valid_ids))}",
+        target_type="PORTAL_MEETING",
+        target_id=row.id,
+    )
+    db.session.commit()
+    flash("تم تحديث صلاحية تعديل الاجتماع.", "success")
+    return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+
 @portal_bp.route("/meetings/<int:meeting_id>/attendance", methods=["POST"])
 @login_required
-@_perm(PORTAL_MEETINGS_MANAGE)
 def meeting_update_attendance(meeting_id: int):
     row = PortalMeeting.query.get_or_404(meeting_id)
     _meeting_require_manager(row)
     for p in row.participants or []:
         status = (request.form.get(f"attendance_{p.id}") or "").strip().upper()
-        if status in RECORDED_ATTENDANCE_LABELS:
+        if status in MEETING_ATTENDANCE_LABELS:
             p.attendance_status = status
         p.note = (request.form.get(f"note_{p.id}") or "").strip()[:300] or None
     db.session.commit()
@@ -7480,7 +7826,6 @@ def meeting_add_agenda_item(meeting_id: int):
 
 @portal_bp.route("/meetings/<int:meeting_id>/agenda/reorder", methods=["POST"])
 @login_required
-@_perm(PORTAL_MEETINGS_MANAGE)
 def meeting_reorder_agenda(meeting_id: int):
     row = PortalMeeting.query.get_or_404(meeting_id)
     _meeting_require_manager(row)
@@ -7508,7 +7853,6 @@ def meeting_reorder_agenda(meeting_id: int):
 
 @portal_bp.route("/meetings/<int:meeting_id>/agenda/<int:item_id>", methods=["POST"])
 @login_required
-@_perm(PORTAL_MEETINGS_MANAGE)
 def meeting_update_agenda_item(meeting_id: int, item_id: int):
     row = PortalMeeting.query.get_or_404(meeting_id)
     _meeting_require_manager(row)
@@ -7524,7 +7868,6 @@ def meeting_update_agenda_item(meeting_id: int, item_id: int):
 
 @portal_bp.route("/meetings/<int:meeting_id>/tasks", methods=["POST"])
 @login_required
-@_perm(PORTAL_MEETINGS_MANAGE)
 def meeting_add_task(meeting_id: int):
     row = PortalMeeting.query.get_or_404(meeting_id)
     _meeting_require_manager(row)
@@ -7572,7 +7915,6 @@ def meeting_add_task(meeting_id: int):
 
 @portal_bp.route("/meetings/<int:meeting_id>/tasks/<int:task_id>/status", methods=["POST"])
 @login_required
-@_perm_any(PORTAL_READ, PORTAL_MEETINGS_MANAGE)
 def meeting_task_status(meeting_id: int, task_id: int):
     row = PortalMeeting.query.get_or_404(meeting_id)
     task = PortalMeetingTask.query.filter_by(id=task_id, meeting_id=row.id).first_or_404()
@@ -7593,7 +7935,6 @@ def meeting_task_status(meeting_id: int, task_id: int):
 
 @portal_bp.route("/meetings/<int:meeting_id>/remind", methods=["POST"])
 @login_required
-@_perm(PORTAL_MEETINGS_MANAGE)
 def meeting_send_reminder(meeting_id: int):
     row = PortalMeeting.query.get_or_404(meeting_id)
     _meeting_require_manager(row)
