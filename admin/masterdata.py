@@ -29,6 +29,7 @@ PERM_MODULES = [
 PERM_EXTRA_KEYS = [
     ("WORKFLOW_REOPEN_TO_STEP", "إعادة فتح المسار وإرجاعه إلى خطوة حالية أو سابقة"),
     ("WORKFLOW_TEMPORARY_DELETE", "حذف المسارات والطلبات لمدة ساعة من إنشائها"),
+    ("INVENTORY_FIXED_ASSET_DELETE", "حذف الأصول الثابتة"),
     ("WORKFLOW_REPORTS_READ", "تقارير مسار"),
     ("WORKFLOW_REPORTS_EMAIL_MANAGE", "إدارة إرسال تقارير مسار"),
     ("VIEW_DASHBOARD", "رؤية لوحة Dashboard"),

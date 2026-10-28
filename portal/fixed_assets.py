@@ -45,6 +45,8 @@ from models import (
     InvFixedAssetScanLog,
     InvAssetDocument,
     InvAssetDocumentLine,
+    InvAssetDocumentReservation,
+    InvFixedAssetPreviousLine,
     InvItem,
     InvItemCategory,
     InvRoom,
@@ -69,7 +71,13 @@ from services.fixed_asset_inventory import (
 )
 
 from . import portal_bp
-from .routes import STORE_EXPORT, STORE_MANAGE, STORE_READ, _perm_any
+from .routes import (
+    INVENTORY_FIXED_ASSET_DELETE,
+    STORE_EXPORT,
+    STORE_MANAGE,
+    STORE_READ,
+    _perm_any,
+)
 
 
 PREVIOUS_RESULT_LABELS = {
@@ -877,6 +885,23 @@ def _apply_asset_values(asset: InvFixedAsset, values: dict):
     asset.updated_at = datetime.utcnow()
 
 
+def _fixed_asset_delete_blockers(asset_id: int) -> list[str]:
+    """Return human-readable reasons that an asset cannot be deleted safely."""
+    references = (
+        (InvFixedAssetEntry, "سجل/سجلات الجرد"),
+        (InvFixedAssetScanLog, "قراءة/قراءات الجرد"),
+        (InvAssetDocumentLine, "سطر/سطور عهدة"),
+        (InvAssetDocumentReservation, "حجز/حجوزات عهدة"),
+        (InvFixedAssetPreviousLine, "سطر/سطور من بيانات الجرد السابق"),
+    )
+    blockers = []
+    for model, label in references:
+        count = model.query.filter_by(asset_id=asset_id).count()
+        if count:
+            blockers.append(f"{count} {label}")
+    return blockers
+
+
 def _filtered_assets(args):
     query = InvFixedAsset.query
     search = (args.get("q") or "").strip()
@@ -1079,6 +1104,7 @@ def fixed_asset_list():
         selected=selected,
         can_manage=current_user.has_perm(STORE_MANAGE),
         can_export=current_user.has_perm(STORE_EXPORT) or current_user.has_perm(STORE_MANAGE),
+        can_delete=current_user.has_perm(INVENTORY_FIXED_ASSET_DELETE),
         **_choices(include_items=False, include_users=False),
     )
 
@@ -1157,6 +1183,7 @@ def fixed_asset_view(asset_id: int):
         history=history,
         active_cycles=active_cycles,
         can_manage=current_user.has_perm(STORE_MANAGE),
+        can_delete=current_user.has_perm(INVENTORY_FIXED_ASSET_DELETE),
         custody_history=InvAssetDocument.query.join(InvAssetDocumentLine).filter(InvAssetDocumentLine.asset_id == asset.id).order_by(InvAssetDocument.id.desc()).all(),
     )
 
@@ -1219,6 +1246,42 @@ def fixed_asset_edit(asset_id: int):
         is_new=False,
         **_choices(include_items=False),
     )
+
+
+@portal_bp.route("/inventory/fixed-assets/assets/<int:asset_id>/delete", methods=["POST"])
+@login_required
+@_perm_any(INVENTORY_FIXED_ASSET_DELETE)
+def fixed_asset_delete(asset_id: int):
+    asset = InvFixedAsset.query.get_or_404(asset_id)
+    blockers = _fixed_asset_delete_blockers(asset.id)
+    if blockers:
+        flash(
+            f"لا يمكن حذف الأصل {asset.asset_tag} لأنه مرتبط بـ: {'، '.join(blockers)}. "
+            "استخدم الأرشفة أو حركة إسقاط العهدة بدلاً من الحذف.",
+            "warning",
+        )
+        return redirect(url_for("portal.fixed_asset_view", asset_id=asset.id))
+
+    asset_tag = asset.asset_tag
+    image_filename = asset.image_filename
+    _audit(
+        "INV_FIXED_ASSET_DELETE",
+        f"حذف الأصل الثابت {asset_tag}",
+        "INV_FIXED_ASSET",
+        asset.id,
+    )
+    db.session.delete(asset)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        current_app.logger.exception("Unable to delete fixed asset %s", asset_id)
+        flash("تعذر حذف الأصل لأنه مرتبط بسجلات أخرى. استخدم الأرشفة بدلاً من ذلك.", "danger")
+        return redirect(url_for("portal.fixed_asset_view", asset_id=asset.id))
+
+    _delete_fixed_asset_image(image_filename)
+    flash(f"تم حذف الأصل {asset_tag} نهائياً.", "success")
+    return redirect(url_for("portal.fixed_asset_list"))
 
 
 @portal_bp.route("/inventory/fixed-assets/assets/<int:asset_id>/toggle", methods=["POST"])

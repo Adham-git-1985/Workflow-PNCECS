@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from flask import Flask
+from flask import Flask, g
 from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
 from openpyxl import Workbook
@@ -19,6 +19,7 @@ from models import (
     InvItemCategory,
     InvWarehouse,
     User,
+    UserPermission,
 )
 from portal import portal_bp
 
@@ -87,6 +88,7 @@ class FixedAssetRouteTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             session["_user_id"] = str(self.admin.id)
             session["_fresh"] = True
+        g.__dict__.pop("_login_user", None)
 
     def _create_asset(self, tag="FA-ROUTE-001"):
         asset = InvFixedAsset(
@@ -101,6 +103,48 @@ class FixedAssetRouteTests(unittest.TestCase):
         db.session.add(asset)
         db.session.commit()
         return asset
+
+    def _login_as(self, user):
+        with self.client.session_transaction() as session:
+            session["_user_id"] = str(user.id)
+            session["_fresh"] = True
+        # The test class keeps one app context for the whole suite, so clear
+        # Flask-Login's cached user before switching identities.
+        g.__dict__.pop("_login_user", None)
+
+    def test_fixed_asset_delete_permission_is_listed_and_enforced(self):
+        from portal.perm_defs import ALL_KEYS, PERMS
+        from admin.masterdata import PERM_EXTRA_KEYS
+
+        permission_key = "INVENTORY_FIXED_ASSET_DELETE"
+        self.assertIn(permission_key, ALL_KEYS)
+        self.assertIn(permission_key, dict(PERM_EXTRA_KEYS))
+        definitions = [permission for group in PERMS.values() for permission in group]
+        definition = next(permission for permission in definitions if permission.key == permission_key)
+        self.assertEqual(definition.label, "حذف الأصول الثابتة")
+
+        asset = self._create_asset("FA-DELETE-001")
+        viewer = User(
+            email="fixed-assets-viewer@example.test",
+            name="عارض الأصول",
+            password_hash="not-used",
+            role="USER",
+        )
+        db.session.add(viewer)
+        db.session.flush()
+        db.session.add(UserPermission(user_id=viewer.id, key="STORE_READ", is_allowed=True))
+        db.session.commit()
+        self._login_as(viewer)
+
+        denied = self.client.post(f"/portal/inventory/fixed-assets/assets/{asset.id}/delete")
+        self.assertEqual(denied.status_code, 403)
+        self.assertIsNotNone(InvFixedAsset.query.get(asset.id))
+
+        db.session.add(UserPermission(user_id=viewer.id, key=permission_key, is_allowed=True))
+        db.session.commit()
+        allowed = self.client.post(f"/portal/inventory/fixed-assets/assets/{asset.id}/delete")
+        self.assertEqual(allowed.status_code, 302)
+        self.assertIsNone(InvFixedAsset.query.get(asset.id))
 
     def test_asset_crud_qr_labels_and_export(self):
         response = self.client.post(

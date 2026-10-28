@@ -197,6 +197,7 @@ PERMS: Dict[str, List[PermDef]] = {
         PermDef("INVENTORY_ADMIN_FINANCE_DIRECTOR_APPROVE", "مدير عام الشؤون الإدارية والمالية", "الاعتماد النهائي أو إحالة طلبات الأثاث والصيانة والتكنولوجيا إلى الأمين العام.", module="INVENTORY_REQUESTS"),
         PermDef("INVENTORY_SECRETARY_GENERAL_APPROVE", "الأمين العام – اعتماد طلبات المواد", "اعتماد أو رفض طلبات المواد المُحالة إليه من مدير عام الشؤون الإدارية والمالية.", module="INVENTORY_REQUESTS"),
         PermDef("INVENTORY_FIXED_ASSET_REPORT_APPROVE", "الأمين العام – اعتماد تقرير الجرد الثابت", "مراجعة واعتماد تقرير لجنة الجرد الثابت أو إعادته للجنة للتعديل.", module="INVENTORY_FIXED_ASSET"),
+        PermDef("INVENTORY_FIXED_ASSET_DELETE", "حذف الأصول الثابتة", "الحذف النهائي للأصل الثابت. لا يمكن حذف أصل مرتبط بسجل جرد أو عهدة أو تاريخ تشغيلي.", module="INVENTORY_FIXED_ASSET"),
         PermDef("STORE_EXPORT", "تصدير المستودع", "تصدير/تحميل جماعي حسب السياسة.", module="STORE"),
     ],
     "الحركة والنقل": [
