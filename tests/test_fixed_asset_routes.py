@@ -182,6 +182,36 @@ class FixedAssetRouteTests(unittest.TestCase):
         self.assertEqual(export_response.status_code, 200)
         self.assertIn("spreadsheetml", export_response.mimetype)
 
+    def test_fixed_asset_list_can_filter_by_custodian(self):
+        first_employee = User(
+            email="fixed-assets-employee-one@example.test",
+            name="موظف الأصول الأول",
+            password_hash="not-used",
+            role="USER",
+        )
+        second_employee = User(
+            email="fixed-assets-employee-two@example.test",
+            name="موظف الأصول الثاني",
+            password_hash="not-used",
+            role="USER",
+        )
+        db.session.add_all([first_employee, second_employee])
+        db.session.flush()
+        first_asset = self._create_asset("FA-FILTER-001")
+        second_asset = self._create_asset("FA-FILTER-002")
+        first_asset.custodian_user_id = first_employee.id
+        second_asset.custodian_user_id = second_employee.id
+        db.session.commit()
+
+        response = self.client.get(
+            f"/portal/inventory/fixed-assets/assets?custodian_user_id={first_employee.id}"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"FA-FILTER-001", response.data)
+        self.assertNotIn(b"FA-FILTER-002", response.data)
+        self.assertIn(b'name="custodian_user_id"', response.data)
+
     def test_optional_asset_image_is_served_and_returned_with_qr_lookup(self):
         image_data = io.BytesIO()
         Image.new("RGB", (4, 4), (32, 112, 160)).save(image_data, format="PNG")

@@ -908,6 +908,7 @@ def _filtered_assets(args):
     category_id = _optional_int(args.get("category_id"))
     warehouse_id = _optional_int(args.get("warehouse_id"))
     room_id = _optional_int(args.get("room_id"))
+    custodian_user_id = _optional_int(args.get("custodian_user_id"))
     lifecycle_status = (args.get("status") or "").strip().upper()
     condition = (args.get("condition") or "").strip().upper()
     active = (args.get("active") or "1").strip()
@@ -930,6 +931,8 @@ def _filtered_assets(args):
         query = query.filter(InvFixedAsset.warehouse_id == warehouse_id)
     if room_id:
         query = query.filter(InvFixedAsset.room_id == room_id)
+    if custodian_user_id:
+        query = query.filter(InvFixedAsset.custodian_user_id == custodian_user_id)
     if lifecycle_status in ASSET_LIFECYCLE_STATUSES:
         query = query.filter(InvFixedAsset.lifecycle_status == lifecycle_status)
     if condition in ASSET_CONDITIONS:
@@ -944,6 +947,7 @@ def _filtered_assets(args):
         "category_id": category_id,
         "warehouse_id": warehouse_id,
         "room_id": room_id,
+        "custodian_user_id": custodian_user_id,
         "status": lifecycle_status,
         "condition": condition,
         "active": active,
