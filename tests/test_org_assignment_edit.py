@@ -23,6 +23,7 @@ from models import (
 from portal.routes import (
     hr_org_assignments_save,
     hr_employee_data_submission_delete,
+    hr_org_node_assign_clear,
     hr_org_node_managers,
     portal_admin_hr_org_structure,
 )
@@ -343,6 +344,53 @@ class OrgAssignmentEditTests(unittest.TestCase):
         self.assertIn('id="orgStructureSearchClear"', template)
         self.assertIn('function setupSearch()', template)
         self.assertIn("activeTab.querySelectorAll('tbody > tr')", template)
+
+    def test_clear_dynamic_assignment_restores_automatic_placement(self):
+        actor = self._user("clear-actor@example.test", "HR actor")
+        employee = self._user("clear-employee@example.test", "Employee")
+        node_type = OrgNodeType(
+            code="DEPARTMENT",
+            name_ar="Department",
+            is_active=True,
+        )
+        db.session.add(node_type)
+        db.session.flush()
+        node = OrgNode(
+            type_id=node_type.id,
+            name_ar="Manual department",
+            is_active=True,
+        )
+        db.session.add(node)
+        db.session.flush()
+        assignment = OrgNodeAssignment(
+            user_id=employee.id,
+            node_id=node.id,
+            title="Manual administrative title",
+            is_primary=True,
+        )
+        employee.org_node_id = node.id
+        db.session.add(assignment)
+        db.session.commit()
+
+        clear = _unwrapped(hr_org_node_assign_clear)
+        with self.app.test_request_context(
+            f"/portal/hr/org-nodes/assignments/{employee.id}/clear",
+            method="POST",
+            data={"return_to": "assign_page"},
+        ), patch("portal.routes.current_user", actor), patch(
+            "portal.routes._portal_audit"
+        ), patch(
+            "portal.routes.url_for", return_value="/portal/hr/org-nodes/assignments"
+        ):
+            response = clear(employee.id)
+
+        db.session.expire_all()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            OrgNodeAssignment.query.filter_by(user_id=employee.id).count(),
+            0,
+        )
+        self.assertIsNone(db.session.get(User, employee.id).org_node_id)
 
     def test_division_can_be_created_under_a_section_with_one_parent_value(self):
         organization = Organization(name_ar="المؤسسة", is_active=True)

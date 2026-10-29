@@ -124,7 +124,12 @@
             <div>
               <div class="d-flex align-items-center gap-2 flex-wrap">
                 <h5 class="mb-0">{{ selected_employee.full_name }}</h5>
-                {% if selected_employee.job_title %}<span class="badge bg-light text-dark border">{{ selected_employee.job_title }}</span>{% endif %}
+                {% if selected_admin_title %}
+                  <span class="badge bg-light text-dark border">{{ selected_admin_title }}</span>
+                  {% if selected_admin_title_manual %}
+                    <span class="badge bg-warning-subtle text-dark border">مسمى يدوي</span>
+                  {% endif %}
+                {% endif %}
               </div>
               <div class="small text-muted mt-1" dir="ltr">{{ selected_employee.email or selected_employee.username or '—' }}</div>
             </div>
@@ -145,6 +150,29 @@
                 </div>
               {% else %}
                 <div class="text-muted">لا يوجد تعيين هيكلي محفوظ لهذا الموظف.</div>
+              {% endif %}
+
+              {% if can_manage_org %}
+                <div class="border-top mt-3 pt-3 d-flex flex-wrap align-items-center justify-content-between gap-2">
+                  <div class="small text-muted">بدون تدخل يدوي يبقى هذا الموقع وسلسلة الإدارة مستخرجين تلقائياً من الهيكل وملف الموظف.</div>
+                  <div class="d-flex flex-wrap gap-2">
+                    <a class="btn btn-sm btn-outline-primary"
+                       href="{{ url_for('portal.hr_org_node_assign_user', user_id=selected_employee.id, q=employee_query_text or '') }}">
+                      <i class="bi bi-pencil-square"></i> تعديل المسمى والإدارة
+                    </a>
+                    {% if selected_manual_placement %}
+                      <form method="post" action="{{ url_for('portal.hr_org_node_assign_clear', user_id=selected_employee.id) }}"
+                            onsubmit="return confirm('إلغاء التعيين الإداري اليدوي والعودة إلى التعيين التلقائي؟');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="return_to" value="org_structure">
+                        <input type="hidden" name="q" value="{{ employee_query_text or '' }}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                          <i class="bi bi-arrow-counterclockwise"></i> العودة للتلقائي
+                        </button>
+                      </form>
+                    {% endif %}
+                  </div>
+                </div>
               {% endif %}
             </div>
           </div>
@@ -219,13 +247,13 @@
               {% if can_manage_org and selected_responsible_rows %}
                 <div class="d-flex justify-content-end mt-3">
                   <form method="post" action="{{ url_for('portal.hr_org_employee_responsibles_clear') }}"
-                        onsubmit="return confirm('????? ???? ????????? ???????? ??????? ??? ??????? ?????????');">
+                        onsubmit="return confirm('إلغاء جميع المسؤولين المخصصين والعودة إلى التعيين التلقائي؟');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="employee_user_id" value="{{ selected_employee.id }}">
                     <input type="hidden" name="q" value="{{ employee_query_text or '' }}">
                     <button type="submit" class="btn btn-outline-danger">
                       <i class="bi bi-arrow-counterclockwise"></i>
-                      ????? ???? ????????? ??????? ????????
+                      إلغاء جميع التعيينات والعودة للتلقائي
                     </button>
                   </form>
                 </div>

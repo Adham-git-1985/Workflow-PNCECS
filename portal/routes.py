@@ -32308,6 +32308,43 @@ def _employee_responsible_rows(user_id: int, *, active_only: bool = True) -> lis
     return query.order_by(EmployeeResponsibleAssignment.id.asc()).all()
 
 
+def _primary_org_node_assignment_for_user(user_id: int) -> OrgNodeAssignment | None:
+    """Return the effective manual placement row, if one exists."""
+    return (
+        OrgNodeAssignment.query
+        .filter_by(user_id=int(user_id))
+        .order_by(
+            OrgNodeAssignment.is_primary.desc(),
+            OrgNodeAssignment.id.desc(),
+        )
+        .first()
+    )
+
+
+def _employee_display_admin_title(
+    user: User,
+    assignment: OrgNodeAssignment | None = None,
+) -> tuple[str, bool]:
+    """Return the title shown on the org page and whether it is a manual override."""
+    manual_title = (getattr(assignment, "title", None) or "").strip() if assignment else ""
+    if manual_title:
+        return manual_title, True
+
+    current_title = (getattr(user, "job_title", None) or "").strip()
+    if current_title:
+        return current_title, False
+
+    employee_file = getattr(user, "employee_file", None)
+    lookup_id = getattr(employee_file, "admin_title_lookup_id", None) if employee_file else None
+    if lookup_id:
+        lookup = db.session.get(HRLookupItem, int(lookup_id))
+        if lookup:
+            label = (getattr(lookup, "name_ar", None) or getattr(lookup, "name_en", None) or "").strip()
+            if label:
+                return label, False
+    return "", False
+
+
 def _employee_responsible_exists(employee_column, responsible_user_id: int):
     """Return a correlated SQL predicate for an active employee override."""
     return exists().where(
@@ -32784,6 +32821,10 @@ def hr_org_structure():
     # A selected employee may be outside the current search result after a
     # bookmarked link; still render the requested record when it exists.
     selected_employee_detail = None
+    selected_org_assignment = None
+    selected_admin_title = ""
+    selected_admin_title_manual = False
+    selected_manual_placement = False
     selected_responsible_rows = []
     selected_effective_responsibles = []
     if selected_employee:
@@ -32801,6 +32842,15 @@ def hr_org_structure():
                 dynamic_node_by_id,
                 dynamic_manager_map,
             )
+        selected_org_assignment = _primary_org_node_assignment_for_user(selected_employee.id)
+        selected_manual_placement = bool(
+            selected_org_assignment
+            or getattr(selected_employee, "org_node_id", None)
+        )
+        selected_admin_title, selected_admin_title_manual = _employee_display_admin_title(
+            selected_employee,
+            selected_org_assignment,
+        )
         selected_responsible_rows = _employee_responsible_rows(int(selected_employee.id))
         try:
             selected_effective_responsibles = resolve_responsible_managers(int(selected_employee.id))
@@ -32844,6 +32894,10 @@ def hr_org_structure():
         employee_search_rows=employee_search_rows,
         selected_employee=selected_employee,
         selected_employee_detail=selected_employee_detail,
+        selected_org_assignment=selected_org_assignment,
+        selected_admin_title=selected_admin_title,
+        selected_admin_title_manual=selected_admin_title_manual,
+        selected_manual_placement=selected_manual_placement,
         selected_responsible_rows=selected_responsible_rows,
         selected_responsible_ids=[
             int(row.responsible_user_id) for row in selected_responsible_rows
@@ -33275,6 +33329,10 @@ def hr_org_node_assign_user(user_id: int):
         title = (request.form.get("title") or "").strip() or None
         is_primary = bool(request.form.get("is_primary"))
 
+        if title and len(title) > 120:
+            flash("المسمى الإداري طويل جداً (الحد الأقصى 120 حرفاً).", "danger")
+            return redirect(url_for("portal.hr_org_node_assign_user", user_id=user_id))
+
         if not node_id:
             flash("اختر عنصر الهيكلية أولاً.", "warning")
             return redirect(url_for("portal.hr_org_node_assign_user", user_id=user_id))
@@ -33296,6 +33354,14 @@ def hr_org_node_assign_user(user_id: int):
             db.session.flush()  # ensure a.id for updates below
         except Exception:
             pass
+
+        _portal_audit(
+            "HR_ORG_ASSIGN_SET",
+            f"تعيين {u.full_name} على العنصر الهيكلي {node.name_ar}"
+            f"؛ المسمى الإداري: {title or 'بدون مسمى يدوي'}",
+            target_type="ORG_ASSIGN",
+            target_id=int(a.id or 0),
+        )
 
         if is_primary:
             # unset other primary assignments
@@ -33329,6 +33395,18 @@ def hr_org_node_assign_user(user_id: int):
         .order_by(OrgNodeAssignment.is_primary.desc(), OrgNodeAssignment.id.desc())
         .all()
     )
+    selected_assignment = assignments[0] if assignments else None
+    selected_id = (
+        int(selected_assignment.node_id)
+        if selected_assignment
+        else getattr(u, "org_node_id", None)
+    )
+    selected_label = node_path_label(selected_id) if selected_id else ""
+    selected_title = (
+        (selected_assignment.title or "").strip()
+        if selected_assignment
+        else ""
+    )
 
     tree = build_org_node_picker_tree(mode="all")
 
@@ -33337,8 +33415,52 @@ def hr_org_node_assign_user(user_id: int):
         emp=u,
         assignments=assignments,
         tree=tree,
-        selected_id=getattr(u, "org_node_id", None),
+        selected_assignment=selected_assignment,
+        selected_id=selected_id,
+        selected_label=selected_label,
+        selected_title=selected_title,
     )
+
+
+@portal_bp.route("/hr/org-nodes/assignments/<int:user_id>/clear", methods=["POST"])
+@login_required
+@_perm_any(HR_ORG_MANAGE, HR_MASTERDATA_MANAGE)
+def hr_org_node_assign_clear(user_id: int):
+    """Remove manual placement rows and let the automatic hierarchy resolve again."""
+    employee = User.query.get_or_404(user_id)
+    rows = OrgNodeAssignment.query.filter_by(user_id=employee.id).all()
+    had_manual_pointer = bool(getattr(employee, "org_node_id", None))
+
+    for row in rows:
+        db.session.delete(row)
+    employee.org_node_id = None
+
+    _portal_audit(
+        "HR_ORG_ASSIGN_CLEAR",
+        f"إلغاء التعيين الإداري اليدوي للموظف {employee.full_name} والعودة للتلقائي",
+        target_type="ORG_ASSIGN",
+        target_id=int(employee.id),
+    )
+
+    try:
+        db.session.commit()
+        if rows or had_manual_pointer:
+            flash("تم إلغاء التعيين الإداري اليدوي، وستعود الإدارة وسلسلة المديرين للتلقائي.", "success")
+        else:
+            flash("لا يوجد تعيين إداري يدوي لإلغائه.", "info")
+    except Exception:
+        db.session.rollback()
+        flash("تعذر إلغاء التعيين الإداري اليدوي.", "danger")
+
+    return_to = (request.form.get("return_to") or "assign_page").strip().lower()
+    q = (request.form.get("q") or "").strip()
+    if return_to == "org_structure":
+        return redirect(url_for(
+            "portal.hr_org_structure",
+            q=q or None,
+            employee_id=employee.id,
+        ))
+    return redirect(url_for("portal.hr_org_node_assign_user", user_id=employee.id))
 
 
 @portal_bp.route("/hr/org-nodes/assignments/<int:user_id>/delete/<int:assign_id>", methods=["POST"])

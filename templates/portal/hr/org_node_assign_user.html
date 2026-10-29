@@ -6,7 +6,7 @@
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
   <div>
     <h4 class="mb-0">تعيين موظف على الهيكلية الموحدة</h4>
-    <div class="text-muted small">استخدم الشجرة لاختيار عنصر الهيكلية، ثم احفظ.</div>
+    <div class="text-muted small">هذا التعيين اختياري: إذا لم تحفظ تعييناً يدوياً فسيستخدم النظام الإدارة وسلسلة المديرين التلقائية.</div>
   </div>
   <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_org_node_assignments', q=request.args.get('q','')) }}">رجوع</a>
 </div>
@@ -19,10 +19,10 @@
         <div class="text-muted"><span dir="ltr">{{ emp.email }}</span></div>
       </div>
       <div class="col-md-6 text-md-end">
-        {% if selected_id %}
-          <span class="badge bg-success-subtle text-success border">التبعية الأساسية محفوظة (id: {{ selected_id }})</span>
+        {% if selected_assignment %}
+          <span class="badge bg-warning-subtle text-dark border">تعيين يدوي محفوظ</span>
         {% else %}
-          <span class="badge bg-secondary-subtle text-secondary border">لا توجد تبعية أساسية</span>
+          <span class="badge bg-success-subtle text-success border">تلقائي من الهيكل الحالي</span>
         {% endif %}
       </div>
     </div>
@@ -35,17 +35,17 @@
       <div class="col-12">
         <label class="form-label">عنصر الهيكلية الموحدة</label>
         <div class="d-flex flex-wrap gap-2 align-items-center">
-          <input type="hidden" name="node_id" id="assign_node_id" value="">
-          <input class="form-control" id="assign_node_label" value="—" readonly style="max-width: 520px;">
+          <input type="hidden" name="node_id" id="assign_node_id" value="{{ selected_id or '' }}">
+          <input class="form-control" id="assign_node_label" value="{{ selected_label or '—' }}" readonly style="max-width: 520px;">
           <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#assignOrgNodePickerModal">🌳 اختيار من الشجرة</button>
           <button type="button" class="btn btn-outline-danger" id="assign_node_clear">مسح</button>
         </div>
-        <div class="form-text text-muted">سيتم استخدام هذا التعيين في قواعد التوجيه والمسارات (حسب إعدادات الأنواع).</div>
+        <div class="form-text text-muted">عند الحفظ يصبح هذا الموقع هو الموقع اليدوي الأساسي للموظف، وتُبنى منه سلسلة الإدارة.</div>
       </div>
 
       <div class="col-md-8">
-        <label class="form-label">المسمى/الوصف (اختياري)</label>
-        <input class="form-control" name="title" placeholder="مثال: مسؤول متابعة" maxlength="120">
+        <label class="form-label">المسمى الإداري/المنصب (اختياري)</label>
+        <input class="form-control" name="title" value="{{ selected_title or '' }}" placeholder="مثال: مسؤول متابعة" maxlength="120">
       </div>
 
       <div class="col-md-4 d-flex align-items-end">
@@ -59,6 +59,17 @@
         <button class="btn btn-success" type="submit">حفظ التعيين</button>
       </div>
     </form>
+
+    {% if selected_assignment or selected_id %}
+      <div class="border-top mt-3 pt-3 d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <div class="small text-muted">لإلغاء الموقع والمسمى اليدويين، اترك النظام يعود إلى بيانات الموظف والهيكل التلقائي.</div>
+        <form method="post" action="{{ url_for('portal.hr_org_node_assign_clear', user_id=emp.id) }}"
+              onsubmit="return confirm('إلغاء التعيين الإداري اليدوي والعودة إلى التعيين التلقائي؟');">
+          <input type="hidden" name="return_to" value="assign_page">
+          <button class="btn btn-outline-danger" type="submit">إلغاء التعيين والعودة للتلقائي</button>
+        </form>
+      </div>
+    {% endif %}
   </div>
 </div>
 
