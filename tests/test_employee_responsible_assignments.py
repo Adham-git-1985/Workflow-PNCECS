@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from flask import Flask
+from flask import Flask, g
 from flask_login import LoginManager
 
 from extensions import db
@@ -54,6 +54,9 @@ class EmployeeResponsibleAssignmentTests(unittest.TestCase):
         cls.context.pop()
 
     def setUp(self):
+        # The class keeps one application context alive; clear Flask-Login's
+        # request-local cache before creating the next isolated test client.
+        g.pop("_login_user", None)
         db.session.remove()
         db.drop_all()
         db.create_all()
@@ -250,6 +253,56 @@ class EmployeeResponsibleAssignmentTests(unittest.TestCase):
             "HR_EMPLOYEE_RESPONSIBLE_REMOVE",
             "HR_EMPLOYEE_RESPONSIBLE_UPDATE",
         }.issubset(actions))
+
+    def test_clear_route_deactivates_all_assignments_and_restores_automatic_manager(self):
+        db.session.add_all((
+            EmployeeResponsibleAssignment(
+                employee_user_id=self.employee.id,
+                responsible_user_id=self.first_manager.id,
+                reason="Temporary explicit assignment one",
+            ),
+            EmployeeResponsibleAssignment(
+                employee_user_id=self.employee.id,
+                responsible_user_id=self.second_manager.id,
+                reason="Temporary explicit assignment two",
+            ),
+        ))
+        db.session.commit()
+
+        self._login(self.actor.id)
+        response = self.client.post(
+            "/portal/hr/org-structure/employee-responsibles/clear",
+            data={
+                "employee_user_id": str(self.employee.id),
+                "q": "Employee Under Assignment",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            EmployeeResponsibleAssignment.query.filter_by(
+                employee_user_id=self.employee.id,
+                is_active=True,
+            ).count(),
+            0,
+        )
+        self.assertEqual(
+            EmployeeResponsibleAssignment.query.filter_by(
+                employee_user_id=self.employee.id,
+            ).count(),
+            2,
+        )
+        self.assertEqual(
+            [manager.id for manager in resolve_responsible_managers(self.employee.id)],
+            [self.legacy_manager.id],
+        )
+        self.assertEqual(
+            AuditLog.query.filter(
+                AuditLog.target_type == "EMPLOYEE_RESPONSIBILITY",
+                AuditLog.action == "HR_EMPLOYEE_RESPONSIBLE_REMOVE",
+            ).count(),
+            2,
+        )
 
 
 if __name__ == "__main__":

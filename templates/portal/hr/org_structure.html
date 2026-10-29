@@ -216,6 +216,21 @@
                 </form>
               {% endif %}
 
+              {% if can_manage_org and selected_responsible_rows %}
+                <div class="d-flex justify-content-end mt-3">
+                  <form method="post" action="{{ url_for('portal.hr_org_employee_responsibles_clear') }}"
+                        onsubmit="return confirm('????? ???? ????????? ???????? ??????? ??? ??????? ?????????');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="employee_user_id" value="{{ selected_employee.id }}">
+                    <input type="hidden" name="q" value="{{ employee_query_text or '' }}">
+                    <button type="submit" class="btn btn-outline-danger">
+                      <i class="bi bi-arrow-counterclockwise"></i>
+                      ????? ???? ????????? ??????? ????????
+                    </button>
+                  </form>
+                </div>
+              {% endif %}
+
               {% if selected_responsible_rows %}
                 <div class="table-responsive mt-3">
                   <table class="table table-sm align-middle bg-white mb-0">

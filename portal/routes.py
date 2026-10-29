@@ -32984,6 +32984,75 @@ def hr_org_employee_responsibles_save():
     return back()
 
 
+@portal_bp.route("/hr/org-structure/employee-responsibles/clear", methods=["POST"])
+@login_required
+@_perm_any(HR_ORG_MANAGE, HR_MASTERDATA_MANAGE)
+def hr_org_employee_responsibles_clear():
+    """Deactivate every explicit responsible assignment for one employee.
+
+    Clearing the explicit rows is different from deleting the employee's
+    history: the rows remain inactive for audit purposes, and routing falls
+    back to the automatic hierarchy resolution.
+    """
+    employee_id_raw = (request.form.get("employee_user_id") or "").strip()
+    employee_id = int(employee_id_raw) if employee_id_raw.isdigit() else None
+    q = (request.form.get("q") or "").strip()
+
+    def back():
+        return redirect(url_for(
+            "portal.hr_org_structure",
+            q=q or None,
+            employee_id=employee_id,
+        ))
+
+    if not employee_id:
+        flash("???? ?????? ??? ????.", "danger")
+        return back()
+
+    employee = db.session.get(User, employee_id)
+    if not employee:
+        flash("?????? ??? ?????.", "danger")
+        return back()
+
+    active_rows = (
+        EmployeeResponsibleAssignment.query
+        .filter_by(employee_user_id=employee_id, is_active=True)
+        .order_by(EmployeeResponsibleAssignment.id.asc())
+        .all()
+    )
+    if not active_rows:
+        flash("?? ???? ??????? ?????? ????? ???????.", "info")
+        return back()
+
+    now = datetime.utcnow()
+    for row in active_rows:
+        row.is_active = False
+        row.updated_at = now
+        row.updated_by_id = current_user.id
+        responsible = getattr(row, "responsible", None)
+        responsible_name = responsible.full_name if responsible else f"#{row.responsible_user_id}"
+        _portal_audit(
+            "HR_EMPLOYEE_RESPONSIBLE_REMOVE",
+            (
+                f"????? ???? ????????? ????????? ?????? {employee.full_name}: "
+                f"{responsible_name}? ????? ??????: {(row.reason or '').strip()}"
+            ),
+            target_type="EMPLOYEE_RESPONSIBILITY",
+            target_id=employee_id,
+        )
+
+    try:
+        db.session.commit()
+        flash(
+            "?? ????? ???? ????????? ????????? ?????? ?????? ??? ??????? ????????.",
+            "success",
+        )
+    except Exception:
+        db.session.rollback()
+        flash("???? ????? ????????? ????????.", "danger")
+    return back()
+
+
 @portal_bp.route("/hr/org-structure/employee-responsibles/<int:assignment_id>/remove", methods=["POST"])
 @login_required
 @_perm_any(HR_ORG_MANAGE, HR_MASTERDATA_MANAGE)
