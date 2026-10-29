@@ -8441,8 +8441,8 @@ class HREmployeeAchievementApproval(db.Model):
         index=True,
     )
     approver_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
-    approver_role = db.Column(db.String(30), nullable=False, default="DIRECT_MANAGER", index=True)
-    # DIRECT_MANAGER rows are actionable; SECRETARY_GENERAL rows are read-only.
+    approver_role = db.Column(db.String(30), nullable=False, default="SECRETARY_GENERAL", index=True)
+    # SECRETARY_GENERAL rows are actionable; DIRECT_MANAGER rows are read-only.
     status = db.Column(db.String(20), nullable=False, default="PENDING", index=True)
     distinction_level = db.Column(db.String(20), nullable=True)
     evaluation_points = db.Column(db.Float, nullable=True, default=0.0)

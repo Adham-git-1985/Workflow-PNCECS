@@ -3,7 +3,7 @@
 {% block hr_content %}
 <section class="rounded-4 p-4 mb-3 text-dark" style="background:linear-gradient(135deg,#d9f7e8,#b9ecd2);border:1px solid #56b884;">
   <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
-    <div><div class="small fw-bold text-uppercase mb-1"><i class="bi bi-check2-square"></i> مسار الاعتماد</div><h1 class="h3 fw-bold mb-2">اعتماد إنجازات الموظفين</h1><p class="mb-0">حدد مستوى الإنجاز وسجل قرارك؛ سبب الرفض مطلوب ليظهر للموظف والأمين العام.</p></div>
+    <div><div class="small fw-bold text-uppercase mb-1"><i class="bi bi-check2-square"></i> مسار الاعتماد</div><h1 class="h3 fw-bold mb-2">اعتماد إنجازات الموظفين</h1><p class="mb-0">حدد مستوى الإنجاز وسجل قرار الأمين العام؛ سبب الرفض مطلوب ليظهر للموظف والمدير.</p></div>
     <a class="btn btn-dark" href="{{ url_for('portal.hr_my_achievements') }}"><i class="bi bi-arrow-right"></i> صفحة الإنجازات</a>
   </div>
 </section>
@@ -14,7 +14,7 @@
       {% for step in rows %}
       <a class="list-group-item list-group-item-action d-flex flex-wrap justify-content-between align-items-center gap-2" href="{{ url_for('portal.hr_achievement_view', achievement_id=step.achievement_id) }}">
         <span><strong>{{ step.achievement.title }}</strong><span class="small text-muted d-block">الموظف: {{ step.achievement.user.full_name }} · تاريخ الإنجاز: {{ step.achievement.achieved_on }}</span></span>
-        <span class="badge text-bg-warning">بانتظار الاعتماد</span>
+        <span class="badge text-bg-warning">بانتظار قرارك</span>
       </a>
       {% endfor %}
     </div>

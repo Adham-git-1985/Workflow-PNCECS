@@ -1,14 +1,20 @@
 import json
 import unittest
 from datetime import datetime
+from unittest.mock import patch
 
 from flask import Flask
 from flask_login import LoginManager, login_user, logout_user
 
 from extensions import db
-from models import EmployeeEvaluationRun, HREmployeeAchievement, User
+from models import EmployeeEvaluationRun, HREmployeeAchievement, HREmployeeAchievementApproval, User
 from portal import portal_bp
-from portal.routes import hr_my_achievements
+from portal.routes import (
+    _achievement_access_level,
+    _ensure_achievement_approval_path,
+    hr_achievement_review,
+    hr_my_achievements,
+)
 from services.evaluation_service import (
     _score_with_achievement_bonus,
     compute_employee_evaluation,
@@ -167,6 +173,122 @@ class EmployeeAchievementTests(unittest.TestCase):
         self.assertEqual(score_5, 5.0)
         self.assertEqual(bonus["applied_points"], 2.0)
         self.assertEqual(bonus["limited_points"], 3.0)
+
+    def test_achievement_path_sends_manager_copy_and_secretary_decision(self):
+        manager = User(
+            email="achievement.manager@example.test",
+            name="Achievement Manager",
+            password_hash="x",
+            role="USER",
+        )
+        secretary = User(
+            email="achievement.secretary@example.test",
+            name="Achievement Secretary",
+            password_hash="x",
+            role="SUPERADMIN",
+        )
+        db.session.add_all((manager, secretary))
+        db.session.flush()
+
+        row = HREmployeeAchievement(
+            user_id=self.employee.id,
+            achievement_type="AWARD",
+            title="Path test",
+            achieved_on="2026-09-10",
+            status="PENDING",
+            distinction_level="NOTABLE",
+            evaluation_points=0.0,
+        )
+        db.session.add(row)
+        db.session.flush()
+
+        with patch("portal.routes._achievement_manager_ids", return_value=[manager.id]), \
+             patch("portal.routes.secretary_general_user_ids", return_value=[secretary.id]), \
+             patch("portal.routes._achievement_privileged", return_value=False):
+            _ensure_achievement_approval_path(row)
+
+            steps = {(step.approver_role, step.approver_user_id): step for step in row.approval_steps}
+            self.assertEqual(steps[("DIRECT_MANAGER", manager.id)].status, "VIEW_ONLY")
+            self.assertEqual(steps[("SECRETARY_GENERAL", secretary.id)].status, "PENDING")
+            self.assertEqual(_achievement_access_level(row, manager), "observer")
+            self.assertEqual(_achievement_access_level(row, secretary), "secretary_general")
+
+        db.session.commit()
+
+        with patch("portal.routes._achievement_manager_ids", return_value=[manager.id]), \
+             patch("portal.routes.secretary_general_user_ids", return_value=[secretary.id]), \
+             patch("portal.routes._achievement_privileged", return_value=False):
+            with self.app.test_request_context(
+                f"/portal/hr/achievements/{row.id}/review",
+                method="POST",
+                data={
+                    "action": "APPROVE",
+                    "distinction_level": "SIGNIFICANT",
+                    "decision_note": "Approved by the Secretary General.",
+                },
+            ):
+                login_user(secretary)
+                response = hr_achievement_review(row.id)
+                logout_user()
+
+        self.assertEqual(response.status_code, 302)
+        db.session.refresh(row)
+        self.assertEqual(row.status, "APPROVED")
+        self.assertEqual(row.reviewed_by_id, secretary.id)
+        steps = {(step.approver_role, step.approver_user_id): step for step in row.approval_steps}
+        self.assertEqual(steps[("DIRECT_MANAGER", manager.id)].status, "VIEW_ONLY")
+        self.assertEqual(steps[("SECRETARY_GENERAL", secretary.id)].status, "APPROVED")
+
+    def test_pending_legacy_path_is_reversed_without_reopening_completed_rows(self):
+        manager = User(
+            email="legacy.manager@example.test",
+            name="Legacy Manager",
+            password_hash="x",
+            role="USER",
+        )
+        secretary = User(
+            email="legacy.secretary@example.test",
+            name="Legacy Secretary",
+            password_hash="x",
+            role="USER",
+        )
+        db.session.add_all((manager, secretary))
+        db.session.flush()
+
+        row = HREmployeeAchievement(
+            user_id=self.employee.id,
+            achievement_type="AWARD",
+            title="Legacy path test",
+            achieved_on="2026-09-11",
+            status="PENDING",
+            distinction_level="NOTABLE",
+            evaluation_points=0.0,
+        )
+        db.session.add(row)
+        db.session.flush()
+        db.session.add_all((
+            HREmployeeAchievementApproval(
+                achievement_id=row.id,
+                approver_user_id=manager.id,
+                approver_role="DIRECT_MANAGER",
+                status="PENDING",
+            ),
+            HREmployeeAchievementApproval(
+                achievement_id=row.id,
+                approver_user_id=secretary.id,
+                approver_role="SECRETARY_GENERAL",
+                status="VIEW_ONLY",
+            ),
+        ))
+        db.session.commit()
+
+        with patch("portal.routes._achievement_manager_ids", return_value=[manager.id]), \
+             patch("portal.routes.secretary_general_user_ids", return_value=[secretary.id]):
+            _ensure_achievement_approval_path(row)
+
+        steps = {(step.approver_role, step.approver_user_id): step for step in row.approval_steps}
+        self.assertEqual(steps[("DIRECT_MANAGER", manager.id)].status, "VIEW_ONLY")
+        self.assertEqual(steps[("SECRETARY_GENERAL", secretary.id)].status, "PENDING")
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@
         {% if row.description %}<p class="mb-3">{{ row.description }}</p>{% endif %}
         {% if row.issuer %}<div class="small mb-2"><strong>الجهة المانحة أو الناشرة:</strong> {{ row.issuer }}</div>{% endif %}
         {% if row.evidence_reference %}<div class="small mb-2"><strong>الدليل أو المرجع:</strong> {{ row.evidence_reference }}</div>{% endif %}
-        {% if row.status == 'APPROVED' %}<div class="alert alert-success mb-0"><strong>{{ level_meta.label }}</strong> — +{{ '%.0f'|format(row.evaluation_points) }} نقطة من 100.</div>{% elif row.status == 'REJECTED' %}<div class="alert alert-danger mb-0"><strong>سبب الرفض:</strong> {{ row.review_note or 'لم يسجل سبب.' }}</div>{% else %}<div class="alert alert-warning mb-0">الطلب لا يدخل في التقييم قبل قرار المدير واعتماده.</div>{% endif %}
+        {% if row.status == 'APPROVED' %}<div class="alert alert-success mb-0"><strong>{{ level_meta.label }}</strong> — +{{ '%.0f'|format(row.evaluation_points) }} نقطة من 100.</div>{% elif row.status == 'REJECTED' %}<div class="alert alert-danger mb-0"><strong>سبب الرفض:</strong> {{ row.review_note or 'لم يسجل سبب.' }}</div>{% else %}<div class="alert alert-warning mb-0">الطلب لا يدخل في التقييم قبل قرار الأمين العام واعتماده.</div>{% endif %}
       </div>
     </div>
 
@@ -57,12 +57,12 @@
     {% if can_review %}
     <div class="card border-success shadow-sm mb-3">
       <div class="card-body p-4">
-        <h2 class="h5 mb-2"><i class="bi bi-check2-circle text-success"></i> قرار المدير</h2>
+        <h2 class="h5 mb-2"><i class="bi bi-check2-circle text-success"></i> قرار الأمين العام</h2>
         <p class="small text-muted">المتبقي للموظف في فترة التقييم الحالية: <strong>+{{ '%.0f'|format([period_cap - period_total, 0]|max) }}</strong> من أصل +{{ '%.0f'|format(period_cap) }}.</p>
         <form method="post" action="{{ url_for('portal.hr_achievement_review', achievement_id=row.id) }}" class="row g-3">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="col-12"><label class="form-label">درجة الإنجاز عند الاعتماد</label><select class="form-select" name="distinction_level">{% for key, meta in achievement_levels.items() %}<option value="{{ key }}">{{ meta.label }} (+{{ '%.0f'|format(meta.points) }}) — {{ meta.description }}</option>{% endfor %}</select></div>
-          <div class="col-12"><label class="form-label">ملاحظة المدير / سبب القرار</label><textarea class="form-control" name="decision_note" rows="4" placeholder="سبب الرفض مطلوب، والملاحظة مفيدة عند الموافقة"></textarea></div>
+          <div class="col-12"><label class="form-label">ملاحظة الأمين العام / سبب القرار</label><textarea class="form-control" name="decision_note" rows="4" placeholder="سبب الرفض مطلوب، والملاحظة مفيدة عند الموافقة"></textarea></div>
           <div class="col-12 d-flex gap-2"><button class="btn btn-success flex-fill" name="action" value="APPROVE" type="submit"><i class="bi bi-check2"></i> موافقة واعتماد</button><button class="btn btn-outline-danger flex-fill" name="action" value="REJECT" type="submit"><i class="bi bi-x"></i> رفض</button></div>
         </form>
       </div>
@@ -75,14 +75,14 @@
         <div class="vstack gap-2">
           {% for step in row.approval_steps %}
           {% set is_manager = (step.approver_role or '').upper() == 'DIRECT_MANAGER' %}
-          {% set step_label = 'مدير مباشر' if is_manager else 'الأمين العام — اطلاع' %}
-          {% set step_class = 'success' if step.status == 'APPROVED' else ('danger' if step.status == 'REJECTED' else ('secondary' if step.status == 'SKIPPED' else ('info' if not is_manager else 'warning'))) %}
+          {% set step_label = 'مدير مباشر — للاطلاع' if is_manager else 'الأمين العام — اعتماد أو رفض' %}
+          {% set step_class = 'success' if step.status == 'APPROVED' else ('danger' if step.status == 'REJECTED' else ('secondary' if step.status == 'SKIPPED' else ('info' if is_manager else 'warning'))) %}
           <div class="border rounded-3 p-2">
-            <div class="d-flex flex-wrap justify-content-between gap-2"><span><strong>{{ step_label }}</strong> · {{ step.approver.full_name }}</span><span class="badge text-bg-{{ step_class }}">{% if step.status == 'APPROVED' %}موافق{% elif step.status == 'REJECTED' %}مرفوض{% elif step.status == 'SKIPPED' %}تجاوز بعد قرار آخر{% elif is_manager %}بانتظار قرار{% else %}للاطلاع{% endif %}</span></div>
+            <div class="d-flex flex-wrap justify-content-between gap-2"><span><strong>{{ step_label }}</strong> · {{ step.approver.full_name }}</span><span class="badge text-bg-{{ step_class }}">{% if step.status == 'APPROVED' %}موافق{% elif step.status == 'REJECTED' %}مرفوض{% elif step.status == 'SKIPPED' %}تجاوز بعد قرار آخر{% elif is_manager %}للاطلاع{% else %}بانتظار القرار{% endif %}</span></div>
             {% if step.distinction_level %}<div class="small mt-1">{{ achievement_levels.get(step.distinction_level, achievement_levels.NOTABLE).label }} · +{{ '%.0f'|format(step.evaluation_points or 0) }}</div>{% endif %}
             {% if step.decision_note %}<div class="small text-muted mt-1"><strong>الرد/السبب:</strong> {{ step.decision_note }}</div>{% endif %}
           </div>
-          {% else %}<div class="text-muted">لم يتم العثور على مدير مباشر مضبوط للطلب بعد.</div>{% endfor %}
+          {% else %}<div class="text-muted">لم يتم العثور على مدير مباشر أو أمين عام مضبوط للطلب بعد.</div>{% endfor %}
         </div>
         {% if row.reviewed_by %}<div class="small text-muted mt-3">آخر قرار بواسطة: {{ row.reviewed_by.full_name }}{% if row.reviewed_at %} · {{ row.reviewed_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}</div>{% endif %}
       </div>

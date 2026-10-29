@@ -10086,7 +10086,7 @@ def hr_home():
             })
     except Exception:
         pass
-    add_item(HR_ACHIEVEMENTS_REVIEW, "اعتماد الإنجازات", "مراجعة إنجازات الموظفين وتحديد مستوى الإنجاز ونقاطه.", "bi-award", "portal.hr_achievements_review_queue", "البرامج الفرعية")
+    add_item(HR_ACHIEVEMENTS_REVIEW, "اعتماد الإنجازات", "اعتماد أو رفض الإنجاز من الأمين العام مع نسخة للمدير للاطلاع.", "bi-award", "portal.hr_achievements_review_queue", "البرامج الفرعية")
     add_item(
         HR_LEAVE_APPROVED_DELETE,
         "حذف الإجازات المعتمدة",
@@ -27693,7 +27693,7 @@ def _achievement_manager_ids(row: HREmployeeAchievement) -> list[int]:
 
 
 def _ensure_achievement_approval_path(row: HREmployeeAchievement, *, now: datetime | None = None) -> list[HREmployeeAchievementApproval]:
-    """Snapshot direct managers and Secretary General observers for a submission."""
+    """Snapshot direct-manager observers and Secretary General approvers."""
     now = now or datetime.utcnow()
     if (row.status or "").upper() != "PENDING":
         return list(row.approval_steps or [])
@@ -27707,12 +27707,18 @@ def _ensure_achievement_approval_path(row: HREmployeeAchievement, *, now: dateti
     for manager_id in manager_ids:
         key = ("DIRECT_MANAGER", manager_id)
         if key in existing:
+            # Existing pending submissions were created with the old direction
+            # (manager approval). Reconcile them without reopening a completed
+            # decision so the new direction applies to items still in flight.
+            if existing[key].status == "PENDING":
+                existing[key].status = "VIEW_ONLY"
+                existing[key].updated_at = now
             continue
         step = HREmployeeAchievementApproval(
             achievement_id=row.id,
             approver_user_id=manager_id,
             approver_role="DIRECT_MANAGER",
-            status="PENDING",
+            status="VIEW_ONLY",
             assigned_at=now,
             created_at=now,
             updated_at=now,
@@ -27721,27 +27727,43 @@ def _ensure_achievement_approval_path(row: HREmployeeAchievement, *, now: dateti
         row.approval_steps.append(step)
         existing[key] = step
 
-    manager_id_set = set(manager_ids)
     for secretary_id in secretary_general_user_ids():
         secretary_id = int(secretary_id)
-        if secretary_id == int(row.user_id) or secretary_id in manager_id_set:
+        if secretary_id == int(row.user_id):
             continue
         key = ("SECRETARY_GENERAL", secretary_id)
         if key in existing:
+            # Reconcile old read-only Secretary General rows for pending
+            # submissions so they become the actionable step.
+            if existing[key].status == "VIEW_ONLY":
+                existing[key].status = "PENDING"
+                existing[key].updated_at = now
             continue
-        observer = HREmployeeAchievementApproval(
+        approver = HREmployeeAchievementApproval(
             achievement_id=row.id,
             approver_user_id=secretary_id,
             approver_role="SECRETARY_GENERAL",
-            status="VIEW_ONLY",
+            status="PENDING",
             assigned_at=now,
             created_at=now,
             updated_at=now,
         )
-        db.session.add(observer)
-        row.approval_steps.append(observer)
-        existing[key] = observer
+        db.session.add(approver)
+        row.approval_steps.append(approver)
+        existing[key] = approver
     return list(row.approval_steps or [])
+
+
+def _achievement_path_state(row: HREmployeeAchievement) -> tuple:
+    """Return the approval path state used to detect legacy-path updates."""
+    return tuple(
+        (
+            (step.approver_role or "").upper(),
+            int(step.approver_user_id or 0),
+            (step.status or "").upper(),
+        )
+        for step in (row.approval_steps or [])
+    )
 
 
 def _achievement_access_level(row: HREmployeeAchievement, user=None) -> str | None:
@@ -27753,13 +27775,16 @@ def _achievement_access_level(row: HREmployeeAchievement, user=None) -> str | No
         return "employee"
     if _achievement_privileged(user):
         return "admin"
-    for step in row.approval_steps or []:
-        if int(step.approver_user_id or 0) != user_id:
-            continue
-        if (step.approver_role or "").upper() == "DIRECT_MANAGER":
-            return "manager"
-        if (step.approver_role or "").upper() == "SECRETARY_GENERAL":
-            return "observer"
+    matching_steps = [
+        step for step in (row.approval_steps or [])
+        if int(step.approver_user_id or 0) == user_id
+    ]
+    # A Secretary General can also appear in the employee's management chain;
+    # the actionable role must take precedence over the informational copy.
+    if any((step.approver_role or "").upper() == "SECRETARY_GENERAL" for step in matching_steps):
+        return "secretary_general"
+    if any((step.approver_role or "").upper() == "DIRECT_MANAGER" for step in matching_steps):
+        return "observer"
     return None
 
 
@@ -27865,7 +27890,7 @@ def _remove_achievement_paths(paths) -> None:
 
 def _achievement_review_rows_for_current_user() -> list[HREmployeeAchievementApproval]:
     query = HREmployeeAchievementApproval.query.filter(
-        HREmployeeAchievementApproval.approver_role == "DIRECT_MANAGER",
+        HREmployeeAchievementApproval.approver_role == "SECRETARY_GENERAL",
         HREmployeeAchievementApproval.status == "PENDING",
     )
     if not _achievement_privileged():
@@ -27877,7 +27902,7 @@ def _achievement_review_rows_for_current_user() -> list[HREmployeeAchievementApp
 @login_required
 @_perm(PORTAL_READ)
 def hr_my_achievements():
-    """Let employees submit achievements and expose manager/observer queues."""
+    """Let employees submit achievements and expose approval/info queues."""
     if request.method == "POST":
         achievement_type = (request.form.get("achievement_type") or "OTHER").strip().upper()
         title = (request.form.get("title") or "").strip()
@@ -27922,21 +27947,22 @@ def hr_my_achievements():
                 request.files.getlist("attachments"),
             )
             manager_ids = _achievement_manager_ids(row)
-            observer_ids = [
+            secretary_ids = [
                 int(step.approver_user_id)
                 for step in row.approval_steps
                 if (step.approver_role or "").upper() == "SECRETARY_GENERAL"
             ]
+            secretary_id_set = set(secretary_ids)
             _achievement_notify(
-                manager_ids,
-                f"إنجاز جديد للموظف {_achievement_display_name(current_user)} بانتظار اعتمادك.",
-                "HR_ACHIEVEMENT_SUBMITTED",
+                [user_id for user_id in manager_ids if user_id not in secretary_id_set],
+                f"إنجاز جديد للموظف {_achievement_display_name(current_user)} — أُحيل إليك للاطلاع فقط.",
+                "HR_ACHIEVEMENT_COPIED",
                 row,
             )
             _achievement_notify(
-                observer_ids,
-                f"تمت إحالة إنجاز الموظف {_achievement_display_name(current_user)} إلى المدير للموافقة — نسخة للاطلاع.",
-                "HR_ACHIEVEMENT_COPIED",
+                secretary_ids,
+                f"إنجاز جديد للموظف {_achievement_display_name(current_user)} بانتظار قرارك بالاعتماد أو الرفض.",
+                "HR_ACHIEVEMENT_SUBMITTED",
                 row,
             )
             _portal_audit(
@@ -27963,8 +27989,13 @@ def hr_my_achievements():
             flash("تعذر إرسال الإنجاز للمراجعة حالياً.", "danger")
             return redirect(url_for("portal.hr_my_achievements"))
 
+        missing_recipients = []
         if not manager_ids:
-            flash("تم حفظ الإنجاز، لكن لا يوجد مدير مباشر مضبوط في الهيكل التنظيمي لتوجيهه للاعتماد.", "warning")
+            missing_recipients.append("لا يوجد مدير مباشر مضبوط لإرسال نسخة الاطلاع")
+        if not secretary_ids:
+            missing_recipients.append("لا يوجد أمين عام مضبوط لاستلام الاعتماد أو الرفض")
+        if missing_recipients:
+            flash("تم حفظ الإنجاز، لكن " + "؛ ".join(missing_recipients) + ".", "warning")
         elif attachment_count:
             flash(f"تم إرسال الإنجاز للمراجعة مع رفع {attachment_count} مرفق(ات).", "success")
         else:
@@ -27980,9 +28011,9 @@ def hr_my_achievements():
     path_changed = False
     for own_row in rows:
         if (own_row.status or "").upper() == "PENDING":
-            before = len(own_row.approval_steps or [])
+            before = _achievement_path_state(own_row)
             _ensure_achievement_approval_path(own_row)
-            path_changed = path_changed or len(own_row.approval_steps or []) != before
+            path_changed = path_changed or _achievement_path_state(own_row) != before
     is_secretary_general = int(current_user.id) in {int(value) for value in secretary_general_user_ids()}
     if _achievement_privileged() or is_secretary_general or path_changed:
         pending_rows = (
@@ -27993,9 +28024,9 @@ def hr_my_achievements():
             .all()
         )
         for pending_row in pending_rows:
-            before = len(pending_row.approval_steps or [])
+            before = _achievement_path_state(pending_row)
             _ensure_achievement_approval_path(pending_row)
-            path_changed = path_changed or len(pending_row.approval_steps or []) != before
+            path_changed = path_changed or _achievement_path_state(pending_row) != before
     if path_changed:
         db.session.commit()
     review_rows = _achievement_review_rows_for_current_user()
@@ -28003,7 +28034,7 @@ def hr_my_achievements():
         HREmployeeAchievementApproval.query
         .filter(
             HREmployeeAchievementApproval.approver_user_id == current_user.id,
-            HREmployeeAchievementApproval.approver_role == "SECRETARY_GENERAL",
+            HREmployeeAchievementApproval.approver_role == "DIRECT_MANAGER",
         )
         .join(HREmployeeAchievement, HREmployeeAchievement.id == HREmployeeAchievementApproval.achievement_id)
         .order_by(HREmployeeAchievementApproval.created_at.desc())
@@ -28035,9 +28066,9 @@ def hr_achievements_review_queue():
         .all()
     )
     for pending_row in pending_rows:
-        before = len(pending_row.approval_steps or [])
+        before = _achievement_path_state(pending_row)
         _ensure_achievement_approval_path(pending_row)
-        path_changed = path_changed or len(pending_row.approval_steps or []) != before
+        path_changed = path_changed or _achievement_path_state(pending_row) != before
     if path_changed:
         db.session.commit()
     rows = _achievement_review_rows_for_current_user()
@@ -28064,7 +28095,7 @@ def hr_achievement_view(achievement_id: int):
         (
             step for step in (row.approval_steps or [])
             if int(step.approver_user_id or 0) == int(current_user.id)
-            and (step.approver_role or "").upper() == "SECRETARY_GENERAL"
+            and (step.approver_role or "").upper() == "DIRECT_MANAGER"
         ),
         None,
     )
@@ -28075,7 +28106,7 @@ def hr_achievement_view(achievement_id: int):
         "portal/hr/achievement_detail.html",
         row=row,
         access_level=access_level,
-        can_review=(access_level in {"manager", "admin"} and row.status == "PENDING"),
+        can_review=(access_level in {"secretary_general", "admin"} and row.status == "PENDING"),
         achievement_levels=ACHIEVEMENT_LEVELS,
         achievement_types=ACHIEVEMENT_TYPES,
         achievement_statuses=ACHIEVEMENT_STATUSES,
@@ -28102,14 +28133,11 @@ def hr_achievement_attachments_upload(achievement_id: int):
             step.approver_user_id
             for step in row.approval_steps
             if step.approver_user_id
-            and (
-                ((step.approver_role or "").upper() == "DIRECT_MANAGER" and step.status == "PENDING")
-                or (step.approver_role or "").upper() == "SECRETARY_GENERAL"
-            )
+            and (step.approver_role or "").upper() in {"DIRECT_MANAGER", "SECRETARY_GENERAL"}
         ]
         _achievement_notify(
             recipients,
-            f"تمت إضافة مرفقات إلى إنجاز الموظف {_achievement_display_name(row.user)}؛ يرجى مراجعتها.",
+            f"تمت إضافة مرفقات إلى إنجاز الموظف {_achievement_display_name(row.user)}؛ يرجى الاطلاع واتخاذ القرار عند الاختصاص.",
             "HR_ACHIEVEMENT_ATTACHMENT",
             row,
         )
@@ -28166,13 +28194,13 @@ def hr_achievement_review(achievement_id: int):
     if (row.status or "").upper() == "PENDING":
         _ensure_achievement_approval_path(row)
     access_level = _achievement_access_level(row)
-    if access_level not in {"manager", "admin"} or (row.status or "").upper() != "PENDING":
+    if access_level not in {"secretary_general", "admin"} or (row.status or "").upper() != "PENDING":
         abort(403)
 
     step = next(
         (
             candidate for candidate in (row.approval_steps or [])
-            if (candidate.approver_role or "").upper() == "DIRECT_MANAGER"
+            if (candidate.approver_role or "").upper() == "SECRETARY_GENERAL"
             and candidate.status == "PENDING"
             and (access_level == "admin" or int(candidate.approver_user_id) == int(current_user.id))
         ),
@@ -28187,7 +28215,7 @@ def hr_achievement_review(achievement_id: int):
         flash("حدد قرار الاعتماد أو الرفض.", "warning")
         return redirect(url_for("portal.hr_achievement_view", achievement_id=row.id))
     if action == "REJECT" and not note:
-        flash("سبب الرفض مطلوب حتى يظهر للموظف والأمين العام.", "warning")
+        flash("سبب الرفض مطلوب حتى يظهر للموظف والمدير.", "warning")
         return redirect(url_for("portal.hr_achievement_view", achievement_id=row.id))
 
     selected_level = (request.form.get("distinction_level") or "").strip().upper()
@@ -28222,7 +28250,7 @@ def hr_achievement_review(achievement_id: int):
     row.reviewed_at = now
     row.updated_at = now
     for other in row.approval_steps or []:
-        if other.id != step.id and (other.approver_role or "").upper() == "DIRECT_MANAGER" and other.status == "PENDING":
+        if other.id != step.id and (other.approver_role or "").upper() == "SECRETARY_GENERAL" and other.status == "PENDING":
             other.status = "SKIPPED"
             other.updated_at = now
 
@@ -28231,20 +28259,20 @@ def hr_achievement_review(achievement_id: int):
         if action == "APPROVE"
         else f"تم رفض إنجازك «{row.title}». سبب الرفض: {note}"
     )
-    observer_ids = [
+    manager_ids = [
         approval.approver_user_id
         for approval in (row.approval_steps or [])
-        if (approval.approver_role or "").upper() == "SECRETARY_GENERAL"
+        if (approval.approver_role or "").upper() == "DIRECT_MANAGER"
     ]
     _achievement_notify([row.user_id], employee_message, "HR_ACHIEVEMENT_DECISION", row)
     _achievement_notify(
-        observer_ids,
+        manager_ids,
         (
-            f"قرار المدير في إنجاز «{row.title}»: موافقة بدرجة {ACHIEVEMENT_LEVELS[selected_level]['label']} (+{selected_points:g})."
+            f"قرار الأمين العام في إنجاز «{row.title}»: اعتماد بدرجة {ACHIEVEMENT_LEVELS[selected_level]['label']} (+{selected_points:g})."
             if action == "APPROVE"
-            else f"قرار المدير في إنجاز «{row.title}»: رفض. السبب: {note}"
+            else f"قرار الأمين العام في إنجاز «{row.title}»: رفض. السبب: {note}"
         ),
-        "HR_ACHIEVEMENT_MANAGER_DECISION",
+        "HR_ACHIEVEMENT_SECRETARY_DECISION",
         row,
     )
     _portal_audit(
@@ -28261,7 +28289,7 @@ def hr_achievement_review(achievement_id: int):
             refresh_achievement_bonus_for_existing_runs(row.user_id, row.achieved_on)
         except Exception:
             current_app.logger.exception("Failed to refresh evaluation bonus for achievement %s", row.id)
-    flash("تم حفظ قرار اعتماد الإنجاز وإبلاغ الموظف والأمين العام." if action == "APPROVE" else "تم رفض الإنجاز مع حفظ السبب وإبلاغ الموظف والأمين العام.", "success")
+    flash("تم حفظ قرار الأمين العام وإبلاغ الموظف والمدير للاطلاع." if action == "APPROVE" else "تم رفض الإنجاز مع حفظ السبب وإبلاغ الموظف والمدير للاطلاع.", "success")
     return redirect(url_for("portal.hr_achievement_view", achievement_id=row.id))
 
 
