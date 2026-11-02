@@ -66,6 +66,17 @@
   <div class="col-md-6 col-lg-4">
     <div class="card shadow-sm h-100">
       <div class="card-body">
+        <div class="fw-bold mb-1"><i class="bi bi-sliders"></i> سندات التصحيح المخزني</div>
+        <div class="text-muted small mb-3">تعديل الرصيد عند اكتشاف كمية مدخلة أو مصروفة بالخطأ</div>
+        <a class="btn btn-sm btn-primary" href="{{ url_for('portal.inventory_adjustment_voucher_new') }}">إدخال سند</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_adjustment_voucher_list') }}">سجل السندات</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6 col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
         <div class="fw-bold mb-1"><i class="bi bi-clipboard-data"></i> سندات الجرد</div>
         <div class="text-muted small mb-3">جرد المخزون ومطابقة الكميات</div>
         <a class="btn btn-sm btn-primary" href="{{ url_for('portal.inventory_stocktake_voucher_new') }}">إدخال سند</a>

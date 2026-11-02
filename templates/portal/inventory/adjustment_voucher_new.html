@@ -1,0 +1,144 @@
+{% extends "portal/inventory/base.html" %}
+
+{% set form = form if form is defined else {} %}
+{% set form_lines = (form.get('lines', []) if form is defined and form.get is defined else []) %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h5 class="m-0">إدخال سند تصحيح مخزني</h5>
+    <div class="text-muted small mt-1">الموجب يزيد الرصيد، والسالب ينقصه. استخدمه لتصحيح كمية مدخلة أو مصروفة بالخطأ.</div>
+  </div>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_adjustment_voucher_list') }}"><i class="bi bi-journal-text"></i> سجل السندات</a>
+</div>
+
+<div class="alert alert-warning py-2">
+  <i class="bi bi-info-circle"></i>
+  يجب أن يكون سبب التصحيح واضحًا، ويفضل ربطه برقم السند الأصلي عند تصحيح إدخال أو صرف سابق.
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="post" enctype="multipart/form-data">
+      <div class="row g-2">
+        <div class="col-md-3">
+          <label class="form-label">رقم السند (اختياري)</label>
+          <input name="voucher_no" class="form-control" value="{{ form.voucher_no|default('') }}" placeholder="يولد تلقائيًا عند الحفظ">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">تاريخ السند</label>
+          <input type="date" name="voucher_date" class="form-control" value="{{ form.voucher_date|default('') }}" required>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">المستودع</label>
+          <select name="warehouse_id" class="form-select" required>
+            <option value="">اختر</option>
+            {% for w in warehouses %}
+              <option value="{{ w.id }}" {% if form.warehouse_id == w.id %}selected{% endif %}>{{ w.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">السند المرجعي (اختياري)</label>
+          <input name="source_reference" class="form-control" value="{{ form.source_reference|default('') }}" placeholder="مثال: IN-2026-000123">
+        </div>
+        <div class="col-12">
+          <label class="form-label">سبب التصحيح <span class="text-danger">*</span></label>
+          <textarea name="reason" class="form-control" rows="2" required placeholder="مثال: تصحيح إدخال 10 بدل 12 حسب محضر المراجعة رقم ...">{{ form.reason|default('') }}</textarea>
+        </div>
+        <div class="col-12">
+          <label class="form-label">ملاحظات</label>
+          <textarea name="note" class="form-control" rows="2">{{ form.note|default('') }}</textarea>
+        </div>
+      </div>
+
+      <hr class="my-3">
+
+      <div class="d-flex align-items-center justify-content-between mb-2">
+        <div class="fw-bold">تفاصيل التصحيح</div>
+        <button class="btn btn-sm btn-outline-primary" type="button" id="addLine"><i class="bi bi-plus"></i> إضافة صنف</button>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-bordered align-middle inventory-voucher-lines" id="linesTable">
+          <thead class="table-light">
+            <tr>
+              <th style="min-width:220px;">الصنف</th>
+              <th style="width:150px;">فرق الكمية (+/-)</th>
+              <th style="min-width:160px;">السيريال</th>
+              <th style="width:160px;">بداية الصلاحية/الضمان</th>
+              <th style="width:160px;">نهاية الصلاحية/الضمان</th>
+              <th style="min-width:220px;">تفاصيل</th>
+              <th style="width:70px;"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for ln in form_lines %}
+            <tr>
+              <td>
+                <select name="item_id[]" class="form-select" required>
+                  <option value="">اختر الصنف</option>
+                  {% for it in items %}
+                    <option value="{{ it.id }}" {% if ln.item_id == it.id %}selected{% endif %}>{{ it.label }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td><input name="delta_qty[]" class="form-control" value="{{ ln.delta_qty|default('') }}" type="number" step="0.01" required></td>
+              <td><input name="serial[]" class="form-control" value="{{ ln.serial|default('') }}"></td>
+              <td><input name="w_start[]" class="form-control" value="{{ ln.w_start|default('') }}" type="date"></td>
+              <td><input name="w_end[]" class="form-control" value="{{ ln.w_end|default('') }}" type="date"></td>
+              <td><textarea name="details[]" class="form-control" rows="2">{{ ln.details|default('') }}</textarea></td>
+              <td class="text-center"><button class="btn btn-sm btn-outline-danger" type="button" onclick="this.closest('tr').remove()"><i class="bi bi-x"></i></button></td>
+            </tr>
+            {% endfor %}
+            {% if not form_lines %}
+            <tr>
+              <td>
+                <select name="item_id[]" class="form-select" required>
+                  <option value="">اختر الصنف</option>
+                </select>
+              </td>
+              <td><input name="delta_qty[]" class="form-control" type="number" step="0.01" required placeholder="مثال: -2 أو +3"></td>
+              <td><input name="serial[]" class="form-control"></td>
+              <td><input name="w_start[]" class="form-control" type="date"></td>
+              <td><input name="w_end[]" class="form-control" type="date"></td>
+              <td><textarea name="details[]" class="form-control" rows="2"></textarea></td>
+              <td class="text-center"><button class="btn btn-sm btn-outline-danger" type="button" onclick="this.closest('tr').remove()"><i class="bi bi-x"></i></button></td>
+            </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+
+      <hr class="my-3">
+      <div class="fw-bold mb-2">المرفقات</div>
+      <input class="form-control" type="file" name="attachments" multiple>
+
+      <div class="d-flex justify-content-end gap-2 mt-3">
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.inventory_adjustment_voucher_list') }}">إلغاء</a>
+        <button class="btn btn-primary" type="submit"><i class="bi bi-check2"></i> حفظ السند</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function(){
+  const addBtn = document.getElementById('addLine');
+  const tbody = document.querySelector('#linesTable tbody');
+  addBtn.addEventListener('click', function(){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><select name="item_id[]" class="form-select" required><option value="">اختر الصنف</option></select></td>
+      <td><input name="delta_qty[]" class="form-control" type="number" step="0.01" required placeholder="مثال: -2 أو +3"></td>
+      <td><input name="serial[]" class="form-control"></td>
+      <td><input name="w_start[]" class="form-control" type="date"></td>
+      <td><input name="w_end[]" class="form-control" type="date"></td>
+      <td><textarea name="details[]" class="form-control" rows="2"></textarea></td>
+      <td class="text-center"><button class="btn btn-sm btn-outline-danger" type="button" onclick="this.closest('tr').remove()"><i class="bi bi-x"></i></button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+})();
+</script>
+{% endblock %}

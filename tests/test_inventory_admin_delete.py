@@ -10,6 +10,8 @@ from extensions import db
 from models import (
     InvInboundVoucher,
     InvInboundVoucherLine,
+    InvAdjustmentVoucher,
+    InvAdjustmentVoucherLine,
     InvIssueVoucher,
     InvIssueVoucherLine,
     InvItem,
@@ -187,6 +189,56 @@ class InventoryAdminDeleteTests(unittest.TestCase):
         self.assertIn("-2.00", body)
         self.assertIn("3.00", body)
         self.assertIn("11.00", body)
+
+    def test_adjustment_voucher_applies_signed_delta_and_is_visible_in_reports(self):
+        item = InvItem(name="Correction item", code="CORR-001")
+        db.session.add(item)
+        db.session.commit()
+
+        new_response = self.client.get("/portal/inventory/vouchers/adjustment/new")
+        list_response = self.client.get("/portal/inventory/vouchers/adjustment/list")
+        self.assertEqual(new_response.status_code, 200)
+        self.assertEqual(list_response.status_code, 200)
+
+        response = self.client.post(
+            "/portal/inventory/vouchers/adjustment/new",
+            data={
+                "voucher_date": "2026-11-02",
+                "warehouse_id": str(self.warehouse.id),
+                "reason": "Wrong inbound quantity",
+                "source_reference": "IN-TEST-001",
+                "item_id[]": [str(item.id)],
+                "delta_qty[]": ["-3"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        voucher = InvAdjustmentVoucher.query.one()
+        line = InvAdjustmentVoucherLine.query.filter_by(voucher_id=voucher.id).one()
+        self.assertEqual(voucher.voucher_no, "ADJ-2026-000001")
+        self.assertEqual(line.delta_qty, -3.0)
+
+        card_response = self.client.get(
+            f"/portal/inventory/reports/item-card?item_id={item.id}"
+            f"&warehouse_id={self.warehouse.id}"
+        )
+        self.assertEqual(card_response.status_code, 200)
+        card_body = card_response.get_data(as_text=True)
+        self.assertIn("-3.00", card_body)
+
+        view_response = self.client.get(
+            f"/portal/inventory/vouchers/adjustment/{voucher.id}"
+        )
+        self.assertEqual(view_response.status_code, 200)
+        view_body = view_response.get_data(as_text=True)
+        self.assertIn("ADJ-2026-000001", view_body)
+        self.assertIn("Wrong inbound quantity", view_body)
+
+        yearly_response = self.client.get(
+            "/portal/inventory/reports/yearly-qty?year=2026"
+        )
+        self.assertEqual(yearly_response.status_code, 200)
+        self.assertIn("-3.00", yearly_response.get_data(as_text=True))
 
 
 if __name__ == "__main__":
