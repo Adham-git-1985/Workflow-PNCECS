@@ -574,61 +574,113 @@ def _steps_table(data: dict, width: float, styles: dict[str, ParagraphStyle]) ->
     return table
 
 
-def _compact_report_text(value, limit: int = 100) -> str:
-    text = str(value or "—").strip()
-    if len(text) <= limit:
-        return text
-    return text[: max(limit - 1, 1)].rstrip() + "…"
-
-
-def _summary_responders(data: dict) -> str:
-    responders: list[str] = []
+def _summary_workflow_text(data: dict) -> str:
+    """Return a readable audit trail for the compact report row."""
+    lines: list[str] = []
     for step in data.get("steps") or []:
-        responder = (step.get("responder") or "").strip()
-        if not responder or responder == "—" or responder.startswith("تم التجاوز بواسطة"):
+        label = (step.get("label") or "المرحلة").strip()
+        status = (step.get("status") or "—").strip()
+        responder = (step.get("responder") or "—").strip()
+        action_at = (step.get("action_at") or "—").strip()
+        note = (step.get("note") or "—").strip()
+
+        if responder == "—":
             continue
-        if responder not in responders:
-            responders.append(responder)
-    return "، ".join(responders) or "—"
+        lines.append(
+            f"{label}: أجاب {responder} | الحالة: {status} | "
+            f"وقت الإجابة: {action_at} | ماذا كتب: {note}"
+        )
+    return "\n".join(lines) or "لم يتم تسجيل رد حتى الآن"
+
+
+def _make_summary_styles(font_regular: str, font_bold: str) -> dict[str, ParagraphStyle]:
+    """Use a larger Arabic font for the row-by-row summary PDF."""
+    body = ParagraphStyle(
+        "AttendanceDelaySummaryBody",
+        fontName=font_regular,
+        fontSize=16,
+        leading=20,
+        alignment=TA_RIGHT,
+        wordWrap="RTL",
+        spaceAfter=0,
+    )
+    return {
+        "cell": body,
+        "header": ParagraphStyle(
+            "AttendanceDelaySummaryHeader",
+            parent=body,
+            fontName=font_bold,
+            fontSize=16,
+            leading=19,
+            alignment=TA_CENTER,
+            textColor=colors.white,
+        ),
+        "title": ParagraphStyle(
+            "AttendanceDelaySummaryTitle",
+            parent=body,
+            fontName=font_bold,
+            fontSize=20,
+            leading=24,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor("#17375E"),
+            spaceAfter=3,
+        ),
+        "meta": ParagraphStyle(
+            "AttendanceDelaySummaryMeta",
+            parent=body,
+            fontSize=12,
+            leading=15,
+            alignment=TA_RIGHT,
+        ),
+    }
 
 
 def _summary_table(rows: list[dict], width: float, styles: dict[str, ParagraphStyle]) -> Table:
     headers = [
-        "الطلب",
-        "الموظف",
-        "اليوم / الموقع",
-        "التأخير",
-        "التبرير",
-        "وصل إلى",
-        "من أجاب",
-        "الحالة",
+        "بيانات الموظف والطلب",
+        "تفاصيل التأخير",
+        "التبرير الذي كتبه الموظف",
+        "المتابعة: من أجاب وماذا كتب",
+        "أين يقف الطلب الآن والحالة",
     ]
     table_rows = [[_p(header, styles["header"]) for header in headers]]
     for data in rows:
-        delay_text = f"{data['late_minutes']} دقيقة\nدخول: {data['first_in_time']}"
+        employee_text = (
+            f"الطلب: #{data['request_id']}\n"
+            f"الموظف: {data['employee_name']}\n"
+            f"الرقم الوظيفي: {data['employee_no']}\n"
+            f"تاريخ الطلب: {data['created_at']}"
+        )
+        delay_text = (
+            f"يوم التأخير: {data['delay_day']}\n"
+            f"مكان العمل: {data['work_location']}\n"
+            f"وقت الدخول: {data['first_in_time']}\n"
+            f"مدة التأخير: {data['late_minutes']} دقيقة"
+        )
         if data.get("early_leave_minutes"):
             delay_text += f"\nخروج مبكر: {data['early_leave_minutes']}"
-        justification = _compact_report_text(data.get("reason"), 90)
-        note = _compact_report_text(data.get("employee_note"), 80)
-        if note != "—":
-            justification = f"{justification}\n{note}"
+        justification = (
+            f"سبب التبرير: {data['reason']}\n"
+            f"ملاحظة الموظف: {data['employee_note']}\n"
+            f"حالة التبرير: {data['employee_response_status']}\n"
+            f"وقت تقديم التبرير: {data['employee_responded_at']}"
+        )
+        current_status = (
+            f"المرحلة الحالية: {data['reached_label']}\n"
+            f"المسند إليه الآن: {data['reached_target']}\n"
+            f"حالة الطلب: {data['request_status']}"
+        )
         table_rows.append([
-            _p(f"#{data['request_id']}\n{data['created_at']}", styles["small"]),
-            _p(f"{_compact_report_text(data['employee_name'], 45)}\n{data['employee_no']}", styles["small"]),
-            _p(f"{data['delay_day']}\n{_compact_report_text(data['work_location'], 35)}", styles["small"]),
-            _p(delay_text, styles["small"]),
-            _p(justification, styles["small"]),
-            _p(
-                f"{_compact_report_text(data['reached_label'], 65)}\n{_compact_report_text(data['reached_target'], 55)}",
-                styles["small"],
-            ),
-            _p(_compact_report_text(_summary_responders(data), 75), styles["small"]),
-            _p(data["request_status"], styles["small"]),
+            _p(employee_text, styles["cell"]),
+            _p(delay_text, styles["cell"]),
+            _p(justification, styles["cell"]),
+            _p(_summary_workflow_text(data), styles["cell"]),
+            _p(current_status, styles["cell"]),
         ])
     if len(table_rows) == 1:
-        table_rows.append([_p("لا توجد طلبات تأخير مطابقة", styles["small"])] + [_p("—", styles["small"]) for _ in headers[1:]])
+        table_rows.append([_p("لا توجد طلبات تأخير مطابقة", styles["cell"])] + [_p("—", styles["cell"]) for _ in headers[1:]])
 
-    proportions = (0.07, 0.14, 0.12, 0.11, 0.18, 0.17, 0.12, 0.09)
+    proportions = (0.18, 0.16, 0.23, 0.27, 0.16)
     table = Table(
         table_rows,
         colWidths=[width * value for value in proportions],
@@ -642,8 +694,8 @@ def _summary_table(rows: list[dict], width: float, styles: dict[str, ParagraphSt
         ("ALIGN", (0, 0), (0, -1), "CENTER"),
         ("LEFTPADDING", (0, 0), (-1, -1), 3),
         ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
     ]))
     return table
@@ -707,10 +759,10 @@ def build_attendance_delay_tracking_pdf(cases, *, title: str = REPORT_TITLE) -> 
 
 
 def build_attendance_delay_summary_pdf(cases, *, title: str = SUMMARY_REPORT_TITLE) -> bytes:
-    """Build a compact A4 landscape table with one row per delay request."""
+    """Build a readable A4 landscape table with one row per delay request."""
     rows = attendance_delay_report_data(cases)
     font_regular, font_bold = _register_fonts()
-    styles = _make_styles(font_regular, font_bold)
+    styles = _make_summary_styles(font_regular, font_bold)
     stream = BytesIO()
     document = SimpleDocTemplate(
         stream,
@@ -726,7 +778,7 @@ def build_attendance_delay_summary_pdf(cases, *, title: str = SUMMARY_REPORT_TIT
         _p(title, styles["title"]),
         _p(
             f"تأخيرات وتبريرات الدوام · عدد الطلبات: {len(rows)} · تاريخ الإصدار: {_date_time(datetime.utcnow())}",
-            styles["body"],
+            styles["meta"],
         ),
         Spacer(1, 3 * mm),
         _summary_table(rows, document.width, styles),
