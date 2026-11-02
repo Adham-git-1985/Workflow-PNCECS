@@ -333,6 +333,9 @@ from models import (
     InvReturnVoucher,
     InvReturnVoucherLine,
     InvReturnVoucherAttachment,
+    InvAdjustmentVoucher,
+    InvAdjustmentVoucherLine,
+    InvAdjustmentVoucherAttachment,
     InvRequest,
 
     InvSupplier,
@@ -49699,6 +49702,10 @@ def _audit_target_url_label(r):
             v = InvReturnVoucher.query.get(int(tid))
             label = f"سند إرجاع: {v.voucher_no}" if v else f"سند إرجاع #{tid}"
             return (url_for('portal.inventory_return_voucher_view', v_id=int(tid)), label)
+        if t in ("INV_ADJUSTMENT_VOUCHER",):
+            v = InvAdjustmentVoucher.query.get(int(tid))
+            label = f"سند تصحيح مخزني: {v.voucher_no}" if v else f"سند تصحيح مخزني #{tid}"
+            return (url_for('portal.inventory_adjustment_voucher_view', v_id=int(tid)), label)
         if t in ("INV_STOCKTAKE_VOUCHER", "INV_STOCKTAKE"):
             v = InvStocktakeVoucher.query.get(int(tid))
             label = f"سند جرد: {v.voucher_no}" if v else f"سند جرد #{tid}"
@@ -52760,6 +52767,288 @@ def inventory_return_attachment_download(att_id: int):
     return send_from_directory(directory, filename, as_attachment=True, download_name=att.original_name)
 
 
+# -------------------------
+# Inventory: Adjustment (Correction) Vouchers
+# -------------------------
+
+
+@portal_bp.route("/inventory/vouchers/adjustment/new", methods=["GET", "POST"])
+@login_required
+@_perm(STORE_MANAGE)
+def inventory_adjustment_voucher_new():
+    warehouses = InvWarehouse.query.filter(InvWarehouse.is_active == True).order_by(InvWarehouse.name.asc()).all()  # noqa: E712
+    items = []  # Item choices are retrieved on demand by the voucher picker.
+
+    if request.method == "POST":
+        voucher_no = (request.form.get("voucher_no") or "").strip()
+        voucher_date = (request.form.get("voucher_date") or "").strip()
+        warehouse_id_raw = request.form.get("warehouse_id")
+        reason = (request.form.get("reason") or "").strip()
+        source_reference = (request.form.get("source_reference") or "").strip()
+        note = (request.form.get("note") or "").strip()
+
+        if not voucher_date or not warehouse_id_raw or not reason:
+            flash("يرجى تعبئة تاريخ السند والمستودع وسبب التصحيح.", "warning")
+            return redirect(url_for("portal.inventory_adjustment_voucher_new"))
+
+        try:
+            date.fromisoformat(voucher_date)
+        except (TypeError, ValueError):
+            flash("تاريخ السند غير صالح.", "warning")
+            return redirect(url_for("portal.inventory_adjustment_voucher_new"))
+
+        try:
+            warehouse_id = int(warehouse_id_raw)
+        except (TypeError, ValueError):
+            flash("المستودع غير صالح.", "warning")
+            return redirect(url_for("portal.inventory_adjustment_voucher_new"))
+
+        warehouse = InvWarehouse.query.filter(
+            InvWarehouse.id == warehouse_id,
+            InvWarehouse.is_active == True,  # noqa: E712
+        ).first()
+        if not warehouse:
+            flash("المستودع غير موجود أو غير فعال.", "warning")
+            return redirect(url_for("portal.inventory_adjustment_voucher_new"))
+
+        item_ids = request.form.getlist("item_id[]") or request.form.getlist("item_id")
+        deltas = request.form.getlist("delta_qty[]") or request.form.getlist("delta_qty")
+        serials = request.form.getlist("serial[]") or request.form.getlist("serial")
+        w_starts = request.form.getlist("w_start[]") or request.form.getlist("w_start")
+        w_ends = request.form.getlist("w_end[]") or request.form.getlist("w_end")
+        details_list = request.form.getlist("details[]") or request.form.getlist("details")
+
+        if not item_ids:
+            flash("يرجى إضافة صنف واحد على الأقل.", "warning")
+            return redirect(url_for("portal.inventory_adjustment_voucher_new"))
+
+        line_values = []
+        for i, raw_item_id in enumerate(item_ids):
+            if not raw_item_id:
+                continue
+            try:
+                item_id = int(raw_item_id)
+            except (TypeError, ValueError):
+                flash("يوجد صنف غير صالح في تفاصيل السند.", "warning")
+                return redirect(url_for("portal.inventory_adjustment_voucher_new"))
+
+            item = InvItem.query.filter(
+                InvItem.id == item_id,
+                InvItem.is_active == True,  # noqa: E712
+            ).first()
+            if not item:
+                flash("يوجد صنف غير موجود أو غير فعال في تفاصيل السند.", "warning")
+                return redirect(url_for("portal.inventory_adjustment_voucher_new"))
+
+            raw_delta = (deltas[i] if i < len(deltas) else "").strip()
+            try:
+                delta_qty = float(raw_delta)
+            except (TypeError, ValueError):
+                delta_qty = None
+
+            if delta_qty is None or not math.isfinite(delta_qty) or abs(delta_qty) <= 1e-9:
+                flash("يجب أن تكون كمية التصحيح رقمًا غير صفري؛ الموجب زيادة والسالب نقص.", "warning")
+                return redirect(url_for("portal.inventory_adjustment_voucher_new"))
+
+            line_values.append({
+                "item_id": item_id,
+                "delta_qty": delta_qty,
+                "serial": (serials[i] if i < len(serials) else None) or None,
+                "warranty_start": (w_starts[i] if i < len(w_starts) else None) or None,
+                "warranty_end": (w_ends[i] if i < len(w_ends) else None) or None,
+                "details": (details_list[i] if i < len(details_list) else None) or None,
+            })
+
+        if not line_values:
+            flash("يرجى إضافة صنف واحد على الأقل مع كمية تصحيح غير صفرية.", "warning")
+            return redirect(url_for("portal.inventory_adjustment_voucher_new"))
+
+        v = InvAdjustmentVoucher(
+            voucher_no=voucher_no or "",
+            voucher_date=voucher_date,
+            warehouse_id=warehouse_id,
+            reason=reason,
+            source_reference=source_reference or None,
+            note=note or None,
+            created_by_id=current_user.id,
+            created_at=datetime.utcnow(),
+        )
+        db.session.add(v)
+        db.session.flush()
+        if not v.voucher_no:
+            v.voucher_no = auto_inventory_voucher_no("adjustment", voucher_date, v.id)
+
+        for line in line_values:
+            db.session.add(InvAdjustmentVoucherLine(voucher_id=v.id, **line))
+
+        try:
+            db.session.add(AuditLog(
+                user_id=current_user.id,
+                action="INV_ADJUSTMENT_CREATE",
+                note=f"إنشاء سند تصحيح مخزني ({v.voucher_no})",
+                target_type="INV_ADJUSTMENT_VOUCHER",
+                target_id=v.id,
+                created_at=datetime.utcnow(),
+            ))
+        except Exception:
+            pass
+
+        db.session.commit()
+        _inv_invalidate_balance_cache()
+
+        # Attachments are intentionally best effort, matching the other
+        # inventory vouchers: the signed movement is never lost because a file
+        # upload failed.
+        files = request.files.getlist("attachments")
+        if files:
+            try:
+                from uuid import uuid4
+
+                base = os.path.join(current_app.instance_path, "uploads", "inventory", "adjustment", str(v.id))
+                os.makedirs(base, exist_ok=True)
+
+                for f in files:
+                    if not f or not getattr(f, "filename", ""):
+                        continue
+                    original = f.filename
+                    stored = f"{uuid4().hex}_{secure_filename(original) or 'file'}"
+                    full_path = os.path.join(base, stored)
+                    f.save(full_path)
+
+                    rel = os.path.relpath(full_path, current_app.instance_path)
+                    db.session.add(
+                        InvAdjustmentVoucherAttachment(
+                            voucher_id=v.id,
+                            original_name=original,
+                            stored_name=stored,
+                            file_path=rel,
+                            uploaded_by_id=current_user.id,
+                            uploaded_at=datetime.utcnow(),
+                        )
+                    )
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                flash("تم حفظ السند، لكن تعذّر حفظ المرفقات.", "warning")
+
+        flash("تم حفظ سند التصحيح المخزني.", "success")
+        return redirect(url_for("portal.inventory_adjustment_voucher_view", v_id=v.id))
+
+    form = {
+        "voucher_no": "",
+        "voucher_date": date.today().isoformat(),
+        "warehouse_id": None,
+        "reason": "",
+        "source_reference": "",
+        "note": "",
+        "lines": [],
+    }
+
+    return render_template(
+        "portal/inventory/adjustment_voucher_new.html",
+        warehouses=warehouses,
+        items=items,
+        form=form,
+    )
+
+
+@portal_bp.route("/inventory/vouchers/adjustment/list")
+@login_required
+@_perm_any(STORE_READ, STORE_MANAGE)
+def inventory_adjustment_voucher_list():
+    warehouses = InvWarehouse.query.filter(InvWarehouse.is_active == True).order_by(InvWarehouse.name.asc()).all()  # noqa: E712
+
+    voucher_no = (request.args.get("voucher_no") or "").strip()
+    from_date = request.args.get("from_date") or ""
+    to_date = request.args.get("to_date") or ""
+    warehouse_id = request.args.get("warehouse_id") or ""
+    contains = (request.args.get("contains") or "").strip()
+
+    qry = InvAdjustmentVoucher.query
+    if voucher_no:
+        qry = qry.filter(InvAdjustmentVoucher.voucher_no.ilike(f"%{voucher_no}%"))
+    if from_date:
+        qry = qry.filter(InvAdjustmentVoucher.voucher_date >= from_date)
+    if to_date:
+        qry = qry.filter(InvAdjustmentVoucher.voucher_date <= to_date)
+    if warehouse_id and warehouse_id.isdigit():
+        qry = qry.filter(InvAdjustmentVoucher.warehouse_id == int(warehouse_id))
+    if contains:
+        like = f"%{contains}%"
+        sub = (
+            db.session.query(InvAdjustmentVoucherLine.id)
+            .join(InvItem, InvItem.id == InvAdjustmentVoucherLine.item_id)
+            .filter(InvAdjustmentVoucherLine.voucher_id == InvAdjustmentVoucher.id)
+            .filter(or_(InvItem.name.ilike(like), InvItem.code.ilike(like)))
+            .exists()
+        )
+        qry = qry.filter(sub)
+
+    rows = qry.order_by(
+        InvAdjustmentVoucher.voucher_date.desc(),
+        InvAdjustmentVoucher.id.desc(),
+    ).limit(500).all()
+
+    selected = {
+        "voucher_no": voucher_no,
+        "from_date": from_date,
+        "to_date": to_date,
+        "warehouse_id": int(warehouse_id) if warehouse_id.isdigit() else None,
+        "contains": contains,
+    }
+
+    return render_template(
+        "portal/inventory/adjustment_voucher_list.html",
+        warehouses=warehouses,
+        rows=rows,
+        selected=selected,
+    )
+
+
+@portal_bp.route("/inventory/vouchers/adjustment/<int:v_id>")
+@login_required
+@_perm_any(STORE_READ, STORE_MANAGE)
+def inventory_adjustment_voucher_view(v_id: int):
+    v = InvAdjustmentVoucher.query.get_or_404(v_id)
+    if not (current_user.has_perm(STORE_READ) or current_user.has_perm(STORE_MANAGE) or (v.created_by_id == current_user.id)):
+        abort(403)
+
+    lines = InvAdjustmentVoucherLine.query.filter(
+        InvAdjustmentVoucherLine.voucher_id == v.id
+    ).order_by(InvAdjustmentVoucherLine.id.asc()).all()
+    attachments = InvAdjustmentVoucherAttachment.query.filter(
+        InvAdjustmentVoucherAttachment.voucher_id == v.id
+    ).order_by(InvAdjustmentVoucherAttachment.id.asc()).all()
+
+    return render_template(
+        "portal/inventory/adjustment_voucher_view.html",
+        v=v,
+        lines=lines,
+        attachments=attachments,
+    )
+
+
+@portal_bp.route("/inventory/vouchers/adjustment/attachment/<int:att_id>/download")
+@login_required
+@_perm_any(STORE_READ, STORE_MANAGE)
+def inventory_adjustment_attachment_download(att_id: int):
+    att = InvAdjustmentVoucherAttachment.query.get_or_404(att_id)
+    v = InvAdjustmentVoucher.query.get(att.voucher_id)
+    if not v:
+        abort(404)
+
+    if not (current_user.has_perm(STORE_READ) or current_user.has_perm(STORE_MANAGE) or (v.created_by_id == current_user.id)):
+        abort(403)
+
+    abs_path = os.path.join(current_app.instance_path, att.file_path)
+    if not os.path.exists(abs_path):
+        abort(404)
+
+    directory = os.path.dirname(abs_path)
+    filename = os.path.basename(abs_path)
+    return send_from_directory(directory, filename, as_attachment=True, download_name=att.original_name)
+
+
 def _inventory_reference_columns(table_name: str, record_id: int) -> list[tuple[str, str]]:
     """Find existing rows that point at an inventory master-data record."""
     references: list[tuple[str, str]] = []
@@ -54290,7 +54579,42 @@ def _inv_build_balances(*, warehouse_ids=None, item_ids=None):
     for wh_id, item_id, v_date, created_at, s in return_rows:
         _add(wh_id, item_id, v_date, float(s or 0), created_at)
 
-    # 4) Issue (ROOM: -, WAREHOUSE transfer: -/+)
+    # 4) Adjustment (signed delta)
+    adjustment_query = (
+        db.session.query(
+            InvAdjustmentVoucher.warehouse_id,
+            InvAdjustmentVoucherLine.item_id,
+            InvAdjustmentVoucher.voucher_date,
+            InvAdjustmentVoucher.created_at,
+            func.sum(InvAdjustmentVoucherLine.delta_qty),
+        )
+        .join(
+            InvAdjustmentVoucherLine,
+            InvAdjustmentVoucherLine.voucher_id == InvAdjustmentVoucher.id,
+        )
+    )
+    if warehouse_filter:
+        adjustment_query = adjustment_query.filter(
+            InvAdjustmentVoucher.warehouse_id.in_(warehouse_filter)
+        )
+    if item_filter:
+        adjustment_query = adjustment_query.filter(
+            InvAdjustmentVoucherLine.item_id.in_(item_filter)
+        )
+    adjustment_rows = (
+        adjustment_query
+        .group_by(
+            InvAdjustmentVoucher.warehouse_id,
+            InvAdjustmentVoucherLine.item_id,
+            InvAdjustmentVoucher.voucher_date,
+            InvAdjustmentVoucher.created_at,
+        )
+        .all()
+    )
+    for wh_id, item_id, v_date, created_at, s in adjustment_rows:
+        _add(wh_id, item_id, v_date, float(s or 0), created_at)
+
+    # 5) Issue (ROOM: -, WAREHOUSE transfer: -/+)
     issue_query = (
         db.session.query(
             InvIssueVoucher.issue_kind,
@@ -54330,7 +54654,7 @@ def _inv_build_balances(*, warehouse_ids=None, item_ids=None):
         if (kind or "").upper() == "WAREHOUSE" and to_wh:
             _add(to_wh, item_id, v_date, qty, created_at)
 
-    # 5) Scrap (-)
+    # 6) Scrap (-)
     scrap_query = (
         db.session.query(
             InvScrapVoucher.from_warehouse_id,
@@ -54453,6 +54777,27 @@ def inventory_report_item_card():
         for d, no, wh, qty in q.all():
             movements.append({"date": d, "type": "إرجاع", "voucher_no": no, "warehouse_id": wh, "qty": float(qty or 0)})
 
+        # adjustment (signed)
+        q = db.session.query(
+            InvAdjustmentVoucher.voucher_date,
+            InvAdjustmentVoucher.voucher_no,
+            InvAdjustmentVoucher.warehouse_id,
+            InvAdjustmentVoucherLine.delta_qty,
+        )
+        q = q.join(
+            InvAdjustmentVoucherLine,
+            InvAdjustmentVoucherLine.voucher_id == InvAdjustmentVoucher.id,
+        )
+        q = q.filter(InvAdjustmentVoucherLine.item_id == iid)
+        if warehouse_id and warehouse_id.isdigit():
+            q = q.filter(InvAdjustmentVoucher.warehouse_id == int(warehouse_id))
+        if from_date:
+            q = q.filter(InvAdjustmentVoucher.voucher_date >= from_date)
+        if to_date:
+            q = q.filter(InvAdjustmentVoucher.voucher_date <= to_date)
+        for d, no, wh, delta_qty in q.all():
+            movements.append({"date": d, "type": "تصحيح", "voucher_no": no, "warehouse_id": wh, "qty": float(delta_qty or 0)})
+
         # issue (negative)
         q = db.session.query(InvIssueVoucher.voucher_date, InvIssueVoucher.voucher_no, InvIssueVoucher.from_warehouse_id, InvIssueVoucherLine.qty)
         q = q.join(InvIssueVoucherLine, InvIssueVoucherLine.voucher_id == InvIssueVoucher.id)
@@ -54492,6 +54837,11 @@ def inventory_report_item_card():
     for m in movements:
         m["warehouse"] = wh_map.get(m["warehouse_id"])
 
+    # Keep the net quantity in the view model.  Jinja loop-local assignments do
+    # not update a variable outside the loop, which previously made the report
+    # footer display 0.00 regardless of the movement rows.
+    total_qty = sum(float(m.get("qty") or 0) for m in movements)
+
     return render_template(
         "portal/inventory/report_item_card.html",
         warehouses=warehouses,
@@ -54499,6 +54849,7 @@ def inventory_report_item_card():
         selected=selected,
         item=sel_item,
         movements=movements,
+        total_qty=total_qty,
     )
 
 
@@ -54513,7 +54864,7 @@ def inventory_report_yearly_vouchers():
 
     counts = {}
 
-    for cls, label in [(InvIssueVoucher, "صرف"), (InvInboundVoucher, "إدخال"), (InvReturnVoucher, "إرجاع"), (InvScrapVoucher, "إتلاف"), (InvStocktakeVoucher, "جرد")]:
+    for cls, label in [(InvIssueVoucher, "صرف"), (InvInboundVoucher, "إدخال"), (InvReturnVoucher, "إرجاع"), (InvScrapVoucher, "إتلاف"), (InvAdjustmentVoucher, "تصحيح"), (InvStocktakeVoucher, "جرد")]:
         rows = db.session.query(cls.voucher_date, func.count(cls.id)).group_by(cls.voucher_date).all()
         for d, c in rows:
             y = _year_of(d)
@@ -54564,6 +54915,23 @@ def inventory_report_yearly_qty():
             continue
         sums.setdefault(y, {})
         sums[y]["إرجاع"] = sums[y].get("إرجاع", 0.0) + float(s or 0)
+
+    # adjustment (signed delta)
+    rows = db.session.query(
+        InvAdjustmentVoucher.voucher_date,
+        func.sum(InvAdjustmentVoucherLine.delta_qty),
+    ).join(
+        InvAdjustmentVoucherLine,
+        InvAdjustmentVoucherLine.voucher_id == InvAdjustmentVoucher.id,
+    ).group_by(InvAdjustmentVoucher.voucher_date).all()
+    for d, s in rows:
+        y = _year_of(d)
+        if not y:
+            continue
+        if year and y != year:
+            continue
+        sums.setdefault(y, {})
+        sums[y]["تصحيح"] = sums[y].get("تصحيح", 0.0) + float(s or 0)
 
     # issue
     rows = db.session.query(InvIssueVoucher.voucher_date, func.sum(InvIssueVoucherLine.qty)).join(InvIssueVoucherLine, InvIssueVoucherLine.voucher_id == InvIssueVoucher.id).group_by(InvIssueVoucher.voucher_date).all()

@@ -34,6 +34,7 @@
             <th>صرف</th>
             <th>إرجاع</th>
             <th>إتلاف</th>
+            <th>تصحيح</th>
             <th>جرد (مسجل)</th>
           </tr>
         </thead>
@@ -45,10 +46,11 @@
             <td>{{ '%.2f'|format(r.data.get('صرف',0)) }}</td>
             <td>{{ '%.2f'|format(r.data.get('إرجاع',0)) }}</td>
             <td>{{ '%.2f'|format(r.data.get('إتلاف',0)) }}</td>
+            <td>{{ '%+.2f'|format(r.data.get('تصحيح',0)) }}</td>
             <td>{{ '%.2f'|format(r.data.get('جرد',0)) }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="6" class="text-center text-muted">لا توجد بيانات.</td></tr>
+          <tr><td colspan="7" class="text-center text-muted">لا توجد بيانات.</td></tr>
           {% endfor %}
         </tbody>
       </table>

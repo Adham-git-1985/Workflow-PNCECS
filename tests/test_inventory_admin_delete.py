@@ -7,7 +7,22 @@ from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
 
 from extensions import db
-from models import InvRoom, InvStocktakeVoucher, InvSupplier, InvWarehouse, User
+from models import (
+    InvInboundVoucher,
+    InvInboundVoucherLine,
+    InvAdjustmentVoucher,
+    InvAdjustmentVoucherLine,
+    InvIssueVoucher,
+    InvIssueVoucherLine,
+    InvItem,
+    InvReturnVoucher,
+    InvReturnVoucherLine,
+    InvRoom,
+    InvStocktakeVoucher,
+    InvSupplier,
+    InvWarehouse,
+    User,
+)
 from portal import portal_bp
 
 
@@ -127,6 +142,103 @@ class InventoryAdminDeleteTests(unittest.TestCase):
         self.assertEqual(supplier_response.status_code, 302)
         self.assertIsNone(db.session.get(InvRoom, room_id))
         self.assertIsNone(db.session.get(InvSupplier, supplier_id))
+
+    def test_item_card_report_shows_signed_net_quantity(self):
+        item = InvItem(name="قهوة عربية", code="COFFEE-001")
+        db.session.add(item)
+        db.session.flush()
+
+        inbound = InvInboundVoucher(
+            voucher_no="IN-TEST-001",
+            voucher_date="2026-11-02",
+            to_warehouse_id=self.warehouse.id,
+            created_by_id=self.admin.id,
+        )
+        issue = InvIssueVoucher(
+            issue_kind="ROOM",
+            voucher_no="EMP-TEST-001",
+            voucher_date="2026-11-02",
+            from_warehouse_id=self.warehouse.id,
+            to_room_name="غرفة الاختبار",
+            created_by_id=self.admin.id,
+        )
+        returned = InvReturnVoucher(
+            voucher_no="RET-TEST-001",
+            voucher_date="2026-11-02",
+            to_warehouse_id=self.warehouse.id,
+            from_room_name="غرفة الاختبار",
+            created_by_id=self.admin.id,
+        )
+        db.session.add_all((inbound, issue, returned))
+        db.session.flush()
+        db.session.add_all((
+            InvInboundVoucherLine(voucher_id=inbound.id, item_id=item.id, qty=10),
+            InvIssueVoucherLine(voucher_id=issue.id, item_id=item.id, qty=2),
+            InvReturnVoucherLine(voucher_id=returned.id, item_id=item.id, qty=3),
+        ))
+        db.session.commit()
+
+        response = self.client.get(
+            f"/portal/inventory/reports/item-card?item_id={item.id}"
+            f"&warehouse_id={self.warehouse.id}"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("10.00", body)
+        self.assertIn("-2.00", body)
+        self.assertIn("3.00", body)
+        self.assertIn("11.00", body)
+
+    def test_adjustment_voucher_applies_signed_delta_and_is_visible_in_reports(self):
+        item = InvItem(name="Correction item", code="CORR-001")
+        db.session.add(item)
+        db.session.commit()
+
+        new_response = self.client.get("/portal/inventory/vouchers/adjustment/new")
+        list_response = self.client.get("/portal/inventory/vouchers/adjustment/list")
+        self.assertEqual(new_response.status_code, 200)
+        self.assertEqual(list_response.status_code, 200)
+
+        response = self.client.post(
+            "/portal/inventory/vouchers/adjustment/new",
+            data={
+                "voucher_date": "2026-11-02",
+                "warehouse_id": str(self.warehouse.id),
+                "reason": "Wrong inbound quantity",
+                "source_reference": "IN-TEST-001",
+                "item_id[]": [str(item.id)],
+                "delta_qty[]": ["-3"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        voucher = InvAdjustmentVoucher.query.one()
+        line = InvAdjustmentVoucherLine.query.filter_by(voucher_id=voucher.id).one()
+        self.assertEqual(voucher.voucher_no, "ADJ-2026-000001")
+        self.assertEqual(line.delta_qty, -3.0)
+
+        card_response = self.client.get(
+            f"/portal/inventory/reports/item-card?item_id={item.id}"
+            f"&warehouse_id={self.warehouse.id}"
+        )
+        self.assertEqual(card_response.status_code, 200)
+        card_body = card_response.get_data(as_text=True)
+        self.assertIn("-3.00", card_body)
+
+        view_response = self.client.get(
+            f"/portal/inventory/vouchers/adjustment/{voucher.id}"
+        )
+        self.assertEqual(view_response.status_code, 200)
+        view_body = view_response.get_data(as_text=True)
+        self.assertIn("ADJ-2026-000001", view_body)
+        self.assertIn("Wrong inbound quantity", view_body)
+
+        yearly_response = self.client.get(
+            "/portal/inventory/reports/yearly-qty?year=2026"
+        )
+        self.assertEqual(yearly_response.status_code, 200)
+        self.assertIn("-3.00", yearly_response.get_data(as_text=True))
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ VOUCHER_PREFIXES = {
     "inbound": "IN",
     "scrap": "SCR",
     "return": "RET",
+    "adjustment": "ADJ",
     "stocktake": "STK",
     "custody": "CUS",
 }

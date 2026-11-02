@@ -5702,6 +5702,70 @@ class InvReturnVoucherAttachment(db.Model):
     uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_id], lazy="joined")
 
 
+# ----------------------
+# Inventory: Adjustment (Correction) Vouchers
+# ----------------------
+
+
+class InvAdjustmentVoucher(db.Model):
+    __tablename__ = "inv_adjustment_voucher"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    voucher_no = db.Column(db.String(80), nullable=False, index=True)
+    voucher_date = db.Column(db.String(10), nullable=False, index=True)  # YYYY-MM-DD
+
+    warehouse_id = db.Column(db.Integer, db.ForeignKey("inv_warehouse.id"), nullable=False, index=True)
+    reason = db.Column(db.Text, nullable=False)
+    source_reference = db.Column(db.String(120), nullable=True)
+    note = db.Column(db.Text, nullable=True)
+
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    warehouse = db.relationship("InvWarehouse", foreign_keys=[warehouse_id], lazy="joined")
+    created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+
+    __table_args__ = (
+        db.Index("ix_inv_adjustment_voucher_date_no", "voucher_date", "voucher_no"),
+    )
+
+
+class InvAdjustmentVoucherLine(db.Model):
+    __tablename__ = "inv_adjustment_voucher_line"
+
+    id = db.Column(db.Integer, primary_key=True)
+    voucher_id = db.Column(db.Integer, db.ForeignKey("inv_adjustment_voucher.id"), nullable=False, index=True)
+    item_id = db.Column(db.Integer, db.ForeignKey("inv_item.id"), nullable=False, index=True)
+
+    # Signed correction: positive adds to stock, negative subtracts from stock.
+    delta_qty = db.Column(db.Float, nullable=False)
+    serial = db.Column(db.String(200), nullable=True)
+    warranty_start = db.Column(db.String(10), nullable=True)  # YYYY-MM-DD
+    warranty_end = db.Column(db.String(10), nullable=True)
+    details = db.Column(db.Text, nullable=True)
+
+    voucher = db.relationship("InvAdjustmentVoucher", foreign_keys=[voucher_id], lazy="joined")
+    item = db.relationship("InvItem", foreign_keys=[item_id], lazy="joined")
+
+
+class InvAdjustmentVoucherAttachment(db.Model):
+    __tablename__ = "inv_adjustment_voucher_attachment"
+
+    id = db.Column(db.Integer, primary_key=True)
+    voucher_id = db.Column(db.Integer, db.ForeignKey("inv_adjustment_voucher.id"), nullable=False, index=True)
+
+    original_name = db.Column(db.String(255), nullable=False)
+    stored_name = db.Column(db.String(255), nullable=False)
+    file_path = db.Column(db.String(500), nullable=False)
+
+    uploaded_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    voucher = db.relationship("InvAdjustmentVoucher", foreign_keys=[voucher_id], lazy="joined")
+    uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_id], lazy="joined")
+
+
 class InvRequest(db.Model):
     __tablename__ = "inv_request"
 

@@ -68,9 +68,7 @@
             </tr>
           </thead>
           <tbody>
-            {% set total = 0 %}
             {% for m in movements %}
-              {% set total = total + (m.qty or 0) %}
               <tr>
                 <td>{{ m.date }}</td>
                 <td>{{ m.type }}</td>
@@ -83,7 +81,7 @@
           <tfoot class="table-light">
             <tr>
               <th colspan="4" class="text-end">الصافي</th>
-              <th class="text-end">{{ '%.2f'|format(total) }}</th>
+              <th class="text-end">{{ '%.2f'|format(total_qty or 0) }}</th>
             </tr>
           </tfoot>
         </table>
