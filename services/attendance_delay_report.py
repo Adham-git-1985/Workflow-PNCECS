@@ -36,6 +36,7 @@ from models import (
 
 
 REPORT_TITLE = "تقرير التأخير وتبرير التأخير"
+SUMMARY_REPORT_TITLE = "التقرير المختصر"
 
 
 def _user_name(user_or_id, user_map: dict[int, User] | None = None) -> str:
@@ -573,6 +574,81 @@ def _steps_table(data: dict, width: float, styles: dict[str, ParagraphStyle]) ->
     return table
 
 
+def _compact_report_text(value, limit: int = 100) -> str:
+    text = str(value or "—").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 1, 1)].rstrip() + "…"
+
+
+def _summary_responders(data: dict) -> str:
+    responders: list[str] = []
+    for step in data.get("steps") or []:
+        responder = (step.get("responder") or "").strip()
+        if not responder or responder == "—" or responder.startswith("تم التجاوز بواسطة"):
+            continue
+        if responder not in responders:
+            responders.append(responder)
+    return "، ".join(responders) or "—"
+
+
+def _summary_table(rows: list[dict], width: float, styles: dict[str, ParagraphStyle]) -> Table:
+    headers = [
+        "الطلب",
+        "الموظف",
+        "اليوم / الموقع",
+        "التأخير",
+        "التبرير",
+        "وصل إلى",
+        "من أجاب",
+        "الحالة",
+    ]
+    table_rows = [[_p(header, styles["header"]) for header in headers]]
+    for data in rows:
+        delay_text = f"{data['late_minutes']} دقيقة\nدخول: {data['first_in_time']}"
+        if data.get("early_leave_minutes"):
+            delay_text += f"\nخروج مبكر: {data['early_leave_minutes']}"
+        justification = _compact_report_text(data.get("reason"), 90)
+        note = _compact_report_text(data.get("employee_note"), 80)
+        if note != "—":
+            justification = f"{justification}\n{note}"
+        table_rows.append([
+            _p(f"#{data['request_id']}\n{data['created_at']}", styles["small"]),
+            _p(f"{_compact_report_text(data['employee_name'], 45)}\n{data['employee_no']}", styles["small"]),
+            _p(f"{data['delay_day']}\n{_compact_report_text(data['work_location'], 35)}", styles["small"]),
+            _p(delay_text, styles["small"]),
+            _p(justification, styles["small"]),
+            _p(
+                f"{_compact_report_text(data['reached_label'], 65)}\n{_compact_report_text(data['reached_target'], 55)}",
+                styles["small"],
+            ),
+            _p(_compact_report_text(_summary_responders(data), 75), styles["small"]),
+            _p(data["request_status"], styles["small"]),
+        ])
+    if len(table_rows) == 1:
+        table_rows.append([_p("لا توجد طلبات تأخير مطابقة", styles["small"])] + [_p("—", styles["small"]) for _ in headers[1:]])
+
+    proportions = (0.07, 0.14, 0.12, 0.11, 0.18, 0.17, 0.12, 0.09)
+    table = Table(
+        table_rows,
+        colWidths=[width * value for value in proportions],
+        repeatRows=1,
+        hAlign="RIGHT",
+    )
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#C9D3DF")),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#17375E")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (0, -1), "CENTER"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+    ]))
+    return table
+
+
 def _draw_footer(canvas, document, font_regular: str) -> None:
     canvas.saveState()
     canvas.setFont(font_regular, 7)
@@ -622,6 +698,39 @@ def build_attendance_delay_tracking_pdf(cases, *, title: str = REPORT_TITLE) -> 
                 Spacer(1, 2 * mm),
                 _steps_table(data, width, styles),
             ])
+    document.build(
+        story,
+        onFirstPage=lambda canvas, doc: _draw_footer(canvas, doc, font_regular),
+        onLaterPages=lambda canvas, doc: _draw_footer(canvas, doc, font_regular),
+    )
+    return stream.getvalue()
+
+
+def build_attendance_delay_summary_pdf(cases, *, title: str = SUMMARY_REPORT_TITLE) -> bytes:
+    """Build a compact A4 landscape table with one row per delay request."""
+    rows = attendance_delay_report_data(cases)
+    font_regular, font_bold = _register_fonts()
+    styles = _make_styles(font_regular, font_bold)
+    stream = BytesIO()
+    document = SimpleDocTemplate(
+        stream,
+        pagesize=landscape(A4),
+        rightMargin=7 * mm,
+        leftMargin=7 * mm,
+        topMargin=8 * mm,
+        bottomMargin=12 * mm,
+        title=title,
+        author="Workflow-PNCECS",
+    )
+    story = [
+        _p(title, styles["title"]),
+        _p(
+            f"تأخيرات وتبريرات الدوام · عدد الطلبات: {len(rows)} · تاريخ الإصدار: {_date_time(datetime.utcnow())}",
+            styles["body"],
+        ),
+        Spacer(1, 3 * mm),
+        _summary_table(rows, document.width, styles),
+    ]
     document.build(
         story,
         onFirstPage=lambda canvas, doc: _draw_footer(canvas, doc, font_regular),

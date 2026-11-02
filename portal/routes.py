@@ -454,7 +454,9 @@ from services.attendance_delay_workflow import (
 )
 from services.attendance_delay_report import (
     REPORT_TITLE as ATTENDANCE_DELAY_REPORT_TITLE,
+    SUMMARY_REPORT_TITLE as ATTENDANCE_DELAY_SUMMARY_REPORT_TITLE,
     attendance_delay_report_data,
+    build_attendance_delay_summary_pdf,
     build_attendance_delay_tracking_pdf,
 )
 
@@ -11595,6 +11597,24 @@ def hr_report_attendance_delay_workflow_pdf():
         BytesIO(payload),
         as_attachment=False,
         download_name='attendance_delay_justification_report.pdf',
+        mimetype='application/pdf',
+    )
+
+
+@portal_bp.route('/hr/reports/attendance/delay-workflow-summary.pdf', methods=['GET'])
+@login_required
+@_attendance_delay_perm
+def hr_report_attendance_delay_workflow_summary_pdf():
+    """Export all filtered delay workflows as a compact row-by-row PDF."""
+    cases = _attendance_delay_report_cases()
+    payload = build_attendance_delay_summary_pdf(
+        cases,
+        title=ATTENDANCE_DELAY_SUMMARY_REPORT_TITLE,
+    )
+    return send_file(
+        BytesIO(payload),
+        as_attachment=False,
+        download_name='attendance_delay_summary_report.pdf',
         mimetype='application/pdf',
     )
 

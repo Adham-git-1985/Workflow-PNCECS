@@ -21,9 +21,15 @@
     <small class="text-muted">{{ 'مسارات نماذج التأخير في البوابة الإدارية فقط' if portal_mode else 'طلبات نظام مسار التي أنشأتها أو شاركت في معالجتها أو تتابع سيرها' }}</small>
   </div>
   {% if portal_mode %}
-  <a class="btn btn-outline-danger" href="{{ url_for('portal.hr_report_attendance_delay_workflow') }}">
-    <i class="bi bi-file-earmark-bar-graph"></i> تقرير التأخير وتبرير التأخير
-  </a>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-danger" href="{{ url_for('portal.hr_report_attendance_delay_workflow') }}">
+      <i class="bi bi-file-earmark-bar-graph"></i> تقرير التأخير وتبرير التأخير
+    </a>
+    <a class="btn btn-outline-primary" target="_blank" rel="noopener"
+       href="{{ url_for('portal.hr_report_attendance_delay_workflow_summary_pdf') }}">
+      <i class="bi bi-list-ol"></i> التقرير المختصر
+    </a>
+  </div>
   {% endif %}
 </div>
 

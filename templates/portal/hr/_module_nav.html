@@ -255,6 +255,7 @@
             {% endif %}
             <a class="list-group-item list-group-item-action fw-semibold" data-report-label="تقرير الشؤون الإدارية الموحد" href="{{ url_for('portal.hr_report_administrative_affairs_daily') }}"><i class="bi bi-clipboard2-data"></i> تقرير الشؤون الإدارية الموحّد</a>
             <a class="list-group-item list-group-item-action border border-danger" data-report-label="تقرير التأخير وتبرير التأخير" href="{{ url_for('portal.hr_report_attendance_delay_workflow') }}"><i class="bi bi-file-earmark-bar-graph text-danger"></i> تقرير التأخير وتبرير التأخير</a>
+            <a class="list-group-item list-group-item-action border border-primary" data-report-label="التقرير المختصر للتأخير" href="{{ url_for('portal.hr_report_attendance_delay_workflow_summary_pdf') }}" target="_blank" rel="noopener"><i class="bi bi-list-ol text-primary"></i> التقرير المختصر للتأخير</a>
             <hr class="my-3">
             <a class="list-group-item list-group-item-action" data-report-label="تقرير الغياب" href="{{ url_for('portal.hr_report_absence') }}"><i class="bi bi-person-x"></i> تقرير الغياب</a>
             <a class="list-group-item list-group-item-action" data-report-label="تقرير البصمات" href="{{ url_for('portal.hr_report_fingerprints') }}"><i class="bi bi-fingerprint"></i> تقرير البصمات</a>

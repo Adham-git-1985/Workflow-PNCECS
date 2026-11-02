@@ -482,6 +482,18 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         # ReportLab stores the A4 landscape media box as 841.89 x 595.28 pt.
         self.assertIn(b"841.8898", response.data)
 
+    def test_attendance_delay_summary_report_is_landscape_pdf(self):
+        case, request_row = self._start()
+        self._login(self.admin)
+
+        response = self.client.get(
+            "/portal/hr/reports/attendance/delay-workflow-summary.pdf"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "application/pdf")
+        self.assertTrue(response.data.startswith(b"%PDF"))
+        self.assertIn(b"841.8898", response.data)
+
     def test_attendance_delay_hr_resolvers_match_the_configured_roles(self):
         self.assertIn(
             self.hr_department_manager.id,
