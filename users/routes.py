@@ -6,7 +6,7 @@ from werkzeug.utils import secure_filename
 from . import users_bp
 from extensions import db
 from permissions import roles_required
-from models import User, UserPresence, Notification, AuditLog, Department, Directorate, Unit, Section, Division, Organization, Role, EmployeeFile, EmployeeAttachment
+from models import User, UserPresence, Notification, AuditLog, Department, Directorate, Unit, Section, Division, Organization, Role, EmployeeFile, EmployeeAttachment, HRLookupItem
 from utils.events import emit_event
 
 from utils import system_search
@@ -1600,9 +1600,53 @@ def profile_view(user_id: int):
 
     emp_file = None
     emp_atts = []
+    employee_card_types = []
+    employee_card_attachments = {}
     try:
         emp_file = EmployeeFile.query.filter_by(user_id=u.id).first()
-        emp_atts = EmployeeAttachment.query.filter_by(user_id=u.id).order_by(EmployeeAttachment.uploaded_at.desc()).all()
+        employee_card_types = (
+            HRLookupItem.query
+            .filter(
+                HRLookupItem.category == "ATTACH_TYPE",
+                HRLookupItem.code.in_(("EMPLOYEE_CARD_FRONT", "EMPLOYEE_CARD_BACK")),
+            )
+            .all()
+        )
+        employee_card_types.sort(
+            key=lambda item: (
+                0 if item.code == "EMPLOYEE_CARD_FRONT" else 1,
+                item.id,
+            )
+        )
+        card_type_ids = [item.id for item in employee_card_types if item and item.id]
+        if card_type_ids:
+            card_rows = (
+                EmployeeAttachment.query
+                .filter(
+                    EmployeeAttachment.user_id == u.id,
+                    EmployeeAttachment.attachment_type_lookup_id.in_(card_type_ids),
+                )
+                .order_by(EmployeeAttachment.uploaded_at.desc(), EmployeeAttachment.id.desc())
+                .all()
+            )
+            for row in card_rows:
+                code = getattr(row.attachment_type_lookup, "code", None)
+                if code and code not in employee_card_attachments:
+                    employee_card_attachments[code] = row
+            emp_atts = (
+                EmployeeAttachment.query
+                .filter(
+                    EmployeeAttachment.user_id == u.id,
+                    or_(
+                        EmployeeAttachment.attachment_type_lookup_id.is_(None),
+                        ~EmployeeAttachment.attachment_type_lookup_id.in_(card_type_ids),
+                    ),
+                )
+                .order_by(EmployeeAttachment.uploaded_at.desc())
+                .all()
+            )
+        else:
+            emp_atts = EmployeeAttachment.query.filter_by(user_id=u.id).order_by(EmployeeAttachment.uploaded_at.desc()).all()
     except Exception:
         emp_file = None
         emp_atts = []
@@ -1618,6 +1662,8 @@ def profile_view(user_id: int):
         division=division,
         emp_file=emp_file,
         emp_atts=emp_atts,
+        employee_card_types=employee_card_types,
+        employee_card_attachments=employee_card_attachments,
     )
 
 

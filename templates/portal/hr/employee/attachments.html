@@ -3,6 +3,63 @@
 {% block hr_content %}
   {% include "portal/hr/employee/_nav.html" %}
 
+  {% if employee_card_types %}
+    <div class="card shadow-sm mb-3" id="employee-card">
+      <div class="card-header d-flex justify-content-between align-items-center gap-2 flex-wrap">
+        <h5 class="mb-0"><i class="bi bi-person-vcard"></i> بطاقة الموظف</h5>
+        <span class="text-muted small">يرجى حفظ الوجه الأمامي والوجه الخلفي في خانتهما</span>
+      </div>
+      <div class="card-body">
+        <div class="row g-3">
+          {% for card_type in employee_card_types %}
+            {% set card = employee_card_attachments.get(card_type.code) %}
+            <div class="col-md-6">
+              <div class="border rounded-3 p-3 h-100">
+                <div class="fw-semibold mb-2">{{ card_type.label }}</div>
+                {% if card %}
+                  <div class="small text-truncate mb-2" dir="auto" title="{{ card.original_name }}">
+                    <i class="bi bi-file-earmark-check text-success"></i>
+                    {{ card.original_name }}
+                  </div>
+                  <div class="d-flex gap-2 mb-3">
+                    <a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener"
+                       href="{{ url_for('portal.hr_employee_attachment_preview', user_id=u.id, att_id=card.id) }}">
+                      <i class="bi bi-eye"></i> معاينة
+                    </a>
+                    <a class="btn btn-sm btn-outline-secondary"
+                       href="{{ url_for('portal.hr_employee_attachment_download', user_id=u.id, att_id=card.id) }}">
+                      <i class="bi bi-download"></i> تنزيل
+                    </a>
+                    {% if current_user.has_perm('HR_EMPLOYEE_ATTACHMENTS_MANAGE') or current_user.has_role('ADMIN') %}
+                      <form method="post" action="{{ url_for('portal.hr_employee_attachment_delete', user_id=u.id, att_id=card.id) }}"
+                            onsubmit="return confirm('حذف هذا الوجه من بطاقة الموظف؟');">
+                        <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+                      </form>
+                    {% endif %}
+                  </div>
+                {% else %}
+                  <div class="text-muted small mb-3">لم يتم رفع هذا الوجه بعد.</div>
+                {% endif %}
+
+                {% if current_user.has_perm('HR_EMPLOYEE_ATTACHMENTS_MANAGE') or current_user.has_role('ADMIN') %}
+                  <form method="post" enctype="multipart/form-data"
+                        action="{{ url_for('portal.hr_employee_card_upload', user_id=u.id, side=card_type.code) }}">
+                    <input type="hidden" name="next" value="{{ url_for('portal.hr_employee_attachments', user_id=u.id) }}#employee-card">
+                    <input class="form-control form-control-sm mb-2" type="file" name="file"
+                           accept=".pdf,.png,.jpg,.jpeg,.webp" required>
+                    <button class="btn btn-sm btn-primary" type="submit">
+                      <i class="bi bi-upload"></i> {{ 'استبدال الملف' if card else 'رفع الملف' }}
+                    </button>
+                  </form>
+                {% endif %}
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  {% endif %}
+
   <div class="row g-3">
     <div class="col-lg-5">
       <div class="card shadow-sm">

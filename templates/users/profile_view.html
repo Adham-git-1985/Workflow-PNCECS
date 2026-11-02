@@ -158,6 +158,29 @@
       <div class="card-body">
         <h5 class="mb-3">📎 الوثائق والمرفقات</h5>
 
+        {% if employee_card_types %}
+          <div class="border rounded-3 p-3 mb-3">
+            <div class="fw-semibold mb-2"><i class="bi bi-person-vcard"></i> بطاقة الموظف</div>
+            <div class="row g-2">
+              {% for card_type in employee_card_types %}
+                {% set card = employee_card_attachments.get(card_type.code) %}
+                <div class="col-md-6">
+                  <div class="bg-light rounded-3 p-2 h-100">
+                    <div class="small text-muted">{{ card_type.label }}</div>
+                    {% if card %}
+                      <div class="text-truncate" dir="auto" title="{{ card.original_name }}">{{ card.original_name }}</div>
+                      <a class="btn btn-sm btn-outline-primary mt-2"
+                         href="{{ url_for('users.user_attachment_download', user_id=u.id, att_id=card.id) }}">تنزيل</a>
+                    {% else %}
+                      <div class="text-muted">غير مرفوع</div>
+                    {% endif %}
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+        {% endif %}
+
         {% if emp_atts and emp_atts|length > 0 %}
           <div class="table-responsive">
             <table class="table table-sm align-middle">

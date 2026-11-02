@@ -30174,6 +30174,50 @@ def _attachment_classification_for_type(type_item):
     return item.id if item else None
 
 
+EMPLOYEE_CARD_TYPE_CODES = (
+    "EMPLOYEE_CARD_FRONT",
+    "EMPLOYEE_CARD_BACK",
+)
+
+
+def _employee_card_lookup_items():
+    """Return the two dedicated employee-card attachment types in UI order."""
+    items = (
+        HRLookupItem.query
+        .filter(
+            HRLookupItem.category == "ATTACH_TYPE",
+            HRLookupItem.code.in_(EMPLOYEE_CARD_TYPE_CODES),
+        )
+        .all()
+    )
+    by_code = {item.code: item for item in items}
+    return [by_code[code] for code in EMPLOYEE_CARD_TYPE_CODES if code in by_code]
+
+
+def _employee_card_attachments(user_id: int, card_types=None):
+    """Return the latest attachment for each employee-card side."""
+    card_types = card_types if card_types is not None else _employee_card_lookup_items()
+    type_ids = [item.id for item in card_types if item and item.id]
+    if not type_ids:
+        return {}
+
+    rows = (
+        EmployeeAttachment.query
+        .filter(
+            EmployeeAttachment.user_id == user_id,
+            EmployeeAttachment.attachment_type_lookup_id.in_(type_ids),
+        )
+        .order_by(EmployeeAttachment.uploaded_at.desc(), EmployeeAttachment.id.desc())
+        .all()
+    )
+    result = {}
+    for row in rows:
+        code = getattr(row.attachment_type_lookup, "code", None)
+        if code and code not in result:
+            result[code] = row
+    return result
+
+
 def _lookup_label_by_id() -> dict[int, str]:
     rows = HRLookupItem.query.all()
     return {r.id: r.label for r in rows if r and r.id}
@@ -31061,6 +31105,12 @@ def hr_employee_attachments(user_id: int):
             None,
         )
 
+    employee_card_types = _employee_card_lookup_items()
+    employee_card_attachments = _employee_card_attachments(
+        user_id,
+        employee_card_types,
+    )
+
     return render_template(
         "portal/hr/employee/attachments.html",
         u=u,
@@ -31076,6 +31126,8 @@ def hr_employee_attachments(user_id: int):
         selected_classification_id=selected_classification_id,
         filter_uncategorized=filter_uncategorized,
         selected_classification_label=selected_classification_label,
+        employee_card_types=employee_card_types,
+        employee_card_attachments=employee_card_attachments,
     )
 
 @portal_bp.route("/hr/employees/<int:user_id>/payslips")
@@ -31313,6 +31365,92 @@ def hr_employee_attachments_upload(user_id: int):
     if attachment_type == 'PAYSLIP':
         return redirect(url_for('portal.hr_employee_payslips', user_id=user_id))
     return redirect(url_for('portal.hr_employee_attachments', user_id=user_id))
+
+
+@portal_bp.route(
+    "/hr/employees/<int:user_id>/employee-card/<string:side>/upload",
+    methods=["POST"],
+)
+@login_required
+@_perm(HR_EMP_ATTACH)
+def hr_employee_card_upload(user_id: int, side: str):
+    """Replace one side of an employee card attachment."""
+    User.query.get_or_404(user_id)
+    side = (side or "").strip().upper()
+    if side not in EMPLOYEE_CARD_TYPE_CODES:
+        abort(404)
+
+    type_item = (
+        HRLookupItem.query
+        .filter_by(category="ATTACH_TYPE", code=side)
+        .first_or_404()
+    )
+    uploaded = request.files.get("file")
+    if not uploaded or not getattr(uploaded, "filename", ""):
+        flash("اختر ملف بطاقة الموظف أولاً.", "danger")
+        return redirect(url_for("portal.hr_employee_attachments", user_id=user_id))
+
+    original_name = Path(uploaded.filename).name
+    extension = _clean_suffix(original_name)
+    stored_name = f"{uuid.uuid4().hex}{extension}" if extension else uuid.uuid4().hex
+    directory = _employee_upload_dir(user_id)
+    destination = directory / stored_name
+    uploaded.save(destination)
+
+    classification_id = _attachment_classification_for_type(type_item)
+    old_attachments = (
+        EmployeeAttachment.query
+        .filter_by(user_id=user_id, attachment_type_lookup_id=type_item.id)
+        .all()
+    )
+    now = datetime.utcnow()
+    attachment = EmployeeAttachment(
+        user_id=user_id,
+        attachment_type="OTHER",
+        attachment_type_lookup_id=type_item.id,
+        attachment_classification_lookup_id=classification_id,
+        original_name=original_name,
+        stored_name=stored_name,
+        note=type_item.label,
+        is_published=True,
+        uploaded_at=now,
+        uploaded_by_id=current_user.id,
+    )
+    db.session.add(attachment)
+
+    try:
+        for old_attachment in old_attachments:
+            old_path = directory / (old_attachment.stored_name or "")
+            if old_path.is_file():
+                old_path.unlink()
+            archive_employee_attachment_deletion(
+                old_attachment,
+                deleted_by_id=current_user.id,
+            )
+            db.session.delete(old_attachment)
+
+        sync_employee_attachment_to_archive(attachment, source_path=destination)
+        _portal_audit(
+            action="HR_EMPLOYEE_CARD_UPLOAD",
+            note=f"رفع {type_item.label}",
+            target_type="EMPLOYEE_ATTACHMENT",
+            target_id=user_id,
+        )
+        db.session.commit()
+        flash(f"تم حفظ {type_item.label}.", "success")
+    except Exception:
+        db.session.rollback()
+        try:
+            if destination.is_file():
+                destination.unlink()
+        except Exception:
+            pass
+        flash("تعذر حفظ بطاقة الموظف.", "danger")
+
+    next_url = (request.form.get("next") or "").strip()
+    if next_url.startswith("/"):
+        return redirect(next_url)
+    return redirect(url_for("portal.hr_employee_attachments", user_id=user_id))
 
 
 def _employee_attachment_directory(att: EmployeeAttachment) -> Path | None:

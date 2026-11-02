@@ -473,6 +473,100 @@ def _ensure_runtime_schema():
                                     "updated_at": _now,
                                 },
                             )
+
+                    # Keep the two employee-card slots and the work-decision
+                    # type available on legacy installations as well as on
+                    # fresh databases.  The Alembic migration carries the
+                    # same seed for normal upgrades; this idempotent fallback
+                    # is needed because older deployments bootstrap SQLite
+                    # schema changes during application startup.
+                    _personal_classification = db.session.execute(
+                        text(
+                            "SELECT id FROM hr_lookup_item "
+                            "WHERE category = 'ATTACH_CLASSIFICATION' "
+                            "AND code = 'PERSONAL_DATA' LIMIT 1"
+                        )
+                    ).scalar()
+                    _work_classification = db.session.execute(
+                        text(
+                            "SELECT id FROM hr_lookup_item "
+                            "WHERE category = 'ATTACH_CLASSIFICATION' "
+                            "AND code = 'WORK_DATA' LIMIT 1"
+                        )
+                    ).scalar()
+                    _seed_attachment_types = (
+                        (
+                            "EMPLOYEE_CARD_FRONT",
+                            "بطاقة الموظف - الوجه الأمامي",
+                            "Employee Card - Front",
+                            5,
+                            _personal_classification,
+                        ),
+                        (
+                            "EMPLOYEE_CARD_BACK",
+                            "بطاقة الموظف - الوجه الخلفي",
+                            "Employee Card - Back",
+                            6,
+                            _personal_classification,
+                        ),
+                        (
+                            "ASSIGNMENT",
+                            "قرار/تكليف عمل",
+                            "Work Decision/Assignment",
+                            45,
+                            _work_classification,
+                        ),
+                    )
+                    for (
+                        _type_code,
+                        _type_name_ar,
+                        _type_name_en,
+                        _type_sort_order,
+                        _type_classification_id,
+                    ) in _seed_attachment_types:
+                        _type_row = db.session.execute(
+                            text(
+                                "SELECT id, attachment_classification_lookup_id "
+                                "FROM hr_lookup_item "
+                                "WHERE category = 'ATTACH_TYPE' AND code = :code LIMIT 1"
+                            ),
+                            {"code": _type_code},
+                        ).first()
+                        if _type_row is None:
+                            db.session.execute(
+                                text(
+                                    "INSERT INTO hr_lookup_item "
+                                    "(category, code, name_ar, name_en, sort_order, is_active, "
+                                    "created_at, updated_at, attachment_classification_lookup_id) "
+                                    "VALUES ('ATTACH_TYPE', :code, :name_ar, :name_en, :sort_order, 1, "
+                                    ":created_at, :updated_at, :classification_id)"
+                                ),
+                                {
+                                    "code": _type_code,
+                                    "name_ar": _type_name_ar,
+                                    "name_en": _type_name_en,
+                                    "sort_order": _type_sort_order,
+                                    "created_at": _now,
+                                    "updated_at": _now,
+                                    "classification_id": _type_classification_id,
+                                },
+                            )
+                        elif (
+                            _type_row.attachment_classification_lookup_id is None
+                            and _type_classification_id
+                        ):
+                            db.session.execute(
+                                text(
+                                    "UPDATE hr_lookup_item "
+                                    "SET attachment_classification_lookup_id = :classification_id, "
+                                    "updated_at = :updated_at WHERE id = :id"
+                                ),
+                                {
+                                    "classification_id": _type_classification_id,
+                                    "updated_at": _now,
+                                    "id": _type_row.id,
+                                },
+                            )
                     db.session.commit()
                 except Exception:
                     db.session.rollback()
