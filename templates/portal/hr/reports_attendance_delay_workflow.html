@@ -1,0 +1,128 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}{{ report_title }}{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-file-earmark-bar-graph"></i> {{ report_title }}</h4>
+      <div class="text-muted">تفاصيل التأخير والتبرير ومراحل وصول الطلب والردود المسجلة.</div>
+    </div>
+    <a class="btn btn-danger" target="_blank" rel="noopener"
+       href="{{ url_for('portal.hr_report_attendance_delay_workflow_pdf', from_date=from_date, to_date=to_date, user_id=selected_user_id, status=selected_status, response_state=selected_response_state) }}">
+      <i class="bi bi-file-earmark-pdf"></i> تصدير PDF ‏A4 أفقي
+    </a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-3 align-items-end">
+      <div class="col-6 col-md-3">
+        <label class="form-label">من تاريخ التأخير</label>
+        <input class="form-control" type="date" name="from_date" value="{{ from_date }}">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label">إلى تاريخ التأخير</label>
+        <input class="form-control" type="date" name="to_date" value="{{ to_date }}">
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label">الموظف</label>
+        <select class="form-select" name="user_id">
+          <option value="">كل الموظفين</option>
+          {% for user in users %}
+            <option value="{{ user.id }}" {% if selected_user_id|string == user.id|string %}selected{% endif %}>{{ user.full_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label">حالة الطلب</label>
+        <select class="form-select" name="status">
+          <option value="">كل الحالات</option>
+          <option value="IN_PROGRESS" {% if selected_status == 'IN_PROGRESS' %}selected{% endif %}>قيد المعالجة</option>
+          <option value="APPROVED" {% if selected_status == 'APPROVED' %}selected{% endif %}>معتمد</option>
+          <option value="REJECTED" {% if selected_status == 'REJECTED' %}selected{% endif %}>مرفوض</option>
+          <option value="CLOSED" {% if selected_status == 'CLOSED' %}selected{% endif %}>مغلق</option>
+        </select>
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label">تبرير الموظف</label>
+        <select class="form-select" name="response_state">
+          <option value="">الكل</option>
+          <option value="RESPONDED" {% if selected_response_state == 'RESPONDED' %}selected{% endif %}>تم تقديم التبرير</option>
+          <option value="PENDING" {% if selected_response_state == 'PENDING' %}selected{% endif %}>بانتظار التبرير</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-5 d-flex gap-2">
+        <button class="btn btn-primary" type="submit"><i class="bi bi-funnel"></i> تطبيق الفلتر</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_report_attendance_delay_workflow') }}">مسح</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="alert alert-info small">
+  يعرض التقرير حتى 500 طلب مطابق. للحصول على نسخة كاملة لطلب محدد، استخدم زر «تقرير PDF» في صف الطلب.
+</div>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover table-sm align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>الطلب</th>
+          <th>الموظف / يوم التأخير</th>
+          <th>التأخير</th>
+          <th>التبرير</th>
+          <th>وصل إلى</th>
+          <th>الحالة</th>
+          <th>من جاوب</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>
+            <div class="fw-semibold">#{{ row.request_id }}</div>
+            <div class="small text-muted">{{ row.created_at }}</div>
+          </td>
+          <td>
+            <div class="fw-semibold">{{ row.employee_name }}</div>
+            <div class="small text-muted">{{ row.employee_no }} · {{ row.delay_day }} · {{ row.work_location }}</div>
+          </td>
+          <td>
+            <span class="badge text-bg-warning">{{ row.late_minutes }} دقيقة</span>
+            {% if row.early_leave_minutes %}<div class="small text-muted mt-1">خروج مبكر: {{ row.early_leave_minutes }}</div>{% endif %}
+          </td>
+          <td>
+            <div>{{ row.reason }}</div>
+            <div class="small text-muted">{{ row.employee_response_status }}{% if row.employee_responded_at != '—' %} · {{ row.employee_responded_at }}{% endif %}</div>
+          </td>
+          <td>
+            <div>{{ row.reached_label }}</div>
+            <div class="small text-muted">{{ row.reached_target }}</div>
+          </td>
+          <td><span class="badge {% if row.request_status == 'معتمد' %}text-bg-success{% elif row.request_status == 'مرفوض' %}text-bg-danger{% elif row.request_status == 'قيد المعالجة' %}text-bg-primary{% else %}text-bg-secondary{% endif %}">{{ row.request_status }}</span></td>
+          <td>
+            {% set responders = [] %}
+            {% for step in row.steps if step.responder != '—' %}
+              {% set _ = responders.append(step.responder) %}
+            {% endfor %}
+            {{ responders|unique|join('، ') or '—' }}
+          </td>
+          <td class="text-nowrap">
+            <a class="btn btn-sm btn-outline-danger" target="_blank" rel="noopener"
+               href="{{ url_for('portal.hr_report_attendance_delay_workflow_request_pdf', request_id=row.request_id) }}">
+              <i class="bi bi-file-earmark-pdf"></i> تقرير PDF
+            </a>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="text-center text-muted py-4">لا توجد طلبات تأخير مطابقة للفلتر الحالي.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

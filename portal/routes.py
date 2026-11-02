@@ -452,6 +452,11 @@ from services.attendance_delay_workflow import (
     json_payload,
     purge_orphan_delay_cases,
 )
+from services.attendance_delay_report import (
+    REPORT_TITLE as ATTENDANCE_DELAY_REPORT_TITLE,
+    attendance_delay_report_data,
+    build_attendance_delay_tracking_pdf,
+)
 
 HR_ESCALATION_UNIT_OPTIONS = (
     (ESCALATION_UNIT_MINUTES, "دقيقة"),
@@ -11517,6 +11522,97 @@ def hr_report_delay():
         hours_value=hours_raw,
         can_export=current_user.has_perm(HR_REPORTS_EXPORT),
         can_start_delay_workflow=_attendance_delay_access_allowed(),
+    )
+
+
+def _attendance_delay_report_cases():
+    """Return delay workflows matching the administrative report filters."""
+    query = (
+        HRAttendanceDelayRequest.query
+        .join(
+            WorkflowRequest,
+            WorkflowRequest.id == HRAttendanceDelayRequest.workflow_request_id,
+        )
+    )
+    from_day = (request.args.get("from_date") or request.args.get("from") or "").strip()
+    to_day = (request.args.get("to_date") or request.args.get("to") or "").strip()
+    parsed_from = _parse_yyyy_mm_dd(from_day)
+    parsed_to = _parse_yyyy_mm_dd(to_day)
+    if parsed_from:
+        query = query.filter(HRAttendanceDelayRequest.delay_day >= parsed_from.isoformat())
+    if parsed_to:
+        query = query.filter(HRAttendanceDelayRequest.delay_day <= parsed_to.isoformat())
+
+    employee_raw = (request.args.get("user_id") or "").strip()
+    if employee_raw.isdigit():
+        query = query.filter(HRAttendanceDelayRequest.employee_id == int(employee_raw))
+
+    status = (request.args.get("status") or "").strip().upper()
+    if status in {"DRAFT", "IN_PROGRESS", "APPROVED", "REJECTED", "CLOSED"}:
+        query = query.filter(WorkflowRequest.status == status)
+
+    response_state = (request.args.get("response_state") or "").strip().upper()
+    if response_state == "RESPONDED":
+        query = query.filter(HRAttendanceDelayRequest.employee_responded_at.isnot(None))
+    elif response_state == "PENDING":
+        query = query.filter(HRAttendanceDelayRequest.employee_responded_at.is_(None))
+
+    return (
+        query
+        .order_by(HRAttendanceDelayRequest.delay_day.desc(), HRAttendanceDelayRequest.id.desc())
+        .limit(500)
+        .all()
+    )
+
+
+@portal_bp.route('/hr/reports/attendance/delay-workflow', methods=['GET'])
+@login_required
+@_attendance_delay_perm
+def hr_report_attendance_delay_workflow():
+    """Show the delay + justification workflow report in the HR reports area."""
+    cases = _attendance_delay_report_cases()
+    return render_template(
+        'portal/hr/reports_attendance_delay_workflow.html',
+        rows=attendance_delay_report_data(cases),
+        users=_list_hr_users(exclude_attendance_exempt=True),
+        from_date=(request.args.get("from_date") or request.args.get("from") or "").strip(),
+        to_date=(request.args.get("to_date") or request.args.get("to") or "").strip(),
+        selected_user_id=(request.args.get("user_id") or "").strip(),
+        selected_status=(request.args.get("status") or "").strip().upper(),
+        selected_response_state=(request.args.get("response_state") or "").strip().upper(),
+        report_title=ATTENDANCE_DELAY_REPORT_TITLE,
+    )
+
+
+@portal_bp.route('/hr/reports/attendance/delay-workflow.pdf', methods=['GET'])
+@login_required
+@_attendance_delay_perm
+def hr_report_attendance_delay_workflow_pdf():
+    """Export the filtered delay + justification report as A4 landscape PDF."""
+    cases = _attendance_delay_report_cases()
+    payload = build_attendance_delay_tracking_pdf(cases)
+    return send_file(
+        BytesIO(payload),
+        as_attachment=False,
+        download_name='attendance_delay_justification_report.pdf',
+        mimetype='application/pdf',
+    )
+
+
+@portal_bp.route('/hr/reports/attendance/delay-workflow/<int:request_id>.pdf', methods=['GET'])
+@login_required
+@_attendance_delay_perm
+def hr_report_attendance_delay_workflow_request_pdf(request_id):
+    """Export one complete delay workflow report as A4 landscape PDF."""
+    delay_case = HRAttendanceDelayRequest.query.filter_by(
+        workflow_request_id=request_id,
+    ).first_or_404()
+    payload = build_attendance_delay_tracking_pdf([delay_case])
+    return send_file(
+        BytesIO(payload),
+        as_attachment=False,
+        download_name=f'attendance_delay_request_{request_id}.pdf',
+        mimetype='application/pdf',
     )
 
 

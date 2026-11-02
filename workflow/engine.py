@@ -32,6 +32,7 @@ from models import (
 from services.workflow_confidentiality import filter_confidential_workflow_user_ids
 from services.workflow_request_views import invalidate_workflow_request_views
 from services.attendance_delay_workflow import (
+    attendance_delay_direct_manager_step,
     archive_delay_workflow_snapshot,
     attendance_delay_parallel_candidate_user_ids,
     attendance_delay_secretary_user_ids,
@@ -2121,6 +2122,41 @@ def decide_step(
         # requests whose parallel step predates the HR stage.
         delay_workflow = is_attendance_delay_workflow(req)
         secretary_ids = attendance_delay_secretary_user_ids() if delay_workflow else set()
+        if delay_workflow and attendance_delay_direct_manager_step(step) and decision == "APPROVED":
+            # Several direct managers receive this stage together, but the
+            # justification only needs one manager's answer.  Close the
+            # remaining manager tasks so the request cannot stay stuck on
+            # this step waiting for duplicate answers.
+            for pending_task in (
+                WorkflowStepTask.query
+                .filter_by(
+                    instance_id=inst.id,
+                    step_order=step.step_order,
+                    status="PENDING",
+                )
+                .filter(WorkflowStepTask.id != task.id)
+                .all()
+            ):
+                pending_task.status = "BYPASSED"
+                pending_task.bypassed_by_id = effective_user_id
+                pending_task.bypass_reason = "أجاب أحد المديرين على تبرير التأخير؛ لا يلزم رد إضافي."
+                pending_task.bypassed_at = now
+                db.session.add(pending_task)
+            db.session.add(
+                AuditLog(
+                    request_id=req.id,
+                    user_id=actor_user_id,
+                    on_behalf_of_id=on_behalf_of_id,
+                    delegation_id=delegation_id,
+                    action="ATTENDANCE_DELAY_DIRECT_MANAGER_RESPONSE_COMPLETED",
+                    old_status="PENDING",
+                    new_status="APPROVED",
+                    note="تم إغلاق مرحلة المديرين المتعددين بعد أول رد.",
+                    target_type="WORKFLOW_STEP",
+                    target_id=step.id,
+                    created_at=now,
+                )
+            )
         if delay_workflow and (
             decision == "REJECTED" or effective_user_id in secretary_ids
         ):

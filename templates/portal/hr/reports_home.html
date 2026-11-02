@@ -104,6 +104,17 @@
   </div>
 
   <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100 border border-danger">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-file-earmark-bar-graph fs-4 text-danger"></i>
+        <div class="fw-bold">تقرير التأخير وتبرير التأخير</div>
+      </div>
+      <div class="text-muted small mb-3">بيانات التأخير، التبرير، المرحلة الحالية، من أجاب، وحالة الطلب بصيغة PDF أفقية.</div>
+      <a class="btn btn-danger w-100" href="{{ url_for('portal.hr_report_attendance_delay_workflow') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
     <div class="p-3 bg-white rounded-3 shadow-sm h-100">
       <div class="d-flex align-items-center gap-2 mb-2">
         <i class="bi bi-shield-check fs-4"></i>

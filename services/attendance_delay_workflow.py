@@ -52,6 +52,15 @@ ATTENDANCE_DELAY_DIRECT_MANAGERS_ROLE = "ATTENDANCE_DELAY_DIRECT_MANAGERS"
 logger = logging.getLogger(__name__)
 
 
+def attendance_delay_direct_manager_step(step: WorkflowInstanceStep | None) -> bool:
+    """Return whether a step is the multi-manager delay-justification stage."""
+    return bool(
+        step
+        and (getattr(step, "approver_role", None) or "").strip().upper()
+        == ATTENDANCE_DELAY_DIRECT_MANAGERS_ROLE
+    )
+
+
 def _compact_attendance_label(value: str | None) -> str:
     """Normalize Arabic/English role and organization labels for routing."""
     text = str(value or "").strip().casefold()

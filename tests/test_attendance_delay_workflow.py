@@ -411,6 +411,77 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
             {self.manager.id, second_manager.id},
         )
 
+    def test_first_direct_manager_response_advances_and_bypasses_other_managers(self):
+        second_manager = User(
+            email="delay-second-manager-response@example.test",
+            name="Second Delay Manager Response",
+            password_hash="x",
+            role="MANAGER",
+        )
+        db.session.add(second_manager)
+        db.session.flush()
+        db.session.add_all((
+            EmployeeResponsibleAssignment(
+                employee_user_id=self.employee.id,
+                responsible_user_id=self.manager.id,
+                reason="Primary responsible manager",
+            ),
+            EmployeeResponsibleAssignment(
+                employee_user_id=self.employee.id,
+                responsible_user_id=second_manager.id,
+                reason="Secondary responsible manager",
+            ),
+        ))
+        db.session.commit()
+
+        case, request_row = self._start()
+        self._login(self.employee)
+        response = self.client.post(
+            f"/portal/hr/reports/attendance/delay/{case.id}/respond",
+            data={"case_kind": "DELAY", "reason": "ظرف طارئ", "has_document": "NO"},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        decide_step(
+            request_row.id,
+            2,
+            self.manager.id,
+            "APPROVED",
+            note="تمت مراجعة التبرير",
+            effective_user_id=self.manager.id,
+        )
+        db.session.commit()
+
+        db.session.refresh(request_row.workflow_instance)
+        self.assertEqual(request_row.workflow_instance.current_step_order, 3)
+        step = WorkflowInstanceStep.query.filter_by(
+            instance_id=request_row.workflow_instance.id,
+            step_order=2,
+        ).one()
+        self.assertEqual(step.status, "APPROVED")
+        task_statuses = {
+            task.assignee_user_id: task.status
+            for task in WorkflowStepTask.query.filter_by(
+                instance_id=request_row.workflow_instance.id,
+                step_order=2,
+            ).all()
+        }
+        self.assertEqual(task_statuses[self.manager.id], "RESPONDED")
+        self.assertEqual(task_statuses[second_manager.id], "BYPASSED")
+
+    def test_attendance_delay_workflow_report_is_landscape_pdf(self):
+        case, request_row = self._start()
+        self._login(self.admin)
+
+        response = self.client.get(
+            f"/portal/hr/reports/attendance/delay-workflow/{request_row.id}.pdf"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "application/pdf")
+        self.assertTrue(response.data.startswith(b"%PDF"))
+        # ReportLab stores the A4 landscape media box as 841.89 x 595.28 pt.
+        self.assertIn(b"841.8898", response.data)
+
     def test_attendance_delay_hr_resolvers_match_the_configured_roles(self):
         self.assertIn(
             self.hr_department_manager.id,
