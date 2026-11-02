@@ -7,7 +7,20 @@ from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
 
 from extensions import db
-from models import InvRoom, InvStocktakeVoucher, InvSupplier, InvWarehouse, User
+from models import (
+    InvInboundVoucher,
+    InvInboundVoucherLine,
+    InvIssueVoucher,
+    InvIssueVoucherLine,
+    InvItem,
+    InvReturnVoucher,
+    InvReturnVoucherLine,
+    InvRoom,
+    InvStocktakeVoucher,
+    InvSupplier,
+    InvWarehouse,
+    User,
+)
 from portal import portal_bp
 
 
@@ -127,6 +140,53 @@ class InventoryAdminDeleteTests(unittest.TestCase):
         self.assertEqual(supplier_response.status_code, 302)
         self.assertIsNone(db.session.get(InvRoom, room_id))
         self.assertIsNone(db.session.get(InvSupplier, supplier_id))
+
+    def test_item_card_report_shows_signed_net_quantity(self):
+        item = InvItem(name="قهوة عربية", code="COFFEE-001")
+        db.session.add(item)
+        db.session.flush()
+
+        inbound = InvInboundVoucher(
+            voucher_no="IN-TEST-001",
+            voucher_date="2026-11-02",
+            to_warehouse_id=self.warehouse.id,
+            created_by_id=self.admin.id,
+        )
+        issue = InvIssueVoucher(
+            issue_kind="ROOM",
+            voucher_no="EMP-TEST-001",
+            voucher_date="2026-11-02",
+            from_warehouse_id=self.warehouse.id,
+            to_room_name="غرفة الاختبار",
+            created_by_id=self.admin.id,
+        )
+        returned = InvReturnVoucher(
+            voucher_no="RET-TEST-001",
+            voucher_date="2026-11-02",
+            to_warehouse_id=self.warehouse.id,
+            from_room_name="غرفة الاختبار",
+            created_by_id=self.admin.id,
+        )
+        db.session.add_all((inbound, issue, returned))
+        db.session.flush()
+        db.session.add_all((
+            InvInboundVoucherLine(voucher_id=inbound.id, item_id=item.id, qty=10),
+            InvIssueVoucherLine(voucher_id=issue.id, item_id=item.id, qty=2),
+            InvReturnVoucherLine(voucher_id=returned.id, item_id=item.id, qty=3),
+        ))
+        db.session.commit()
+
+        response = self.client.get(
+            f"/portal/inventory/reports/item-card?item_id={item.id}"
+            f"&warehouse_id={self.warehouse.id}"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("10.00", body)
+        self.assertIn("-2.00", body)
+        self.assertIn("3.00", body)
+        self.assertIn("11.00", body)
 
 
 if __name__ == "__main__":

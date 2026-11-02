@@ -54266,6 +54266,11 @@ def inventory_report_item_card():
     for m in movements:
         m["warehouse"] = wh_map.get(m["warehouse_id"])
 
+    # Keep the net quantity in the view model.  Jinja loop-local assignments do
+    # not update a variable outside the loop, which previously made the report
+    # footer display 0.00 regardless of the movement rows.
+    total_qty = sum(float(m.get("qty") or 0) for m in movements)
+
     return render_template(
         "portal/inventory/report_item_card.html",
         warehouses=warehouses,
@@ -54273,6 +54278,7 @@ def inventory_report_item_card():
         selected=selected,
         item=sel_item,
         movements=movements,
+        total_qty=total_qty,
     )
 
 
