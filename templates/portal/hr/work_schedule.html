@@ -64,7 +64,10 @@
 {% block hr_content %}
 {% set plan_status = (plan or published_plan).status if (plan or published_plan) else 'DRAFT' %}
 {% set plan_meta = status_meta.get(plan_status, status_meta.DRAFT) %}
-{% set is_change_request = plan and (plan.request_type or '') == 'CHANGE_REQUEST' and plan.status in ['DRAFT','SUBMITTED','MANAGER_APPROVED','GENERAL_DIRECTOR_APPROVED'] %}
+{% set plan_is_change_request = plan and (plan.request_type or '') == 'CHANGE_REQUEST' %}
+{% set is_change_request = plan_is_change_request and plan.status in ['DRAFT','SUBMITTED','MANAGER_APPROVED','GENERAL_DIRECTOR_APPROVED'] %}
+{% set plan_change_scope = ((plan.change_scope if plan else '') or 'PERMANENT')|upper %}
+{% set plan_change_scope_meta = change_scope_meta.get(plan_change_scope, change_scope_meta.PERMANENT) %}
 <div class="container-fluid py-3">
   <section class="ws-hero mb-3">
     <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3">
@@ -94,9 +97,13 @@
   {% if editor_mode == 'SUPER_ADMIN' %}
   <div class="alert alert-dark ws-alert"><i class="bi bi-shield-fill-check me-1"></i> أي جدول تنشره يصبح فعّالًا فورًا وباعتمادك النهائي، ولا يمر بمسار اعتماد إضافي.</div>
   {% elif editor_mode == 'EMPLOYEE' %}
-  <div class="alert alert-info ws-alert"><i class="bi bi-info-circle me-1"></i>{% if employee_can_request %}عدّل الأيام أو الأوقات المقترحة داخل هذا الطلب؛ سيبقى جدولك الفعّال دون تغيير إلى أن يُعتمد الطلب.{% elif employee_can_cancel %}هذا هو الجدول المقترح في طلبك، وهو غير نافذ حتى الاعتماد. يمكنك إلغاء الطلب ما دام قيد الاعتماد.{% else %}الجدول المعروض هو جدولك الفعّال. أي طلب تغيير يبقى غير نافذ حتى اعتماد المدير والمدير العام والأمين العام.{% endif %}</div>
+  <div class="alert {% if is_change_request %}alert-warning{% else %}alert-info{% endif %} ws-alert"><i class="bi {% if is_change_request %}bi-exclamation-triangle{% else %}bi-info-circle{% endif %} me-1"></i>{% if is_change_request %}<strong>تنبيه: طلب تغيير الدوام غير نافذ حاليًا.</strong> يبقى آخر جدول معتمد ساريًا إلى أن يعتمد الأمين العام الطلب اعتمادًا نهائيًا. طبيعة الطلب: <strong>{{ plan_change_scope_meta.label }}</strong>.{% if employee_can_cancel %} يمكنك إلغاء الطلب ما دام قيد الاعتماد.{% endif %}{% elif employee_can_request %}عدّل الأيام أو الأوقات المقترحة داخل الطلب؛ سيبقى جدولك الفعّال دون تغيير إلى أن يُعتمد الطلب نهائيًا من الأمين العام.{% else %}الجدول المعروض هو جدولك الفعّال. أي طلب تغيير جديد لا يصبح نافذًا قبل اعتماد الأمين العام.{% endif %}</div>
   {% elif editor_mode == 'HR' %}
   <div class="alert alert-success ws-alert"><i class="bi bi-shield-check me-1"></i> أنت تعمل بصلاحية الشؤون البشرية؛ أدخل نمط الدوام من تاريخ البدء المختار. بعد نشره يصبح نافذًا ويبقى كذلك حتى تغيير معتمد أحدث.</div>
+  {% endif %}
+
+  {% if plan_is_change_request and plan.status not in ['FINAL_APPROVED', 'REJECTED', 'CANCELLED'] and editor_mode != 'EMPLOYEE' %}
+  <div class="alert alert-warning ws-alert"><i class="bi bi-exclamation-triangle me-1"></i><strong>هذا طلب تغيير غير نافذ.</strong> لن يؤثر في جدول الدوام الفعلي قبل اعتماد الأمين العام اعتمادًا نهائيًا؛ يبقى آخر جدول معتمد هو الساري.</div>
   {% endif %}
 
   <div class="ws-panel p-3 mb-3">
@@ -130,6 +137,21 @@
       {% if plan %}<input type="hidden" name="plan_id" value="{{ plan.id }}">{% endif %}
 
       {% if can_edit_days %}<div class="alert alert-light border small mb-3"><i class="bi bi-calendar-check me-1"></i> يبدأ نفاذ هذا النمط من <strong>{{ period_start.strftime('%d/%m/%Y') }}</strong> ويستمر حتى نشر أو اعتماد تغيير أحدث.</div>{% endif %}
+
+      {% if editor_mode == 'EMPLOYEE' and employee_can_request %}
+      <div class="border rounded-3 p-3 mb-3 bg-light-subtle">
+        <label class="form-label fw-bold mb-1" for="changeScope">طبيعة التغيير المطلوب</label>
+        <select class="form-select" id="changeScope" name="change_scope" required>
+          {% for value, scope_meta in change_scope_meta.items() %}
+          <option value="{{ value }}" {% if plan_change_scope == value %}selected{% endif %}>{{ scope_meta.label }}</option>
+          {% endfor %}
+        </select>
+        <div id="changeScopeHelp" class="form-text">{{ plan_change_scope_meta.description }}</div>
+        <div class="small text-danger mt-2"><i class="bi bi-shield-exclamation me-1"></i>لن يصبح أي تغيير نافذًا قبل اعتماد الأمين العام اعتمادًا نهائيًا.</div>
+      </div>
+      {% elif plan_is_change_request %}
+      <div class="alert alert-light border small mb-3"><i class="bi bi-arrow-repeat me-1"></i><strong>طبيعة التغيير:</strong> {{ plan_change_scope_meta.label }} — {{ plan_change_scope_meta.description }}</div>
+      {% endif %}
 
       <div class="ws-day-grid">
         {% for day in days %}
@@ -311,6 +333,17 @@
           }
         });
       });
+      var scopeSelect = document.getElementById('changeScope');
+      var scopeHelp = document.getElementById('changeScopeHelp');
+      if (scopeSelect && scopeHelp) {
+        var scopeDescriptions = {
+          WEEKLY: 'ينتهي التغيير بانتهاء الفترة المحددة، ثم يعود جدول الدوام السابق.',
+          PERMANENT: 'يبقى التغيير نافذًا بعد الفترة المحددة حتى اعتماد تغيير آخر.'
+        };
+        scopeSelect.addEventListener('change', function () {
+          scopeHelp.textContent = scopeDescriptions[scopeSelect.value] || '';
+        });
+      }
     });
   </script>
 {% endblock %}

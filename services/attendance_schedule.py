@@ -35,6 +35,10 @@ ATTENDANCE_SCHEDULE_STATUSES = {
     "CANCELLED",
 }
 ATTENDANCE_SCHEDULE_DAY_TYPES = {"WORK", "REMOTE", "OFF"}
+# A change request can either be limited to the selected seven-day period or
+# replace the previous recurring schedule until another approved change.
+ATTENDANCE_SCHEDULE_CHANGE_SCOPES = {"WEEKLY", "PERMANENT"}
+ATTENDANCE_SCHEDULE_DEFAULT_CHANGE_SCOPE = "PERMANENT"
 # Each plan stores one seven-day pattern.  It repeats from the plan's
 # effective-from date until a later published plan replaces it.
 ATTENDANCE_SCHEDULE_PERIOD_DAYS = 7

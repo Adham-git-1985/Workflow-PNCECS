@@ -2012,6 +2012,7 @@ def _ensure_runtime_schema():
                 ("hr_att_special_case", "final_approval_note", "TEXT"),
                 ("hr_attendance_schedule_plan", "general_director_user_id", "INTEGER"),
                 ("hr_attendance_schedule_plan", "request_type", "TEXT NOT NULL DEFAULT 'BASELINE'"),
+                ("hr_attendance_schedule_plan", "change_scope", "TEXT NOT NULL DEFAULT 'PERMANENT'"),
                 ("hr_attendance_schedule_plan", "general_director_approved_at", "TEXT"),
                 ("hr_attendance_schedule_plan", "general_director_approved_by_id", "INTEGER"),
                 ("hr_attendance_schedule_plan", "admin_approved_at", "TEXT"),

@@ -183,7 +183,7 @@
       {% if attendance_schedule_reqs %}
       <div class="table-responsive">
         <table class="table table-sm align-middle">
-          <thead><tr><th>#</th><th>الموظف</th><th>الفترة</th><th>الطلب</th><th>الحالة</th><th>الإجراء</th></tr></thead>
+          <thead><tr><th>#</th><th>الموظف</th><th>الفترة</th><th>طبيعة التغيير</th><th>الطلب</th><th>الحالة</th><th>الإجراء</th></tr></thead>
           <tbody>
           {% for r in attendance_schedule_reqs %}
             {% set schedule_meta = attendance_schedule_status_meta.get(r.status, attendance_schedule_status_meta.DRAFT) %}
@@ -196,6 +196,15 @@
               <td class="small">
                 {{ r.period_start }} → {{ r.period_end }}
                 <div class="text-muted mt-1">وقت التقديم: {{ r.submitted_at|local_datetime if r.submitted_at else (r.created_at|local_datetime if r.created_at else '—') }}</div>
+              </td>
+              <td class="small">
+                {% if (r.change_scope or 'PERMANENT')|upper == 'WEEKLY' %}
+                  <span class="badge text-bg-info">لهذا الأسبوع فقط</span>
+                  <div class="text-muted mt-1">يعود للجدول السابق بعد انتهاء الفترة</div>
+                {% else %}
+                  <span class="badge text-bg-primary">تغيير دائم</span>
+                  <div class="text-muted mt-1">يبقى حتى اعتماد تغيير آخر</div>
+                {% endif %}
               </td>
               <td class="small">
                 {{ r.employee_note or '—' }}

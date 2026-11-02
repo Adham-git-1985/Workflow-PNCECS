@@ -9,13 +9,14 @@
   'MISSING_PUNCH': 'bg-danger',
   'OFFICIAL_DUTY': 'bg-secondary',
   'OFF': 'bg-light text-dark border',
-  'UNSCHEDULED': 'bg-light text-dark border'
+  'UNSCHEDULED': 'bg-light text-dark border',
+  'SCHEDULE_CHANGE_REQUEST': 'bg-warning text-dark'
 } %}
 <div class="bg-white rounded-3 shadow-sm p-4">
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
     <div>
       <h4 class="mb-1"><i class="bi bi-clipboard2-data"></i> تقرير الشؤون الإدارية الموحّد</h4>
-      <div class="text-muted small">سجل يومي واحد يجمع البصمة والإجازات وجدول الدوام المعتمد لجميع موظفي المؤسسة.</div>
+      <div class="text-muted small">سجل يومي واحد يجمع البصمة والإجازات وجدول الدوام المعتمد، مع طلبات تغيير جدول الدوام وحالتها لجميع موظفي المؤسسة.</div>
     </div>
     <div class="d-flex flex-wrap gap-2">
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
@@ -69,7 +70,7 @@
       <label class="form-label">الحالة</label>
       <select class="form-select" name="category">
         <option value="">— جميع الحالات —</option>
-        {% for code, label in [('PRESENT', 'حاضر'), ('LEAVE', 'مجاز'), ('REMOTE', 'مناوب / عن بُعد'), ('LEAVE_PENDING', 'إجازة قيد الاعتماد'), ('MISSING_PUNCH', 'دوام مكتبي بلا بصمة'), ('OFFICIAL_DUTY', 'مهمة / تدريب رسمي'), ('OFF', 'راحة / عطلة'), ('UNSCHEDULED', 'لا يوجد سجل')] %}
+        {% for code, label in [('PRESENT', 'حاضر'), ('LEAVE', 'مجاز'), ('REMOTE', 'مناوب / عن بُعد'), ('LEAVE_PENDING', 'إجازة قيد الاعتماد'), ('MISSING_PUNCH', 'دوام مكتبي بلا بصمة'), ('OFFICIAL_DUTY', 'مهمة / تدريب رسمي'), ('OFF', 'راحة / عطلة'), ('UNSCHEDULED', 'لا يوجد سجل'), ('SCHEDULE_CHANGE_REQUEST', 'طلب تغيير جدول الدوام')] %}
         <option value="{{ code }}" {% if selected_category == code %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select>
@@ -79,6 +80,40 @@
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_report_administrative_affairs_daily', from_date=from_date, to_date=to_date) }}">مسح الفلاتر</a>
     </div>
   </form>
+
+  {% if schedule_change_requests %}
+  <div class="alert alert-warning d-flex align-items-start gap-2 mt-3 mb-0">
+    <i class="bi bi-exclamation-triangle-fill fs-5"></i>
+    <div><strong>طلبات تغيير جدول الدوام ضمن الفترة</strong><div class="small">هذه الطلبات معروضة للمتابعة فقط، ولا تغيّر الجدول الفعلي قبل اعتماد الأمين العام اعتمادًا نهائيًا.</div></div>
+  </div>
+  <div class="table-responsive mt-3">
+    <table class="table table-sm table-hover align-middle">
+      <thead><tr><th>#</th><th>الموظف</th><th>الفترة</th><th>طبيعة التغيير</th><th>الحالة</th><th>الطلب</th><th></th></tr></thead>
+      <tbody>
+        {% for request_row in schedule_change_requests %}
+        {% set request_status = {'SUBMITTED':'بانتظار المدير','MANAGER_APPROVED':'بانتظار المدير العام','GENERAL_DIRECTOR_APPROVED':'بانتظار الأمين العام','FINAL_APPROVED':'معتمد نهائيًا'}.get(request_row.status, request_row.status) %}
+        <tr>
+          <td class="text-muted">{{ request_row.id }}</td>
+          <td class="fw-semibold">{{ request_row.user.full_name if request_row.user else request_row.user_id }}</td>
+          <td class="small">{{ request_row.period_start }} → {{ request_row.period_end }}<div class="text-muted">{{ request_row.submitted_at|local_datetime if request_row.submitted_at else '—' }}</div></td>
+          <td>
+            {% if (request_row.change_scope or 'PERMANENT')|upper == 'WEEKLY' %}
+              <span class="badge text-bg-info">لهذا الأسبوع فقط</span>
+              <div class="small text-muted mt-1">يعود للجدول السابق بعد انتهاء الفترة</div>
+            {% else %}
+              <span class="badge text-bg-primary">تغيير دائم</span>
+              <div class="small text-muted mt-1">يبقى حتى اعتماد تغيير آخر</div>
+            {% endif %}
+          </td>
+          <td><span class="badge {{ 'bg-success' if request_row.status == 'FINAL_APPROVED' else 'bg-warning text-dark' }}">{{ request_status }}</span></td>
+          <td class="small">{{ request_row.employee_note or '—' }}</td>
+          <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_work_schedule', start=request_row.period_start, employee_id=request_row.user_id) }}">فتح الطلب</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
 
   <div class="row g-2 mt-3">
     {% for code, label, color in [
@@ -95,6 +130,12 @@
       </div>
     </div>
     {% endfor %}
+    <div class="col-6 col-md">
+      <div class="border border-warning rounded-3 p-3 h-100">
+        <div class="small text-muted">طلبات تغيير الدوام</div>
+        <div class="fs-4 fw-bold text-warning">{{ counts.get('SCHEDULE_CHANGE_REQUEST', 0) }}</div>
+      </div>
+    </div>
   </div>
 
   {% if can_reconcile %}

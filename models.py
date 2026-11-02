@@ -3862,7 +3862,9 @@ class HRAttendanceSchedulePlan(db.Model):
     effective.  The pattern remains in force until a later published plan
     replaces it.  ``BASELINE`` rows are created and published by HR, while
     ``CHANGE_REQUEST`` rows remain non-effective until the approval path
-    reaches its final step.
+    reaches its final step.  A change request may be limited to its selected
+    seven-day period (``WEEKLY``) or remain in force until a later approved
+    plan (``PERMANENT``).
     """
 
     __tablename__ = "hr_attendance_schedule_plan"
@@ -3884,6 +3886,7 @@ class HRAttendanceSchedulePlan(db.Model):
     )
     status = db.Column(db.String(24), nullable=False, default="DRAFT", index=True)
     request_type = db.Column(db.String(24), nullable=False, default="BASELINE", index=True)
+    change_scope = db.Column(db.String(16), nullable=False, default="PERMANENT", index=True)
     employee_note = db.Column(db.Text, nullable=True)
     manager_note = db.Column(db.Text, nullable=True)
     submitted_at = db.Column(db.DateTime, nullable=True)

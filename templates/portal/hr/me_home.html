@@ -22,7 +22,14 @@
         </div>
         <span class="badge {{ 'text-bg-warning' if approvals_pending else 'text-bg-light' }}">{{ approvals_pending }}</span>
       </div>
-      <div class="text-muted small mb-3">إجازات ومغادرات وتغييرات دوام تنتظر قرارك فقط.</div>
+      <div class="text-muted small mb-2">إجازات ومغادرات وتغييرات دوام تنتظر قرارك فقط.</div>
+      {% if approval_breakdown is defined %}
+      <div class="d-flex flex-wrap gap-1 mb-3">
+        {% if approval_breakdown.get('leaves', 0) %}<span class="badge text-bg-primary">إجازات: {{ approval_breakdown.get('leaves') }}</span>{% endif %}
+        {% if approval_breakdown.get('permissions', 0) %}<span class="badge text-bg-secondary">مغادرات: {{ approval_breakdown.get('permissions') }}</span>{% endif %}
+        {% if approval_breakdown.get('schedule_changes', 0) %}<span class="badge text-bg-warning">تغيير جدول الدوام: {{ approval_breakdown.get('schedule_changes') }}</span>{% endif %}
+      </div>
+      {% endif %}
       <a class="btn btn-warning w-100 fw-bold" href="{{ url_for('portal.hr_approvals') }}">فتح صندوق الموافقات</a>
     </div>
   </div>

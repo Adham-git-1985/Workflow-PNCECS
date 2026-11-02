@@ -141,6 +141,8 @@ from services.user_calendar import (
     submitted_calendar_event_form_values,
 )
 from services.attendance_schedule import (
+    ATTENDANCE_SCHEDULE_CHANGE_SCOPES,
+    ATTENDANCE_SCHEDULE_DEFAULT_CHANGE_SCOPE,
     ATTENDANCE_SCHEDULE_DAY_TYPES,
     ATTENDANCE_SCHEDULE_PERIOD_DAYS,
     ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES,
@@ -1363,6 +1365,48 @@ def _attendance_approval_pending_count(user=None) -> int:
         return schedule_count + manual_count
     except Exception:
         return 0
+
+
+def _approval_inbox_pending_breakdown(user=None) -> dict[str, int]:
+    """Return the actionable approval counts used by the portal home page."""
+    selected_user = user or current_user
+    breakdown = {
+        "leaves": 0,
+        "permissions": 0,
+        "schedule_changes": 0,
+        "attendance_corrections": 0,
+        "maternity": 0,
+    }
+    try:
+        breakdown["leaves"] = len(_hr_request_ids_for_user(selected_user, KIND_LEAVE))
+        breakdown["permissions"] = len(_hr_request_ids_for_user(selected_user, KIND_PERMISSION))
+    except Exception:
+        pass
+    try:
+        breakdown["schedule_changes"] = _safe_count(
+            HRAttendanceSchedulePlan.query
+            .filter(HRAttendanceSchedulePlan.request_type == "CHANGE_REQUEST")
+            .filter(_attendance_schedule_pending_condition(selected_user))
+        )
+    except Exception:
+        pass
+    try:
+        breakdown["attendance_corrections"] = _safe_count(
+            HRAttendanceSpecialCase.query
+            .filter(
+                HRAttendanceSpecialCase.kind == "MANUAL_ATTENDANCE",
+                HRAttendanceSpecialCase.approval_status == "PENDING",
+                _manual_attendance_pending_condition(selected_user),
+            )
+        )
+    except Exception:
+        pass
+    try:
+        breakdown["maternity"] = len(_visible_maternity_departures("PENDING", user=selected_user))
+    except Exception:
+        pass
+    breakdown["total"] = _approval_inbox_pending_count(selected_user)
+    return breakdown
 
 
 def _approval_inbox_pending_count(user=None) -> int:
@@ -4739,6 +4783,11 @@ def index():
         'att_days_month': 0,
         'my_requests_open': 0,
         'approvals_pending': 0,
+        'approval_leaves': 0,
+        'approval_permissions': 0,
+        'approval_schedule_changes': 0,
+        'approval_attendance_corrections': 0,
+        'approval_maternity': 0,
         'transport_trips_month': 0,
         'transport_permits_pending': 0,
         'transport_vehicles': 0,
@@ -4788,6 +4837,12 @@ def index():
 
     if flags.get('can_open_approvals'):
         stats['approvals_pending'] = _approval_inbox_pending_count(current_user)
+        approval_breakdown = _approval_inbox_pending_breakdown(current_user)
+        stats['approval_leaves'] = approval_breakdown['leaves']
+        stats['approval_permissions'] = approval_breakdown['permissions']
+        stats['approval_schedule_changes'] = approval_breakdown['schedule_changes']
+        stats['approval_attendance_corrections'] = approval_breakdown['attendance_corrections']
+        stats['approval_maternity'] = approval_breakdown['maternity']
 
 
     # --- Transport quick stats (this month + pending permits) ---
@@ -10920,7 +10975,13 @@ def _cmp_ok(value: float, op: str, threshold: float):
     return True
 
 
-def _export_xlsx(filename: str, headers: list[str], rows: list[list]):
+def _export_xlsx(
+    filename: str,
+    headers: list[str],
+    rows: list[list],
+    *,
+    extra_sheets: list[tuple[str, list[str], list[list]]] | None = None,
+):
     from openpyxl import Workbook
     wb = Workbook()
     ws = wb.active
@@ -10928,6 +10989,11 @@ def _export_xlsx(filename: str, headers: list[str], rows: list[list]):
     ws.append(headers)
     for r in rows:
         ws.append(r)
+    for sheet_title, sheet_headers, sheet_rows in extra_sheets or []:
+        extra_ws = wb.create_sheet(title=(sheet_title or "Report")[:31])
+        extra_ws.append(sheet_headers)
+        for row in sheet_rows:
+            extra_ws.append(row)
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
@@ -12900,10 +12966,9 @@ def _approved_schedule_day_map(
     plans = (
         HRAttendanceSchedulePlan.query
         .filter(HRAttendanceSchedulePlan.user_id.in_(user_ids))
-        .filter(
-            HRAttendanceSchedulePlan.status.in_(ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES)
-        )
+        .filter(_attendance_schedule_published_condition())
         .filter(HRAttendanceSchedulePlan.period_start <= end_text)
+        .filter(_attendance_schedule_active_on_condition(start_day.isoformat()))
         .order_by(
             HRAttendanceSchedulePlan.user_id.asc(),
             HRAttendanceSchedulePlan.period_start.desc(),
@@ -12920,26 +12985,68 @@ def _approved_schedule_day_map(
     report_days = _calendar_days_between(start_day, end_day)
     for user_id in {int(value) for value in user_ids}:
         user_plans = plans_by_user.get(user_id, [])
-        plan_index = 0
-        # Work backwards so a plan remains selected until the next earlier
-        # effective-from date is reached.  The query ordering makes the first
-        # eligible plan the newest version for that effective date.
-        for work_day in reversed(report_days):
-            day_text = work_day.isoformat()
-            while (
-                plan_index < len(user_plans)
-                and (user_plans[plan_index].period_start or "") > day_text
-            ):
-                plan_index += 1
-            if plan_index >= len(user_plans):
-                break
+        # Plans are ordered newest-first.  For a weekly change, skip it after
+        # its period_end so the previous approved plan is selected again.
+        for work_day in report_days:
+            selected_plan = next(
+                (
+                    candidate
+                    for candidate in user_plans
+                    if _attendance_schedule_plan_applies_on_date(candidate, work_day)
+                ),
+                None,
+            )
             row = _attendance_schedule_plan_day_for_date(
-                user_plans[plan_index],
+                selected_plan,
                 work_day,
             )
             if row:
-                result[(user_id, day_text)] = row
+                result[(user_id, work_day.isoformat())] = row
     return result
+
+
+def _administrative_affairs_schedule_change_requests(
+    start_day: date,
+    end_day: date,
+    *,
+    user_ids: list[int] | None = None,
+) -> list[HRAttendanceSchedulePlan]:
+    """Load schedule-change requests overlapping an administrative report.
+
+    Pending requests are deliberately listed separately from the effective
+    daily schedule.  This makes their visibility useful without accidentally
+    treating an unapproved proposal as the employee's actual attendance rule.
+    """
+    if end_day < start_day:
+        return []
+    start_text, end_text = start_day.isoformat(), end_day.isoformat()
+    query = HRAttendanceSchedulePlan.query.filter(
+        HRAttendanceSchedulePlan.request_type == "CHANGE_REQUEST",
+        HRAttendanceSchedulePlan.period_start <= end_text,
+        HRAttendanceSchedulePlan.status.in_(
+            {
+                "SUBMITTED",
+                "MANAGER_APPROVED",
+                "GENERAL_DIRECTOR_APPROVED",
+                "FINAL_APPROVED",
+            }
+        ),
+        _attendance_schedule_active_on_condition(start_text),
+    )
+    if user_ids is not None:
+        normalized_ids = _without_attendance_exempt_users(user_ids)
+        if not normalized_ids:
+            return []
+        query = query.filter(HRAttendanceSchedulePlan.user_id.in_(normalized_ids))
+    return (
+        query.order_by(
+            HRAttendanceSchedulePlan.period_start.desc(),
+            HRAttendanceSchedulePlan.updated_at.desc(),
+            HRAttendanceSchedulePlan.id.desc(),
+        )
+        .limit(500)
+        .all()
+    )
 
 
 def _attendance_schedule_day_kind(schedule_day: HRAttendanceScheduleDay | None) -> str:
@@ -13962,12 +14069,20 @@ def hr_report_administrative_affairs_daily():
     )
     rows = _administrative_affairs_daily_rows(start_day, end_day, user_ids=selected_user_ids)
     category = (request.args.get("category") or "").strip().upper()
-    if category:
+    schedule_change_requests = _administrative_affairs_schedule_change_requests(
+        start_day,
+        end_day,
+        user_ids=selected_user_ids,
+    )
+    if category == "SCHEDULE_CHANGE_REQUEST":
+        rows = []
+    elif category:
         rows = [row for row in rows if row["category"] == category]
 
     counts = {}
     for row in rows:
         counts[row["category"]] = counts.get(row["category"], 0) + 1
+    counts["SCHEDULE_CHANGE_REQUEST"] = len(schedule_change_requests)
 
     if (request.args.get("export") or "").strip().lower() == "xlsx":
         if not current_user.has_perm(HR_REPORTS_EXPORT):
@@ -13984,11 +14099,32 @@ def hr_report_administrative_affairs_daily():
             round(row["work_minutes"] / 60.0, 2), row["schedule"], row["work_location"], row["appointment_type"],
             row["conflict_note"],
         ] for row in rows]
-        return _export_xlsx("administrative_affairs_daily_report.xlsx", headers, export_rows)
+        schedule_request_headers = [
+            "رقم الطلب", "الموظف", "الفترة", "طبيعة التغيير", "الحالة",
+            "ملاحظة الموظف", "وقت التقديم",
+        ]
+        schedule_request_rows = [[
+            row.id,
+            row.user.full_name if row.user else row.user_id,
+            f"{row.period_start} → {row.period_end}",
+            "لهذا الأسبوع فقط" if (row.change_scope or "PERMANENT").upper() == "WEEKLY" else "تغيير دائم",
+            _ATTENDANCE_SCHEDULE_STATUS_META.get(row.status, {}).get("label", row.status),
+            row.employee_note or "",
+            row.submitted_at.strftime("%Y-%m-%d %H:%M") if row.submitted_at else "",
+        ] for row in schedule_change_requests]
+        return _export_xlsx(
+            "administrative_affairs_daily_report.xlsx",
+            headers,
+            export_rows,
+            extra_sheets=[
+                ("طلبات تغيير جدول الدوام", schedule_request_headers, schedule_request_rows),
+            ],
+        )
 
     return render_template(
         "portal/hr/reports_administrative_affairs_daily.html",
         rows=rows,
+        schedule_change_requests=schedule_change_requests,
         counts=counts,
         from_date=start_day.isoformat(),
         to_date=end_day.isoformat(),
@@ -19042,11 +19178,88 @@ _ATTENDANCE_SCHEDULE_DAY_META = {
     "REMOTE": {"label": "عمل عن بُعد", "short": "عن بُعد", "icon": "bi-house-laptop", "class": "remote"},
     "OFF": {"label": "راحة / عطلة", "short": "راحة", "icon": "bi-cup-hot", "class": "off"},
 }
+_ATTENDANCE_SCHEDULE_CHANGE_SCOPE_META = {
+    "WEEKLY": {
+        "label": "لهذا الأسبوع فقط",
+        "description": "ينتهي التغيير بانتهاء الفترة المحددة، ثم يعود جدول الدوام السابق.",
+        "short": "أسبوعي",
+    },
+    "PERMANENT": {
+        "label": "تغيير دائم",
+        "description": "يبقى التغيير نافذًا بعد الفترة المحددة حتى اعتماد تغيير آخر.",
+        "short": "دائم",
+    },
+}
 _ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES = {
     "SUBMITTED",
     "MANAGER_APPROVED",
     "GENERAL_DIRECTOR_APPROVED",
 }
+
+
+def _attendance_schedule_published_condition():
+    """Return the effective/published status rule for schedule plans.
+
+    ``ADMIN_APPROVED`` is retained for legacy baseline plans.  Employee
+    change requests, however, are never effective until the secretary
+    general's final approval, even if an older record carries an administrative
+    approval status.
+    """
+    request_type_is_baseline = or_(
+        HRAttendanceSchedulePlan.request_type.is_(None),
+        HRAttendanceSchedulePlan.request_type != "CHANGE_REQUEST",
+    )
+    return or_(
+        and_(
+            request_type_is_baseline,
+            HRAttendanceSchedulePlan.status.in_(ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES),
+        ),
+        and_(
+            HRAttendanceSchedulePlan.request_type == "CHANGE_REQUEST",
+            HRAttendanceSchedulePlan.status == "FINAL_APPROVED",
+        ),
+    )
+
+
+def _attendance_schedule_active_on_condition(effective_day_text: str):
+    """Return the date-range rule for a recurring or one-week change."""
+    normalized_scope = func.upper(
+        func.coalesce(HRAttendanceSchedulePlan.change_scope, "PERMANENT")
+    )
+    return or_(
+        normalized_scope != "WEEKLY",
+        HRAttendanceSchedulePlan.period_end >= effective_day_text,
+    )
+
+
+def _attendance_schedule_scope_value(value: str | None) -> str:
+    """Normalize a submitted change scope while keeping old rows compatible."""
+    normalized = (value or ATTENDANCE_SCHEDULE_DEFAULT_CHANGE_SCOPE).strip().upper()
+    if normalized not in ATTENDANCE_SCHEDULE_CHANGE_SCOPES:
+        raise ValueError("يرجى اختيار طبيعة تغيير صحيحة: لهذا الأسبوع فقط أو تغيير دائم.")
+    return normalized
+
+
+def _attendance_schedule_plan_applies_on_date(
+    plan: HRAttendanceSchedulePlan | None,
+    work_day: date,
+) -> bool:
+    """Return whether a published plan is in force on a concrete date."""
+    if not plan or not work_day:
+        return False
+    plan_start = _parse_yyyy_mm_dd(getattr(plan, "period_start", None))
+    if not plan_start or work_day < plan_start:
+        return False
+    scope = (
+        getattr(plan, "change_scope", None)
+        or ATTENDANCE_SCHEDULE_DEFAULT_CHANGE_SCOPE
+    ).strip().upper()
+    if scope != "WEEKLY":
+        return True
+    plan_end = _parse_yyyy_mm_dd(getattr(plan, "period_end", None))
+    if plan_end is None:
+        plan_end = plan_start + timedelta(days=ATTENDANCE_SCHEDULE_PERIOD_DAYS - 1)
+    return work_day <= plan_end
 _ATTENDANCE_SCHEDULE_CANCELABLE_CHANGE_REQUEST_STATUSES = {
     "DRAFT",
     "SUBMITTED",
@@ -19750,9 +19963,7 @@ def _attendance_schedule_latest_plan(
         period_start=period_start,
     )
     if final_only:
-        query = query.filter(
-            HRAttendanceSchedulePlan.status.in_(ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES)
-        )
+        query = query.filter(_attendance_schedule_published_condition())
     return query.order_by(
         HRAttendanceSchedulePlan.version_no.desc(),
         HRAttendanceSchedulePlan.id.desc(),
@@ -19773,9 +19984,7 @@ def _attendance_schedule_latest_map(
         HRAttendanceSchedulePlan.period_start == period_start,
     )
     if final_only:
-        query = query.filter(
-            HRAttendanceSchedulePlan.status.in_(ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES)
-        )
+        query = query.filter(_attendance_schedule_published_condition())
     rows = query.order_by(
         HRAttendanceSchedulePlan.user_id.asc(),
         HRAttendanceSchedulePlan.version_no.desc(),
@@ -19816,9 +20025,8 @@ def _attendance_schedule_effective_plan(
         HRAttendanceSchedulePlan.period_start <= effective_day_text,
     )
     if final_only:
-        query = query.filter(
-            HRAttendanceSchedulePlan.status.in_(ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES)
-        )
+        query = query.filter(_attendance_schedule_published_condition())
+    query = query.filter(_attendance_schedule_active_on_condition(effective_day_text))
     plan = query.order_by(
         HRAttendanceSchedulePlan.period_start.desc(),
         HRAttendanceSchedulePlan.version_no.desc(),
@@ -19851,9 +20059,8 @@ def _attendance_schedule_effective_map(
         HRAttendanceSchedulePlan.period_start <= effective_day_text,
     )
     if final_only:
-        query = query.filter(
-            HRAttendanceSchedulePlan.status.in_(ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES)
-        )
+        query = query.filter(_attendance_schedule_published_condition())
+    query = query.filter(_attendance_schedule_active_on_condition(effective_day_text))
     rows = query.order_by(
         HRAttendanceSchedulePlan.user_id.asc(),
         HRAttendanceSchedulePlan.period_start.desc(),
@@ -19966,6 +20173,7 @@ def _attendance_schedule_create_plan(
     actor_id: int,
     *,
     request_type: str = "BASELINE",
+    change_scope: str = ATTENDANCE_SCHEDULE_DEFAULT_CHANGE_SCOPE,
     source_plan: HRAttendanceSchedulePlan | None = None,
 ) -> HRAttendanceSchedulePlan:
     period_start_text = period_start.isoformat()
@@ -19993,6 +20201,7 @@ def _attendance_schedule_create_plan(
         ),
         status="DRAFT",
         request_type=(request_type or "BASELINE").strip().upper(),
+        change_scope=_attendance_schedule_scope_value(change_scope),
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
         updated_by_id=actor_id,
@@ -20062,6 +20271,9 @@ def _attendance_schedule_fork_plan(
         replaces_plan_id=source.id,
         status="DRAFT",
         request_type=getattr(source, "request_type", None) or "BASELINE",
+        change_scope=_attendance_schedule_scope_value(
+            getattr(source, "change_scope", None)
+        ),
         employee_note=source.employee_note,
         manager_note=source.manager_note,
         created_at=datetime.utcnow(),
@@ -20214,6 +20426,7 @@ def _attendance_schedule_super_admin_publish(
     if latest and latest.status in ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES:
         plan = _attendance_schedule_fork_plan(latest, actor_id, "SUPER_ADMIN")
         plan.request_type = "BASELINE"
+        plan.change_scope = ATTENDANCE_SCHEDULE_DEFAULT_CHANGE_SCOPE
         plan.employee_note = None
         plan.manager_note = None
     elif open_change_request:
@@ -20628,6 +20841,7 @@ def hr_work_schedule():
         days=_attendance_schedule_view_days(target_user.id, period_start, active_plan_for_view),
         schedules=schedules,
         status_meta=_ATTENDANCE_SCHEDULE_STATUS_META,
+        change_scope_meta=_ATTENDANCE_SCHEDULE_CHANGE_SCOPE_META,
         day_meta=_ATTENDANCE_SCHEDULE_DAY_META,
         editor_mode=editor_mode,
         can_edit=can_take_action or employee_can_request or employee_can_cancel,
@@ -20823,6 +21037,9 @@ def _attendance_schedule_update_weekly_workflow():
             note = (request.form.get("employee_note") or "").strip()
             if not note:
                 raise ValueError("يرجى توضيح التغيير المطلوب في طلب تغيير جدول الدوام.")
+            change_scope = _attendance_schedule_scope_value(
+                request.form.get("change_scope")
+            )
             if latest_is_change_request and latest.status == "DRAFT":
                 plan = latest
             else:
@@ -20836,9 +21053,11 @@ def _attendance_schedule_update_weekly_workflow():
                     period_start,
                     int(current_user.id),
                     request_type="CHANGE_REQUEST",
+                    change_scope=change_scope,
                     source_plan=published,
                 )
             plan.request_type = "CHANGE_REQUEST"
+            plan.change_scope = change_scope
             plan.employee_note = note[:4000]
             plan.manager_user_id = manager.id if manager else None
             plan.general_director_user_id = general_director.id if general_director else None
@@ -20883,7 +21102,11 @@ def _attendance_schedule_update_weekly_workflow():
                 target_id=plan.id,
             )
             db.session.commit()
-            flash("تم إنشاء طلب تغيير جدول الدوام وإرساله للاعتماد.", "success")
+            flash(
+                "تم إنشاء طلب تغيير جدول الدوام وإرساله للاعتماد. "
+                "التغيير غير نافذ ولن يؤثر في جدولك قبل اعتماد الأمين العام.",
+                "success",
+            )
             return redirect(url_for("portal.hr_work_schedule", start=period_start_text))
 
         if editor_mode == "SUPER_ADMIN" and action in {"super_publish", "hr_publish"}:
@@ -20923,6 +21146,7 @@ def _attendance_schedule_update_weekly_workflow():
             if latest and latest.status in ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES:
                 plan = _attendance_schedule_fork_plan(latest, int(current_user.id), "HR")
                 plan.request_type = "BASELINE"
+                plan.change_scope = ATTENDANCE_SCHEDULE_DEFAULT_CHANGE_SCOPE
             elif latest and latest_request_type == "CHANGE_REQUEST" and latest.status in {
                 "SUBMITTED",
                 "MANAGER_APPROVED",
@@ -21811,7 +22035,8 @@ def hr_me_home():
 
     # Quick stats (best-effort; never break the dashboard)
     uid = current_user.id
-    approvals_pending = _approval_inbox_pending_count(current_user)
+    approval_breakdown = _approval_inbox_pending_breakdown(current_user)
+    approvals_pending = approval_breakdown['total']
 
     achievements_total = HREmployeeAchievement.query.filter_by(user_id=uid).count()
     achievements_pending = HREmployeeAchievement.query.filter_by(user_id=uid, status="PENDING").count()
@@ -21931,6 +22156,7 @@ def hr_me_home():
         can_own_hr_requests=can_own_hr_requests,
         can_transport_request=can_transport_request,
         approvals_pending=approvals_pending,
+        approval_breakdown=approval_breakdown,
         attendance_events_today=attendance_events_today,
         attendance_events_month=attendance_events_month,
         leaves_total=leaves_total,
