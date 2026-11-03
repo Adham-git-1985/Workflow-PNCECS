@@ -9,6 +9,7 @@ from jinja2 import ChoiceLoader, DictLoader
 
 from extensions import db
 from models import (
+    HREmployeeAchievement,
     Notification,
     User,
     UserPermission,
@@ -50,6 +51,16 @@ class WorkflowDelaySummaryTests(unittest.TestCase):
                 return None
 
         cls.app.register_blueprint(workflow_bp)
+        cls.app.add_url_rule(
+            "/portal/hr/me/achievements",
+            endpoint="portal.hr_my_achievements",
+            view_func=lambda: "ok",
+        )
+        cls.app.add_url_rule(
+            "/portal/hr/achievements/<int:achievement_id>",
+            endpoint="portal.hr_achievement_view",
+            view_func=lambda achievement_id: "ok",
+        )
         cls.app.jinja_loader = ChoiceLoader([
             DictLoader({"layout.html": "{% block content %}{% endblock %}"}),
             cls.app.jinja_loader,
@@ -192,6 +203,36 @@ class WorkflowDelaySummaryTests(unittest.TestCase):
             sla_days=1,
             due_at=datetime(2026, 9, 22, 5, 30),
         ))
+        db.session.add_all([
+            HREmployeeAchievement(
+                user_id=secretary.id,
+                achievement_type="AWARD",
+                title="إنجاز الأمين العام قيد الاعتماد",
+                description="إنجاز يجب أن يظهر في التقرير.",
+                achieved_on="2026-09-21",
+                status="PENDING",
+                distinction_level="NOTABLE",
+                evaluation_points=0.0,
+            ),
+            HREmployeeAchievement(
+                user_id=secretary.id,
+                achievement_type="RESEARCH",
+                title="إنجاز الأمين العام المعتمد",
+                achieved_on="2026-09-19",
+                status="APPROVED",
+                distinction_level="SIGNIFICANT",
+                evaluation_points=2.0,
+            ),
+            HREmployeeAchievement(
+                user_id=requester.id,
+                achievement_type="OTHER",
+                title="إنجاز مستخدم آخر",
+                achieved_on="2026-09-18",
+                status="PENDING",
+                distinction_level="NOTABLE",
+                evaluation_points=0.0,
+            ),
+        ])
         db.session.commit()
         self.assertFalse(is_workflow_delay_summary_viewer(requester))
 
@@ -205,6 +246,12 @@ class WorkflowDelaySummaryTests(unittest.TestCase):
                 f"/workflow/request/{request_row.id}".encode("utf-8"),
                 report.data,
             )
+            body = report.get_data(as_text=True)
+            self.assertIn("workflow-delayed-print", body)
+            self.assertIn("إنجاز الأمين العام قيد الاعتماد", body)
+            self.assertNotIn("إنجاز الأمين العام المعتمد", body)
+            self.assertNotIn("إنجاز مستخدم آخر", body)
+            self.assertIn("delayed-achievements-table", body)
             with patch("workflow.routes.render_template", return_value="ok"):
                 detail = client.get(f"/workflow/request/{request_row.id}")
             self.assertEqual(detail.status_code, 200)

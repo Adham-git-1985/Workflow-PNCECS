@@ -142,6 +142,7 @@ from models import (
     Organization,
     Committee,
     CommitteeAssignee,
+    HREmployeeAchievement,
 
     OrgUnitManager,
 
@@ -226,6 +227,10 @@ from services.workflow_delay_summary import (
     get_overdue_workflow_rows,
     is_workflow_delay_summary_viewer,
     is_workflow_request_overdue,
+)
+from services.employee_achievements import (
+    ACHIEVEMENT_STATUSES,
+    ACHIEVEMENT_TYPES,
 )
 
 logger = logging.getLogger(__name__)
@@ -6344,7 +6349,7 @@ def circulars_view(circular_id: int):
 @workflow_bp.route("/delayed")
 @login_required
 def delayed_workflows():
-    """Read-only report linked from the daily overdue-path notification."""
+    """Read-only daily report for overdue paths and the viewer's pending achievements."""
     if not is_workflow_delay_summary_viewer(current_user):
         abort(403)
 
@@ -6370,6 +6375,21 @@ def delayed_workflows():
     start = (page - 1) * per_page
     page_rows = rows[start:start + per_page]
 
+    pending_achievements_query = HREmployeeAchievement.query.filter(
+        HREmployeeAchievement.user_id == int(current_user.id),
+        HREmployeeAchievement.status == "PENDING",
+    )
+    pending_achievement_count = pending_achievements_query.count()
+    pending_achievements = (
+        pending_achievements_query
+        .order_by(
+            HREmployeeAchievement.created_at.desc(),
+            HREmployeeAchievement.id.desc(),
+        )
+        .limit(100)
+        .all()
+    )
+
     return render_template(
         "workflow/delayed.html",
         rows=page_rows,
@@ -6377,6 +6397,14 @@ def delayed_workflows():
         page=page,
         pages=pages,
         now=now,
+        max_overdue_days=max(
+            (int(row["overdue_days"] or 0) for row in rows),
+            default=0,
+        ),
+        pending_achievements=pending_achievements,
+        pending_achievement_count=pending_achievement_count,
+        achievement_types=ACHIEVEMENT_TYPES,
+        achievement_statuses=ACHIEVEMENT_STATUSES,
         previous_page_url=(
             url_for("workflow.delayed_workflows", page=page - 1)
             if page > 1 else None

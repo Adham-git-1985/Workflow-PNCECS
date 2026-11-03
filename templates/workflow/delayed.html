@@ -1,96 +1,292 @@
 {% extends "layout.html" %}
+{% block title %}تقرير المسارات المتأخرة{% endblock %}
+{% block extra_css %}
+<style>
+  .delayed-report-print-heading { display: none; }
+
+  @media print {
+    @page { size: landscape; margin: 10mm; }
+    body { padding-top: 0 !important; background: #fff !important; }
+    .main-header,
+    .admin-sidebar,
+    .offcanvas,
+    .main-footer,
+    .breadcrumb,
+    .delayed-report-screen-header { display: none !important; }
+    .admin-wrapper,
+    .admin-content,
+    #app-main,
+    #wfPrintArea {
+      display: block !important;
+      width: 100% !important;
+      max-width: none !important;
+      min-height: 0 !important;
+      height: auto !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      overflow: visible !important;
+    }
+    .workflow-delayed-page,
+    .delayed-report-print { width: 100% !important; max-width: none !important; margin: 0 !important; }
+    .delayed-report-print-heading { display: block !important; margin-bottom: 12px !important; color: #111 !important; }
+    .delayed-report-print-heading h1 { margin: 0 0 4px !important; font-size: 18pt !important; }
+    .delayed-report-print-heading p,
+    .delayed-report-print-heading div { margin-bottom: 2px !important; font-size: 9pt !important; }
+    .delayed-report-print .card {
+      border: 1px solid #adb5bd !important;
+      border-radius: 4px !important;
+      box-shadow: none !important;
+      background: #fff !important;
+      color: #111 !important;
+    }
+    .delayed-report-print .table-responsive { overflow: visible !important; }
+    .delayed-report-print table {
+      width: 100% !important;
+      table-layout: fixed;
+      font-size: 8.5pt !important;
+      border-color: #adb5bd !important;
+    }
+    .delayed-report-print th,
+    .delayed-report-print td {
+      padding: 4px 5px !important;
+      vertical-align: top !important;
+      white-space: normal !important;
+      overflow-wrap: anywhere;
+      border-color: #adb5bd !important;
+    }
+    .delayed-report-print thead { display: table-header-group; }
+    .delayed-report-print tr { break-inside: avoid; page-break-inside: avoid; }
+    .delayed-report-print .badge {
+      border: 1px solid #adb5bd !important;
+      color: #111 !important;
+      background: #fff !important;
+      white-space: normal !important;
+    }
+    .delayed-report-print .delayed-report-table th:last-child,
+    .delayed-report-print .delayed-report-table td:last-child,
+    .delayed-report-print .delayed-achievements-table th:last-child,
+    .delayed-report-print .delayed-achievements-table td:last-child { display: none !important; }
+    .delayed-report-print .delayed-achievements-section {
+      break-before: page;
+      page-break-before: always;
+    }
+    .delayed-report-print .delayed-report-metrics .card-body { padding: 7px 9px !important; }
+    .delayed-report-print .delayed-report-metrics .fs-3 { font-size: 15pt !important; }
+    .delayed-report-print .text-nowrap { white-space: nowrap !important; }
+  }
+</style>
+{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
-  <div>
-    <h3 class="mb-1"><i class="bi bi-hourglass-split text-danger"></i> المسارات المتأخرة</h3>
-    <div class="text-muted">المسارات المفتوحة التي تجاوزت الخطوة الحالية موعد SLA المحدد تلقائيًا.</div>
+<div id="workflow-delayed-page" class="workflow-delayed-page">
+  <div class="delayed-report-screen-header d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3 no-print">
+    <div>
+      <h3 class="mb-1"><i class="bi bi-hourglass-split text-danger"></i> تقرير المسارات المتأخرة</h3>
+      <div class="text-muted">المسارات المفتوحة التي تجاوزت موعد الخطوة الحالية، مع إنجازاتك المضافة التي ما زالت بانتظار الاعتماد.</div>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      {% if current_user.has_perm('WORKFLOW_REPORTS_READ') %}
+        <a class="btn btn-outline-secondary" href="{{ url_for('workflow.workflow_employee_paths_report') }}">
+          <i class="bi bi-bar-chart-line"></i> تقرير الموظفين
+        </a>
+        <a class="btn btn-outline-secondary" href="{{ url_for('workflow.workflow_open_approvals_report') }}">
+          <i class="bi bi-check2-square"></i> الموافقات المفتوحة
+        </a>
+      {% endif %}
+      <button class="btn btn-primary" type="button" onclick="wfPrintSmart('#workflow-delayed-print')">
+        <i class="bi bi-printer"></i> طباعة التقرير
+      </button>
+    </div>
   </div>
-  <div class="text-end">
-    <span class="badge text-bg-danger fs-6">{{ total }} مسار</span>
-    <div class="small text-muted mt-1">آخر تحديث: {{ now|local_datetime }}</div>
-  </div>
-</div>
 
-{% if rows %}
-<div class="card shadow-sm border-danger-subtle">
-  <div class="table-responsive">
-    <table class="table table-hover align-middle mb-0">
-      <thead class="table-light">
-        <tr>
-          <th>#</th>
-          <th>الطلب</th>
-          <th>المسار</th>
-          <th>الخطوة الحالية</th>
-          <th>موعد SLA</th>
-          <th>مدة التأخير</th>
-          <th>مقدم الطلب</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in rows %}
-        {% set req = row['request'] %}
-        {% set step = row['step'] %}
-        <tr>
-          <td class="fw-semibold">{{ req.id }}</td>
-          <td style="min-width: 240px">
-            <div class="fw-semibold">{{ req.title or 'طلب دون عنوان' }}</div>
-            {% if req.description %}
-              <div class="small text-muted text-truncate" style="max-width: 360px;">{{ req.description }}</div>
-            {% endif %}
-          </td>
-          <td>
-            {% if row['template'] %}
-              {{ row['template'].name }}
-            {% else %}
-              <span class="text-primary">مسار ديناميكي حسب الهيكل الإداري</span>
-            {% endif %}
-          </td>
-          <td>
-            <div class="fw-semibold">الخطوة {{ step.step_order }}</div>
-            <div class="small text-muted">
-              {{ step.routing_label or step.routing_node_label or step.approver_role or step.approver_kind or 'غير محددة' }}
-            </div>
-          </td>
-          <td class="text-nowrap">{{ row['due_at']|local_datetime }}</td>
-          <td><span class="badge text-bg-danger">{{ row['overdue_days'] }} يوم</span></td>
-          <td>
-            {% if req.requester %}
-              {{ req.requester.full_name }}
-            {% else %}
-              —
-            {% endif %}
-          </td>
-          <td class="text-end">
-            <a class="btn btn-sm btn-primary" href="{{ url_for('workflow.view_request', request_id=req.id) }}">
-              <i class="bi bi-search"></i> فحص الطلب
-            </a>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
+  <section id="workflow-delayed-print" class="delayed-report-print">
+    <div class="delayed-report-print-heading">
+      <h1>تقرير المسارات المتأخرة</h1>
+      <p>تقرير المسارات التي تجاوزت مدة SLA، والإنجازات المضافة للمستخدم الحالي ولم تعتمد بعد.</p>
+      <div>المستخدم: {{ current_user.full_name or current_user.name or current_user.email }} · آخر تحديث: {{ now|local_datetime }}</div>
+    </div>
 
-{% if pages > 1 %}
-<nav class="mt-3" aria-label="صفحات المسارات المتأخرة">
-  <ul class="pagination justify-content-center">
-    <li class="page-item {% if not previous_page_url %}disabled{% endif %}">
-      <a class="page-link" href="{{ previous_page_url or '#' }}">السابق</a>
-    </li>
-    <li class="page-item disabled"><span class="page-link">{{ page }} / {{ pages }}</span></li>
-    <li class="page-item {% if not next_page_url %}disabled{% endif %}">
-      <a class="page-link" href="{{ next_page_url or '#' }}">التالي</a>
-    </li>
-  </ul>
-</nav>
-{% endif %}
-{% else %}
-<div class="alert alert-success shadow-sm">
-  <i class="bi bi-check-circle"></i>
-  لا توجد حاليًا مسارات متأخرة وفق تنبيهات التأخير التلقائية.
+    <div class="row g-2 mb-3 delayed-report-metrics">
+      <div class="col-6 col-xl-3">
+        <div class="card h-100 border-danger">
+          <div class="card-body py-3">
+            <div class="small text-muted"><i class="bi bi-hourglass-split text-danger"></i> المسارات المتأخرة</div>
+            <div class="fs-3 fw-bold text-danger">{{ total }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-xl-3">
+        <div class="card h-100 border-warning">
+          <div class="card-body py-3">
+            <div class="small text-muted"><i class="bi bi-clock-history text-warning"></i> أعلى مدة تأخير</div>
+            <div class="fs-3 fw-bold text-warning">{% if max_overdue_days %}{{ max_overdue_days }} يوم{% else %}—{% endif %}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-xl-3">
+        <div class="card h-100 border-primary">
+          <div class="card-body py-3">
+            <div class="small text-muted"><i class="bi bi-trophy text-primary"></i> إنجازاتي قيد الاعتماد</div>
+            <div class="fs-3 fw-bold text-primary">{{ pending_achievement_count }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-xl-3">
+        <div class="card h-100">
+          <div class="card-body py-3">
+            <div class="small text-muted"><i class="bi bi-arrow-repeat"></i> آخر تحديث</div>
+            <div class="fw-bold mt-2">{{ now|local_datetime('%Y-%m-%d') }}</div>
+            <div class="small text-muted">{{ now|local_datetime('%H:%M') }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {% if total %}
+      <div class="alert alert-danger d-flex align-items-center gap-2 no-print">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        <span>توجد <strong>{{ total }}</strong> مسارات تجاوزت موعد الإجراء. افتح الطلب لمراجعة الخطوة الحالية واتخاذ الإجراء المناسب.</span>
+      </div>
+    {% else %}
+      <div class="alert alert-success d-flex align-items-center gap-2 no-print">
+        <i class="bi bi-check-circle-fill"></i>
+        <span>لا توجد حاليًا مسارات متأخرة وفق مواعيد SLA المسجلة.</span>
+      </div>
+    {% endif %}
+
+    <section class="card shadow-sm delayed-report-section">
+      <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+          <strong><i class="bi bi-list-task text-danger"></i> تفاصيل المسارات المتأخرة</strong>
+          <span class="badge text-bg-danger ms-2">{{ total }}</span>
+        </div>
+        {% if pages > 1 %}<span class="small text-muted">صفحة {{ page }} من {{ pages }}</span>{% endif %}
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0 delayed-report-table">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>الطلب والمسار</th>
+              <th>الخطوة الحالية</th>
+              <th>موعد SLA</th>
+              <th>مدة التأخير</th>
+              <th>مقدم الطلب</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+              {% set req = row['request'] %}
+              {% set step = row['step'] %}
+              <tr>
+                <td class="fw-semibold">{{ req.id }}</td>
+                <td style="min-width: 270px">
+                  <div class="fw-semibold">{{ req.title or 'طلب دون عنوان' }}</div>
+                  <div class="small text-muted">
+                    {% if row['template'] %}
+                      <i class="bi bi-diagram-3"></i> {{ row['template'].name }}
+                    {% else %}
+                      <i class="bi bi-diagram-3"></i> مسار ديناميكي حسب الهيكل الإداري
+                    {% endif %}
+                  </div>
+                  {% if req.description %}
+                    <div class="small text-muted text-truncate" style="max-width: 390px;">{{ req.description }}</div>
+                  {% endif %}
+                </td>
+                <td>
+                  <div class="fw-semibold">الخطوة {{ step.step_order }}</div>
+                  <div class="small text-muted">{{ step.routing_label or step.routing_node_label or step.approver_role or step.approver_kind or 'غير محددة' }}</div>
+                </td>
+                <td class="text-nowrap">{{ row['due_at']|local_datetime }}</td>
+                <td><span class="badge text-bg-danger">{{ row['overdue_days'] }} يوم</span></td>
+                <td>{{ req.requester.full_name if req.requester else '—' }}</td>
+                <td class="text-nowrap">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('workflow.view_request', request_id=req.id) }}">
+                    <i class="bi bi-box-arrow-up-left"></i> فتح المسار
+                  </a>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="7" class="text-center text-muted py-5"><i class="bi bi-check-circle fs-2 d-block mb-2 text-success"></i>لا توجد مسارات متأخرة في هذه الصفحة.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if pages > 1 %}
+        <div class="card-footer bg-white delayed-report-pagination no-print">
+          <nav aria-label="صفحات تقرير المسارات المتأخرة">
+            <ul class="pagination pagination-sm mb-0 justify-content-center">
+              <li class="page-item {% if not previous_page_url %}disabled{% endif %}">
+                <a class="page-link" href="{{ previous_page_url or '#' }}">السابق</a>
+              </li>
+              <li class="page-item active"><span class="page-link">{{ page }} / {{ pages }}</span></li>
+              <li class="page-item {% if not next_page_url %}disabled{% endif %}">
+                <a class="page-link" href="{{ next_page_url or '#' }}">التالي</a>
+              </li>
+            </ul>
+          </nav>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="card shadow-sm mt-3 delayed-achievements-section">
+      <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+          <strong><i class="bi bi-trophy text-primary"></i> إنجازاتي المضافة ولم تعتمد بعد</strong>
+          <span class="badge text-bg-warning ms-2">{{ pending_achievement_count }}</span>
+        </div>
+        <a class="btn btn-sm btn-outline-primary no-print" href="{{ url_for('portal.hr_my_achievements') }}">
+          <i class="bi bi-trophy"></i> فتح سجل الإنجازات
+        </a>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0 delayed-achievements-table">
+          <thead class="table-light">
+            <tr>
+              <th>الإنجاز</th>
+              <th>النوع والتاريخ</th>
+              <th>الجهة / الوصف</th>
+              <th>تاريخ الإضافة</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in pending_achievements %}
+              {% set type_meta = achievement_types.get(row.achievement_type, achievement_types.OTHER) %}
+              {% set status_meta = achievement_statuses.get(row.status, achievement_statuses.PENDING) %}
+              <tr>
+                <td style="min-width: 240px">
+                  <div class="fw-semibold"><i class="bi {{ type_meta.icon }} text-warning"></i> {{ row.title }}</div>
+                  <span class="badge text-bg-{{ status_meta.class }} mt-1">{{ status_meta.label }}</span>
+                </td>
+                <td>
+                  <div>{{ type_meta.label }}</div>
+                  <div class="small text-muted">تاريخ الإنجاز: {{ row.achieved_on }}</div>
+                </td>
+                <td style="min-width: 260px">
+                  {% if row.issuer %}<div class="small"><strong>الجهة:</strong> {{ row.issuer }}</div>{% endif %}
+                  {% if row.description %}<div class="small text-muted">{{ row.description }}</div>{% else %}<span class="text-muted">—</span>{% endif %}
+                </td>
+                <td class="small text-nowrap">{{ row.created_at|local_datetime if row.created_at else '—' }}</td>
+                <td class="text-nowrap">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_achievement_view', achievement_id=row.id) }}">
+                    <i class="bi bi-eye"></i> عرض ومسار الاعتماد
+                  </a>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="5" class="text-center text-muted py-5"><i class="bi bi-trophy fs-2 d-block mb-2 text-success"></i>لا توجد إنجازات مضافة بانتظار الاعتماد.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if pending_achievement_count > pending_achievements|length %}
+        <div class="card-footer bg-white small text-muted no-print">يظهر هنا أول 100 إنجاز قيد الاعتماد. افتح سجل الإنجازات لعرض البقية.</div>
+      {% endif %}
+    </section>
+  </section>
 </div>
-{% endif %}
 {% endblock %}
