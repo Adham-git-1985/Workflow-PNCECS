@@ -20,6 +20,11 @@ from models import (
     EmployeeFollowupItem,
     EmployeeFollowupReport,
     HRAttendanceDelayRequest,
+    InvEmployeeRequest,
+    InvEmployeeRequestLine,
+    InvIssueVoucher,
+    InvItem,
+    InvWarehouse,
     Notification,
     NotificationEmailDelivery,
     PortalMeeting,
@@ -38,6 +43,7 @@ from portal.followups import (
     _report_docx_filename,
     send_followup_reminders,
 )
+from services.followup_operational_reports import build_followup_operational_sections
 
 
 class FollowupFlowTests(unittest.TestCase):
@@ -563,6 +569,58 @@ class FollowupFlowTests(unittest.TestCase):
         self.assertEqual(hidden_page.status_code, 200)
         self.assertIn(b"show_operational_consumables", hidden_page.data)
         self.assertNotIn(b"bi-box-seam", hidden_page.data)
+
+    def test_consumables_report_includes_linked_vouchers_regardless_of_voucher_kind(self):
+        with self.app.app_context():
+            db.session.add(UserPermission(
+                user_id=self.employee_id,
+                key="INVENTORY_REQUEST_APPROVE",
+                is_allowed=True,
+            ))
+            warehouse = InvWarehouse(name="Main warehouse", code="MAIN")
+            item = InvItem(name="Printer paper", code="PAPER-001", unit="pack")
+            request = InvEmployeeRequest(
+                requester_user_id=self.outsider_id,
+                items_text="Printer paper",
+                purpose="Office supplies",
+                status="APPROVED",
+            )
+            db.session.add_all([warehouse, item, request])
+            db.session.flush()
+            voucher = InvIssueVoucher(
+                issue_kind="ROOM",
+                voucher_no="ROOM-2026-001",
+                voucher_date="2026-09-15",
+                from_warehouse_id=warehouse.id,
+            )
+            db.session.add(voucher)
+            db.session.flush()
+            db.session.add(InvEmployeeRequestLine(
+                request_id=request.id,
+                item_id=item.id,
+                requested_qty=2,
+                approved_qty=2,
+                warehouse_id=warehouse.id,
+                issue_voucher_id=voucher.id,
+            ))
+            report = EmployeeFollowupReport(
+                employee_user_id=self.employee_id,
+                manager_user_id=self.manager_id,
+                period_start=date(2026, 9, 1),
+                period_end=date(2026, 9, 30),
+                status="DRAFT",
+                operational_sections_json=json.dumps({"consumables": True}),
+            )
+            db.session.add(report)
+            db.session.commit()
+
+            sections = build_followup_operational_sections(report)
+            consumables = next(
+                section for section in sections if section["key"] == "consumables"
+            )
+            self.assertEqual(len(consumables["rows"]), 1)
+            self.assertEqual(consumables["rows"][0]["request_id"], request.id)
+            self.assertEqual(consumables["rows"][0]["consumed_qty"], 2.0)
 
     def test_overdue_meeting_task_is_synced_on_existing_report_and_can_be_removed(self):
         with self.app.app_context():

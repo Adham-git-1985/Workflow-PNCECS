@@ -255,7 +255,10 @@ def _consumables_section(report) -> dict:
             return_totals.c.line_id == InvEmployeeRequestLine.id,
         )
         .filter(InvEmployeeRequest.status.in_(("APPROVED", "PARTIALLY_RETURNED")))
-        .filter(InvIssueVoucher.issue_kind == "EMPLOYEE")
+        # The request-line -> issue-voucher link is the source of truth for
+        # employee consumption. Do not restrict the voucher kind here: older
+        # and manually reconciled requests can use another kind while still
+        # appearing in the warehouse employee-consumption report.
         .filter(InvIssueVoucher.voucher_date >= start.isoformat())
         .filter(InvIssueVoucher.voucher_date <= end.isoformat())
         .order_by(InvIssueVoucher.voucher_date.desc(), InvIssueVoucher.id.desc())
