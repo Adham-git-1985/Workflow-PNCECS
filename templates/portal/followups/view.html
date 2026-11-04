@@ -130,6 +130,7 @@
   {% if can_edit %}
   <form method="post" action="{{ url_for('portal.followups_update', report_id=report.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="operational_visibility_form" value="1">
     <div class="row g-4">
       <div class="col-xl-8">
         <div class="card border-0 shadow-sm mb-4">
@@ -186,6 +187,26 @@
         </div></div>
       </div>
       <div class="col-xl-4">
+        {% if operational_options %}
+        <div class="card border-0 shadow-sm mb-4">
+          <div class="card-body">
+            <h2 class="h6 mb-1"><i class="bi bi-sliders"></i> التقارير التشغيلية</h2>
+            <p class="small text-muted mb-3">اختر التقارير التي تريد إظهارها داخل تقرير الإنجاز وفي ملفات Word وPDF.</p>
+            <div class="d-grid gap-3">
+              {% for option in operational_options %}
+              <div class="border rounded-3 p-2">
+                <input type="hidden" name="show_operational_{{ option.key }}" value="0">
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" role="switch" id="show_operational_{{ option.key }}" name="show_operational_{{ option.key }}" value="1" {% if option.visible %}checked{% endif %}>
+                  <label class="form-check-label fw-semibold" for="show_operational_{{ option.key }}">{{ option.label }}</label>
+                </div>
+                <div class="small text-muted mt-1">{{ option.description }}</div>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+        {% endif %}
         <div class="card border-0 shadow-sm mb-4">
           <div class="card-body">
             <h2 class="h6">إجراءات التقرير</h2>

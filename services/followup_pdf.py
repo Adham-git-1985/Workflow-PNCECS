@@ -338,6 +338,42 @@ def _report_story(
         )
     )
 
+    pending_items = [
+        item
+        for item in (getattr(report, "items", None) or [])
+        if getattr(item, "is_included", True)
+        and (getattr(item, "status", "") or "").upper() != "COMPLETED"
+    ]
+    if pending_items:
+        pending_rows = [
+            [
+                _paragraph("المهمة", styles["header"]),
+                _paragraph("الموعد", styles["header"]),
+                _paragraph("الحالة", styles["header"]),
+            ]
+        ]
+        pending_rows.extend([
+            [
+                _paragraph(getattr(item, "title", None) or "مهمة متابعة", styles["body"]),
+                _paragraph(_date_label(getattr(item, "completed_on", None)), styles["body"]),
+                _paragraph({
+                    "INCOMPLETE": "غير مكتمل",
+                    "IN_PROGRESS": "قيد التنفيذ",
+                }.get((getattr(item, "status", "") or "").upper(), getattr(item, "status", None) or "-"), styles["body"]),
+            ]
+            for item in pending_items
+        ])
+        story.extend([
+            _paragraph("المهام المتأخرة أو قيد التنفيذ", styles["heading"]),
+            _table(
+                pending_rows,
+                widths=[doc_width * 0.58, doc_width * 0.20, doc_width * 0.22],
+                header_style=styles["header"],
+                body_style=styles["body"],
+                repeat_rows=1,
+            ),
+        ])
+
     employee_summary = (
         getattr(report, "employee_summary", None)
         or getattr(report, "ai_summary", None)

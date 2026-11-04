@@ -7051,6 +7051,10 @@ class EmployeeFollowupReport(db.Model):
     employee_summary = db.Column(db.Text, nullable=True)
     ai_summary = db.Column(db.Text, nullable=True)
     ai_notes = db.Column(db.Text, nullable=True)
+    # JSON map of operational section keys to visibility booleans.  NULL is
+    # intentionally treated as the legacy default: every permitted section is
+    # shown until the employee chooses otherwise.
+    operational_sections_json = db.Column(db.Text, nullable=True)
 
     manager_comment = db.Column(db.Text, nullable=True)
     manager_rating = db.Column(db.String(20), nullable=True)

@@ -1857,6 +1857,12 @@ def _ensure_runtime_schema():
             # reports, while new reports reach every active responsible person.
             if not _col_exists("employee_followup_reports", "manager_user_ids"):
                 _add_column_retry("employee_followup_reports", "manager_user_ids", "TEXT")
+            if not _col_exists("employee_followup_reports", "operational_sections_json"):
+                _add_column_retry(
+                    "employee_followup_reports",
+                    "operational_sections_json",
+                    "TEXT",
+                )
 
             # Personal-calendar reminders were added after the initial
             # calendar table.  Keep existing SQLite deployments usable when

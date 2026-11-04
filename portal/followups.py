@@ -9,6 +9,7 @@ import mimetypes
 from pathlib import Path
 import shutil
 import uuid
+from urllib.parse import urlsplit
 
 from flask import (
     abort,
@@ -57,7 +58,11 @@ from services.followup_docx import (
     is_valid_docx,
 )
 from services.followup_pdf import PDF_MIME, build_followups_bundle_pdf
-from services.followup_operational_reports import build_followup_operational_sections
+from services.followup_operational_reports import (
+    build_followup_operational_sections,
+    get_followup_operational_options,
+    get_followup_operational_visibility,
+)
 from services.hr_request_workflow import (
     resolve_responsible_managers,
     secretary_general_user_ids,
@@ -435,24 +440,36 @@ def _remove_report_storage(report_id: int) -> None:
 def _extract_completed_meeting_tasks(report: EmployeeFollowupReport) -> int:
     start_at = datetime.combine(report.period_start, time.min)
     end_at = datetime.combine(report.period_end + timedelta(days=1), time.min)
+    due_in_period = and_(
+        PortalMeetingTask.due_date.isnot(None),
+        PortalMeetingTask.due_date >= report.period_start,
+        PortalMeetingTask.due_date <= report.period_end,
+    )
+    completed_in_period = and_(
+        PortalMeetingTask.completed_at.isnot(None),
+        PortalMeetingTask.completed_at >= start_at,
+        PortalMeetingTask.completed_at < end_at,
+    )
+    overdue_in_period = and_(
+        PortalMeetingTask.status.in_(("OPEN", "IN_PROGRESS")),
+        due_in_period,
+        PortalMeetingTask.due_date < date.today(),
+    )
     tasks = (
         PortalMeetingTask.query
         .filter(PortalMeetingTask.assignee_user_id == report.employee_user_id)
-        .filter(PortalMeetingTask.status == "DONE")
         .filter(or_(
             and_(
-                PortalMeetingTask.completed_at.isnot(None),
-                PortalMeetingTask.completed_at >= start_at,
-                PortalMeetingTask.completed_at < end_at,
+                PortalMeetingTask.status == "DONE",
+                or_(completed_in_period, due_in_period),
             ),
-            and_(
-                PortalMeetingTask.completed_at.is_(None),
-                PortalMeetingTask.due_date.isnot(None),
-                PortalMeetingTask.due_date >= report.period_start,
-                PortalMeetingTask.due_date <= report.period_end,
-            ),
+            overdue_in_period,
         ))
-        .order_by(PortalMeetingTask.completed_at.desc(), PortalMeetingTask.id.desc())
+        .order_by(
+            PortalMeetingTask.due_date.desc(),
+            PortalMeetingTask.completed_at.desc(),
+            PortalMeetingTask.id.desc(),
+        )
         .all()
     )
     added = 0
@@ -462,18 +479,37 @@ def _extract_completed_meeting_tasks(report: EmployeeFollowupReport) -> int:
             source_type="MEETING_TASK",
             source_id=task.id,
         ).first()
+        is_completed = (task.status or "").upper() == "DONE"
+        task_status = "COMPLETED" if is_completed else (
+            "IN_PROGRESS" if (task.status or "").upper() == "IN_PROGRESS" else "INCOMPLETE"
+        )
+        completed_on = (
+            task.completed_at.date()
+            if task.completed_at and start_at.date() <= task.completed_at.date() <= report.period_end
+            else task.due_date
+        )
+        description = (task.description or "").strip()
+        if not is_completed and task.due_date:
+            overdue_note = f"تجاوزت المهمة موعدها المحدد في {task.due_date.isoformat()}."
+            description = f"{description}\n{overdue_note}".strip()
+        values = {
+            "title": task.title or "مهمة من اجتماع",
+            "description": description[:5000] or None,
+            "completed_on": completed_on,
+            "status": task_status,
+        }
         if existing:
+            existing.title = values["title"]
+            existing.description = values["description"]
+            existing.completed_on = values["completed_on"]
+            existing.status = values["status"]
             continue
-        completed_on = task.completed_at.date() if task.completed_at else task.due_date
         db.session.add(EmployeeFollowupItem(
             report_id=report.id,
             source_type="MEETING_TASK",
             source_id=task.id,
-            title=task.title or "مهمة منجزة",
-            description=(task.description or "")[:5000] or None,
-            completed_on=completed_on,
-            status="COMPLETED",
             is_included=True,
+            **values,
         ))
         added += 1
     return added
@@ -690,6 +726,20 @@ def _apply_employee_changes(report: EmployeeFollowupReport) -> None:
     report.challenges = (request.form.get("challenges") or "").strip() or None
     report.manager_request = (request.form.get("manager_request") or "").strip() or None
 
+    # The visibility form is deliberately marked so older integrations and
+    # existing tests that post only the report fields keep legacy defaults.
+    if request.form.get("operational_visibility_form") == "1":
+        visibility = get_followup_operational_visibility(report)
+        for option in get_followup_operational_options(report):
+            visibility[option["key"]] = "1" in request.form.getlist(
+                f"show_operational_{option['key']}"
+            )
+        report.operational_sections_json = json.dumps(
+            visibility,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
     for item in report.items or []:
         item.title = (request.form.get(f"title_{item.id}") or "").strip() or item.title
         suggestion_field = f"ai_suggestion_{item.id}"
@@ -737,6 +787,62 @@ def _followup_attachment_for_kind(report: EmployeeFollowupReport, kind: str) -> 
     return next((attachment for attachment in (report.attachments or []) if attachment.kind == kind), None)
 
 
+def _followup_public_base_url() -> str:
+    """Resolve a browser-reachable base URL for links embedded in documents."""
+    configured = (current_app.config.get("PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    if configured:
+        parsed = urlsplit(configured)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return configured
+
+    forwarded_host = (
+        request.headers.get("X-Forwarded-Host")
+        or request.headers.get("X-Original-Host")
+        or ""
+    ).split(",", 1)[0].strip()
+    forwarded_proto = (request.headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip()
+    if not forwarded_host or not forwarded_proto:
+        forwarded_header = request.headers.get("Forwarded") or ""
+        for forwarded_part in forwarded_header.split(";"):
+            key, separator, value = forwarded_part.partition("=")
+            if not separator:
+                continue
+            key = key.strip().lower()
+            value = value.strip().strip('"')
+            if key == "host" and not forwarded_host:
+                forwarded_host = value
+            elif key == "proto" and not forwarded_proto:
+                forwarded_proto = value
+    if forwarded_host and not forwarded_proto:
+        forwarded_proto = request.scheme
+    if forwarded_host and forwarded_proto in {"http", "https"}:
+        forwarded_url = f"{forwarded_proto}://{forwarded_host}".rstrip("/")
+        parsed = urlsplit(forwarded_url)
+        if parsed.netloc:
+            return forwarded_url
+
+    request_root = request.url_root.rstrip("/")
+    parsed = urlsplit(request_root)
+    hostname = (parsed.hostname or "").lower()
+    if hostname not in {"127.0.0.1", "localhost", "::1"}:
+        return request_root
+    if current_app.debug or current_app.testing:
+        return request_root
+
+    fallback = (
+        current_app.config.get("PUBLIC_FALLBACK_BASE_URL")
+        or "http://masar.plo.ps"
+    ).strip().rstrip("/")
+    fallback_parts = urlsplit(fallback)
+    if fallback_parts.scheme in {"http", "https"} and fallback_parts.netloc:
+        return fallback
+    return request_root
+
+
+def _followup_public_url(endpoint: str, **values) -> str:
+    return f"{_followup_public_base_url()}{url_for(endpoint, **values)}"
+
+
 def _followup_attachment_links(
     report: EmployeeFollowupReport,
     *,
@@ -752,12 +858,11 @@ def _followup_attachment_links(
             "name": attachment.original_name,
             "kind": attachment.kind,
             "mime_type": attachment.mime_type or "application/octet-stream",
-            "url": url_for(
+            "url": _followup_public_url(
                 "portal.followups_download_attachment",
                 report_id=report.id,
                 attachment_id=attachment.id,
                 inline=1,
-                _external=True,
             ),
         })
     return links
@@ -1403,6 +1508,8 @@ def followups_view(report_id: int):
         item_status_labels=ITEM_STATUS_LABELS,
         rating_labels=RATING_LABELS,
         operational_sections=build_followup_operational_sections(report),
+        operational_options=get_followup_operational_options(report),
+        operational_visibility=get_followup_operational_visibility(report),
         attachment_links=_followup_attachment_links(report),
     )
 

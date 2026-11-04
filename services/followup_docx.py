@@ -285,6 +285,32 @@ def _append_attachment_links(document, attachment_links) -> None:
         _set_rtl(paragraph, size=DOCUMENT_FONT_SIZE)
 
 
+def _append_pending_followup_items(document, items) -> None:
+    pending_items = [
+        item
+        for item in (items or [])
+        if getattr(item, "is_included", True)
+        and (getattr(item, "status", "") or "").upper() != "COMPLETED"
+    ]
+    if not pending_items:
+        return
+    _paragraph(document, "المهام المتأخرة أو قيد التنفيذ", bold=True)
+    rows = [
+        (
+            getattr(item, "title", None) or "مهمة متابعة",
+            _date_label(getattr(item, "completed_on", None)),
+            _status_label(getattr(item, "status", None)),
+        )
+        for item in pending_items
+    ]
+    _add_rtl_table(
+        document,
+        ("المهمة", "الموعد", "الحالة"),
+        rows,
+        _fit_table_widths(document, (3.5, 1.2, 1.2)),
+    )
+
+
 def _operational_rows(section: dict) -> tuple[tuple[str, ...], list[tuple[str, ...]], tuple[float, ...]]:
     key = section.get("key")
     rows = list(section.get("rows") or [])
@@ -422,6 +448,7 @@ def build_followup_docx(
         _fit_table_widths(document, (4.0, 1.7)),
     )
 
+    _append_pending_followup_items(document, getattr(report, "items", None))
     employee_summary = (
         getattr(report, "employee_summary", None)
         or getattr(report, "ai_summary", None)
@@ -589,6 +616,7 @@ def _append_bundle_report(
     _paragraph(document, "المطلوب من المدير", bold=True)
     _paragraph(document, getattr(report, "manager_request", None) or "-")
 
+    _append_pending_followup_items(document, getattr(report, "items", None))
     manager_comment = getattr(report, "manager_comment", None)
     manager_rating = getattr(report, "manager_rating", None)
     if manager_comment or manager_rating:

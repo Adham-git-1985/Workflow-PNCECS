@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from io import BytesIO
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,12 +21,18 @@ from models import (
     EmployeeFollowupReport,
     Notification,
     NotificationEmailDelivery,
+    PortalMeeting,
+    PortalMeetingTask,
     User,
     UserPermission,
     WorkflowRequest,
 )
 from portal import portal_bp
-from portal.followups import _report_docx_filename, send_followup_reminders
+from portal.followups import (
+    _extract_completed_meeting_tasks,
+    _report_docx_filename,
+    send_followup_reminders,
+)
 
 
 class FollowupFlowTests(unittest.TestCase):
@@ -456,6 +463,83 @@ class FollowupFlowTests(unittest.TestCase):
         with self.app.app_context():
             item = EmployeeFollowupReport.query.get(report_id).items[0]
             self.assertEqual(item.title, long_title.strip())
+
+    def test_late_completed_and_overdue_meeting_tasks_are_imported(self):
+        with self.app.app_context():
+            meeting = PortalMeeting(
+                title="Follow-up meeting",
+                start_at=datetime(2026, 9, 1, 9, 0),
+                created_by_user_id=self.manager_id,
+            )
+            late_completed = PortalMeetingTask(
+                meeting=meeting,
+                title="Late completed task",
+                assignee_user_id=self.employee_id,
+                due_date=date(2026, 9, 3),
+                status="DONE",
+                completed_at=datetime(2026, 10, 1, 10, 0),
+            )
+            overdue = PortalMeetingTask(
+                meeting=meeting,
+                title="Overdue task",
+                assignee_user_id=self.employee_id,
+                due_date=date(2026, 9, 4),
+                status="OPEN",
+            )
+            report = EmployeeFollowupReport(
+                employee_user_id=self.employee_id,
+                manager_user_id=self.manager_id,
+                period_start=date(2026, 9, 1),
+                period_end=date(2026, 9, 30),
+                status="DRAFT",
+            )
+            db.session.add_all([meeting, report])
+            db.session.commit()
+
+            self.assertEqual(_extract_completed_meeting_tasks(report), 2)
+            db.session.commit()
+            items = {
+                item.title: item
+                for item in EmployeeFollowupItem.query.filter_by(report_id=report.id).all()
+            }
+            self.assertEqual(items["Late completed task"].status, "COMPLETED")
+            self.assertEqual(items["Late completed task"].completed_on, date(2026, 9, 3))
+            self.assertEqual(items["Overdue task"].status, "INCOMPLETE")
+
+    def test_employee_can_hide_permission_backed_operational_report(self):
+        with self.app.app_context():
+            db.session.add(UserPermission(
+                user_id=self.employee_id,
+                key="INVENTORY_REQUEST_APPROVE",
+                is_allowed=True,
+            ))
+            report = EmployeeFollowupReport(
+                employee_user_id=self.employee_id,
+                manager_user_id=self.manager_id,
+                period_start=date(2026, 9, 1),
+                period_end=date(2026, 9, 30),
+                status="DRAFT",
+            )
+            db.session.add(report)
+            db.session.commit()
+            report_id = report.id
+
+        page = self.employee_client.get(f"/portal/followups/{report_id}")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"show_operational_consumables", page.data)
+
+        response = self.employee_client.post(
+            f"/portal/followups/{report_id}/update",
+            data={
+                "action": "save",
+                "operational_visibility_form": "1",
+                "show_operational_consumables": "0",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        with self.app.app_context():
+            report = db.session.get(EmployeeFollowupReport, report_id)
+            self.assertFalse(json.loads(report.operational_sections_json)["consumables"])
 
     def test_uploading_report_docx_replaces_the_previous_version(self):
         with self.app.app_context():

@@ -45,6 +45,16 @@ class BaseConfig:
     # demand from the report page.
     FOLLOWUPS_PAGE_SIZE = int(os.getenv("FOLLOWUPS_PAGE_SIZE", "50"))
 
+    # Public links embedded in generated Word/PDF reports must point to the
+    # address reachable by the user, not the private WSGI listener address.
+    # Deployments can set PUBLIC_BASE_URL explicitly (for example,
+    # https://masar.plo.ps).  The follow-up link helper also falls back to the
+    # configured public host when a reverse proxy exposes 127.0.0.1.
+    PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    PUBLIC_FALLBACK_BASE_URL = os.getenv(
+        "PUBLIC_FALLBACK_BASE_URL", "http://masar.plo.ps"
+    ).strip().rstrip("/")
+
     # Archive
     ARCHIVE_PURGE_DAYS = int(
         os.getenv("ARCHIVE_PURGE_DAYS", 30)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
+import json
 
 from sqlalchemy import func
 from sqlalchemy.orm import aliased
@@ -36,6 +37,40 @@ INVENTORY_TECH_PERMISSION = "INVENTORY_TECH_WAREHOUSE_APPROVE"
 INVENTORY_MAINTENANCE_PERMISSION = "INVENTORY_ADMIN_MAINTENANCE_APPROVE"
 TRANSPORT_MANAGER_PERMISSION = "TRANSPORT_MANAGER_APPROVE"
 TRANSPORT_ALTERNATE_MANAGER_PERMISSION = "TRANSPORT_DIRECTOR_APPROVE"
+
+# The employee controls which of the permission-backed operational sections
+# are included in their own accomplishment report.  Permission checks remain
+# authoritative: a section is never exposed just because its checkbox was
+# saved in a report.
+FOLLOWUP_OPERATIONAL_SECTION_OPTIONS = (
+    {
+        "key": "consumables",
+        "label": "تقرير المستهلكات من المستودع",
+        "description": "حركات صرف وإرجاع المواد الاستهلاكية خلال فترة التقرير.",
+        "permissions": (INVENTORY_CONSUMABLE_PERMISSION,),
+    },
+    {
+        "key": "technology_requests",
+        "label": "تقرير المستودع التكنولوجي",
+        "description": "طلبات الأجهزة والمواد التكنولوجية المرتبطة بصلاحية الموظف.",
+        "permissions": (INVENTORY_TECH_PERMISSION,),
+    },
+    {
+        "key": "maintenance_requests",
+        "label": "تقرير الصيانة من المستودع",
+        "description": "طلبات الصيانة والأثاث المرتبطة بصلاحية الموظف.",
+        "permissions": (INVENTORY_MAINTENANCE_PERMISSION,),
+    },
+    {
+        "key": "transport_movements",
+        "label": "متابعة حركات النقل",
+        "description": "حركات النقل التي تقع ضمن صلاحية مدير النقل أو البديل.",
+        "permissions": (
+            TRANSPORT_MANAGER_PERMISSION,
+            TRANSPORT_ALTERNATE_MANAGER_PERMISSION,
+        ),
+    },
+)
 
 ROUTE_TECH = "TECH"
 ROUTE_ADMIN_MAINTENANCE = "ADMIN_MAINTENANCE"
@@ -72,6 +107,60 @@ def _has_permission(user, key: str) -> bool:
         return bool(user and user.has_perm(key))
     except Exception:
         return False
+
+
+def _as_visibility_value(value, default=True) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
+def get_followup_operational_visibility(report) -> dict[str, bool]:
+    """Return saved section visibility, defaulting legacy reports to visible."""
+    visibility = {
+        option["key"]: True
+        for option in FOLLOWUP_OPERATIONAL_SECTION_OPTIONS
+    }
+    raw = getattr(report, "operational_sections_json", None)
+    if not raw:
+        return visibility
+    if isinstance(raw, dict):
+        payload = raw
+    else:
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError):
+            return visibility
+    if not isinstance(payload, dict):
+        return visibility
+    for key in visibility:
+        if key in payload:
+            visibility[key] = _as_visibility_value(payload[key], visibility[key])
+    return visibility
+
+
+def get_followup_operational_options(report) -> list[dict]:
+    """Return checkbox options applicable to the employee in the report."""
+    employee = getattr(report, "employee", None)
+    visibility = get_followup_operational_visibility(report)
+    options = []
+    for option in FOLLOWUP_OPERATIONAL_SECTION_OPTIONS:
+        if any(_has_permission(employee, permission) for permission in option["permissions"]):
+            options.append({
+                "key": option["key"],
+                "label": option["label"],
+                "description": option["description"],
+                "visible": visibility[option["key"]],
+            })
+    return options
 
 
 def _period(report) -> tuple[date, date, datetime, datetime]:
@@ -386,10 +475,11 @@ def build_followup_operational_sections(report) -> list[dict]:
     if employee is None:
         return []
 
+    visibility = get_followup_operational_visibility(report)
     sections = []
-    if _has_permission(employee, INVENTORY_CONSUMABLE_PERMISSION):
+    if visibility["consumables"] and _has_permission(employee, INVENTORY_CONSUMABLE_PERMISSION):
         sections.append(_consumables_section(report))
-    if _has_permission(employee, INVENTORY_TECH_PERMISSION):
+    if visibility["technology_requests"] and _has_permission(employee, INVENTORY_TECH_PERMISSION):
         sections.append(_route_section(
             report,
             route=ROUTE_TECH,
@@ -399,7 +489,7 @@ def build_followup_operational_sections(report) -> list[dict]:
             icon="bi-pc-display",
             tone="success",
         ))
-    if _has_permission(employee, INVENTORY_MAINTENANCE_PERMISSION):
+    if visibility["maintenance_requests"] and _has_permission(employee, INVENTORY_MAINTENANCE_PERMISSION):
         sections.append(_route_section(
             report,
             route=ROUTE_ADMIN_MAINTENANCE,
@@ -409,8 +499,10 @@ def build_followup_operational_sections(report) -> list[dict]:
             icon="bi-tools",
             tone="warning",
         ))
-    if _has_permission(employee, TRANSPORT_MANAGER_PERMISSION) or _has_permission(
+    if visibility["transport_movements"] and (
+        _has_permission(employee, TRANSPORT_MANAGER_PERMISSION) or _has_permission(
         employee, TRANSPORT_ALTERNATE_MANAGER_PERMISSION
+        )
     ):
         sections.append(_transport_section(report))
     return sections
