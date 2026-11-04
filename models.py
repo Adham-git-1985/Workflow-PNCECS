@@ -7055,6 +7055,10 @@ class EmployeeFollowupReport(db.Model):
     # intentionally treated as the legacy default: every permitted section is
     # shown until the employee chooses otherwise.
     operational_sections_json = db.Column(db.Text, nullable=True)
+    # JSON list of meeting-task IDs explicitly removed from this report.  A
+    # report is synchronised with overdue meeting tasks when it is opened, so
+    # the exclusion must survive that synchronisation.
+    excluded_meeting_task_ids_json = db.Column(db.Text, nullable=True)
 
     manager_comment = db.Column(db.Text, nullable=True)
     manager_rating = db.Column(db.String(20), nullable=True)

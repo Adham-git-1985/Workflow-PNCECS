@@ -44,6 +44,11 @@ class BaseConfig:
     # Keep Secretary-General follow-up lists bounded; detail data is loaded on
     # demand from the report page.
     FOLLOWUPS_PAGE_SIZE = int(os.getenv("FOLLOWUPS_PAGE_SIZE", "50"))
+    # Word links use short-lived signed URLs so a document can open its
+    # supporting files directly without redirecting through the report page.
+    FOLLOWUP_ATTACHMENT_LINK_MAX_AGE = int(
+        os.getenv("FOLLOWUP_ATTACHMENT_LINK_MAX_AGE", str(365 * 24 * 60 * 60))
+    )
 
     # Public links embedded in generated Word/PDF reports must point to the
     # address reachable by the user, not the private WSGI listener address.

@@ -30,6 +30,7 @@ from models import (
 from portal import portal_bp
 from portal.followups import (
     _extract_completed_meeting_tasks,
+    _followup_attachment_link_token,
     _report_docx_filename,
     send_followup_reminders,
 )
@@ -540,6 +541,91 @@ class FollowupFlowTests(unittest.TestCase):
         with self.app.app_context():
             report = db.session.get(EmployeeFollowupReport, report_id)
             self.assertFalse(json.loads(report.operational_sections_json)["consumables"])
+
+        hidden_page = self.employee_client.get(f"/portal/followups/{report_id}")
+        self.assertEqual(hidden_page.status_code, 200)
+        self.assertIn(b"show_operational_consumables", hidden_page.data)
+        self.assertNotIn(b"bi-box-seam", hidden_page.data)
+
+    def test_overdue_meeting_task_is_synced_on_existing_report_and_can_be_removed(self):
+        with self.app.app_context():
+            meeting = PortalMeeting(
+                title="Older follow-up meeting",
+                start_at=datetime(2026, 8, 1, 9, 0),
+                created_by_user_id=self.manager_id,
+            )
+            overdue = PortalMeetingTask(
+                meeting=meeting,
+                title="Meeting task that must appear",
+                assignee_user_id=self.employee_id,
+                due_date=date(2026, 8, 20),
+                status="OPEN",
+            )
+            report = EmployeeFollowupReport(
+                employee_user_id=self.employee_id,
+                manager_user_id=self.manager_id,
+                period_start=date(2026, 9, 1),
+                period_end=date(2026, 9, 30),
+                status="DRAFT",
+            )
+            db.session.add_all([meeting, report])
+            db.session.commit()
+            report_id = report.id
+            task_id = overdue.id
+
+        page = self.employee_client.get(f"/portal/followups/{report_id}")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Meeting task that must appear".encode(), page.data)
+        with self.app.app_context():
+            item = EmployeeFollowupItem.query.filter_by(
+                report_id=report_id,
+                source_type="MEETING_TASK",
+                source_id=task_id,
+            ).one()
+            item_id = item.id
+
+        removed = self.employee_client.post(
+            f"/portal/followups/{report_id}/items/{item_id}/delete"
+        )
+        self.assertEqual(removed.status_code, 302)
+        with self.app.app_context():
+            report = db.session.get(EmployeeFollowupReport, report_id)
+            item = EmployeeFollowupItem.query.filter_by(id=item_id).one()
+            self.assertFalse(item.is_included)
+            self.assertEqual(json.loads(report.excluded_meeting_task_ids_json), [task_id])
+            self.assertEqual(_extract_completed_meeting_tasks(report), 0)
+
+    def test_word_attachment_link_returns_the_file_without_report_page_redirect(self):
+        with self.app.app_context():
+            report = EmployeeFollowupReport(
+                employee_user_id=self.employee_id,
+                manager_user_id=self.manager_id,
+                period_start=date(2026, 9, 1),
+                period_end=date(2026, 9, 5),
+                status="DRAFT",
+            )
+            db.session.add(report)
+            db.session.commit()
+            report_id = report.id
+
+        upload = self.employee_client.post(
+            f"/portal/followups/{report_id}/attachments",
+            data={"supporting_files": (BytesIO(b"direct attachment bytes"), "evidence.txt")},
+        )
+        self.assertEqual(upload.status_code, 302)
+        with self.app.app_context():
+            attachment = EmployeeFollowupReport.query.get(report_id).attachments[0]
+            token = _followup_attachment_link_token(report_id, attachment.id)
+
+        # This deliberately uses a fresh unauthenticated client: the Word
+        # hyperlink must return the stored file instead of the login/report
+        # HTML page.
+        direct = self.app.test_client().get(
+            f"/portal/followups/attachments/link/{token}?inline=1"
+        )
+        self.assertEqual(direct.status_code, 200)
+        self.assertEqual(direct.data, b"direct attachment bytes")
+        self.assertIn("inline", direct.headers.get("Content-Disposition", "").lower())
 
     def test_uploading_report_docx_replaces_the_previous_version(self):
         with self.app.app_context():

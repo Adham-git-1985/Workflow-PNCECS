@@ -1863,6 +1863,12 @@ def _ensure_runtime_schema():
                     "operational_sections_json",
                     "TEXT",
                 )
+            if not _col_exists("employee_followup_reports", "excluded_meeting_task_ids_json"):
+                _add_column_retry(
+                    "employee_followup_reports",
+                    "excluded_meeting_task_ids_json",
+                    "TEXT",
+                )
 
             # Personal-calendar reminders were added after the initial
             # calendar table.  Keep existing SQLite deployments usable when

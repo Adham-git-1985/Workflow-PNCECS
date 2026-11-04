@@ -23,6 +23,7 @@ from flask import (
     url_for,
 )
 from flask_login import current_user, login_required
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import and_, case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased, load_only, noload
@@ -128,6 +129,9 @@ WORKFLOW_ACCOMPLISHMENT_ACTIONS = {
     # reject the workflow step itself.
     "WORKFLOW_MENTION_TASK_COMPLETED": "متابعة المنشن والاستجابة له",
 }
+
+_FOLLOWUP_ATTACHMENT_LINK_SALT = "employee-followup-attachment-link-v1"
+_FOLLOWUP_ATTACHMENT_LINK_PURPOSE = "EMPLOYEE_FOLLOWUP_ATTACHMENT"
 
 
 def _has_permission(permission: str) -> bool:
@@ -437,6 +441,46 @@ def _remove_report_storage(report_id: int) -> None:
         current_app.logger.warning("Failed to remove followup storage for report %s", report_id)
 
 
+def _meeting_task_exclusion_ids(report: EmployeeFollowupReport) -> set[int]:
+    raw = getattr(report, "excluded_meeting_task_ids_json", None)
+    if not raw:
+        return set()
+    if isinstance(raw, (list, tuple, set)):
+        payload = raw
+    else:
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError):
+            return set()
+    if isinstance(payload, dict):
+        payload = payload.get("task_ids", [])
+    if not isinstance(payload, (list, tuple, set)):
+        return set()
+    excluded = set()
+    for value in payload:
+        try:
+            task_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if task_id > 0:
+            excluded.add(task_id)
+    return excluded
+
+
+def _set_meeting_task_exclusion_ids(report: EmployeeFollowupReport, task_ids: set[int]) -> None:
+    normalized = set()
+    for value in task_ids:
+        try:
+            task_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if task_id > 0:
+            normalized.add(task_id)
+    report.excluded_meeting_task_ids_json = (
+        json.dumps(sorted(normalized), separators=(",", ":")) if normalized else None
+    )
+
+
 def _extract_completed_meeting_tasks(report: EmployeeFollowupReport) -> int:
     start_at = datetime.combine(report.period_start, time.min)
     end_at = datetime.combine(report.period_end + timedelta(days=1), time.min)
@@ -450,9 +494,14 @@ def _extract_completed_meeting_tasks(report: EmployeeFollowupReport) -> int:
         PortalMeetingTask.completed_at >= start_at,
         PortalMeetingTask.completed_at < end_at,
     )
-    overdue_in_period = and_(
+    # Overdue tasks are intentionally not bounded by period_start.  A task
+    # that missed its due date before the selected reporting period is still
+    # an open meeting obligation and must remain visible until the employee
+    # removes it from this report.
+    overdue_through_period_end = and_(
         PortalMeetingTask.status.in_(("OPEN", "IN_PROGRESS")),
-        due_in_period,
+        PortalMeetingTask.due_date.isnot(None),
+        PortalMeetingTask.due_date <= report.period_end,
         PortalMeetingTask.due_date < date.today(),
     )
     tasks = (
@@ -463,7 +512,7 @@ def _extract_completed_meeting_tasks(report: EmployeeFollowupReport) -> int:
                 PortalMeetingTask.status == "DONE",
                 or_(completed_in_period, due_in_period),
             ),
-            overdue_in_period,
+            overdue_through_period_end,
         ))
         .order_by(
             PortalMeetingTask.due_date.desc(),
@@ -472,13 +521,19 @@ def _extract_completed_meeting_tasks(report: EmployeeFollowupReport) -> int:
         )
         .all()
     )
-    added = 0
-    for task in tasks:
-        existing = EmployeeFollowupItem.query.filter_by(
+    existing_items = {
+        int(item.source_id): item
+        for item in EmployeeFollowupItem.query.filter_by(
             report_id=report.id,
             source_type="MEETING_TASK",
-            source_id=task.id,
-        ).first()
+        ).filter(EmployeeFollowupItem.source_id.isnot(None)).all()
+    }
+    excluded_task_ids = _meeting_task_exclusion_ids(report)
+    synchronized = 0
+    for task in tasks:
+        if int(task.id) in excluded_task_ids:
+            continue
+        existing = existing_items.get(int(task.id))
         is_completed = (task.status or "").upper() == "DONE"
         task_status = "COMPLETED" if is_completed else (
             "IN_PROGRESS" if (task.status or "").upper() == "IN_PROGRESS" else "INCOMPLETE"
@@ -499,10 +554,21 @@ def _extract_completed_meeting_tasks(report: EmployeeFollowupReport) -> int:
             "status": task_status,
         }
         if existing:
+            # An unchecked meeting item is an explicit employee choice.  Do
+            # not let a later report refresh silently put it back in the
+            # report or overwrite the user's removal.
+            if not existing.is_included:
+                continue
+            changed = any(
+                getattr(existing, field) != value
+                for field, value in values.items()
+            )
             existing.title = values["title"]
             existing.description = values["description"]
             existing.completed_on = values["completed_on"]
             existing.status = values["status"]
+            if changed:
+                synchronized += 1
             continue
         db.session.add(EmployeeFollowupItem(
             report_id=report.id,
@@ -511,8 +577,8 @@ def _extract_completed_meeting_tasks(report: EmployeeFollowupReport) -> int:
             is_included=True,
             **values,
         ))
-        added += 1
-    return added
+        synchronized += 1
+    return synchronized
 
 
 def _extract_workflow_accomplishments(report: EmployeeFollowupReport) -> int:
@@ -740,6 +806,7 @@ def _apply_employee_changes(report: EmployeeFollowupReport) -> None:
             separators=(",", ":"),
         )
 
+    excluded_meeting_task_ids = _meeting_task_exclusion_ids(report)
     for item in report.items or []:
         item.title = (request.form.get(f"title_{item.id}") or "").strip() or item.title
         suggestion_field = f"ai_suggestion_{item.id}"
@@ -756,6 +823,14 @@ def _apply_employee_changes(report: EmployeeFollowupReport) -> None:
         if requested_status in ITEM_STATUS_LABELS:
             item.status = requested_status
         item.is_included = request.form.get(f"included_{item.id}") == "1"
+        if item.source_type == "MEETING_TASK" and item.source_id:
+            task_id = int(item.source_id)
+            if item.is_included:
+                excluded_meeting_task_ids.discard(task_id)
+            else:
+                excluded_meeting_task_ids.add(task_id)
+
+    _set_meeting_task_exclusion_ids(report, excluded_meeting_task_ids)
 
 
 def _run_followup_assistant(report: EmployeeFollowupReport) -> None:
@@ -785,6 +860,47 @@ def _apply_assistant_suggestions(report: EmployeeFollowupReport) -> int:
 
 def _followup_attachment_for_kind(report: EmployeeFollowupReport, kind: str) -> EmployeeFollowupAttachment | None:
     return next((attachment for attachment in (report.attachments or []) if attachment.kind == kind), None)
+
+
+def _followup_attachment_link_serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(
+        current_app.config["SECRET_KEY"],
+        salt=_FOLLOWUP_ATTACHMENT_LINK_SALT,
+    )
+
+
+def _followup_attachment_link_token(report_id: int, attachment_id: int) -> str:
+    return _followup_attachment_link_serializer().dumps({
+        "purpose": _FOLLOWUP_ATTACHMENT_LINK_PURPOSE,
+        "report_id": int(report_id),
+        "attachment_id": int(attachment_id),
+    })
+
+
+def _decode_followup_attachment_link(token: str) -> dict | None:
+    try:
+        max_age = int(
+            current_app.config.get("FOLLOWUP_ATTACHMENT_LINK_MAX_AGE")
+            or (365 * 24 * 60 * 60)
+        )
+        payload = _followup_attachment_link_serializer().loads(token, max_age=max_age)
+    except (BadSignature, SignatureExpired, TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("purpose") != _FOLLOWUP_ATTACHMENT_LINK_PURPOSE:
+        return None
+    try:
+        report_id = int(payload["report_id"])
+        attachment_id = int(payload["attachment_id"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if report_id <= 0 or attachment_id <= 0:
+        return None
+    return {
+        "report_id": report_id,
+        "attachment_id": attachment_id,
+    }
 
 
 def _followup_public_base_url() -> str:
@@ -859,9 +975,8 @@ def _followup_attachment_links(
             "kind": attachment.kind,
             "mime_type": attachment.mime_type or "application/octet-stream",
             "url": _followup_public_url(
-                "portal.followups_download_attachment",
-                report_id=report.id,
-                attachment_id=attachment.id,
+                "portal.followups_download_attachment_link",
+                token=_followup_attachment_link_token(report.id, attachment.id),
                 inline=1,
             ),
         })
@@ -1485,6 +1600,20 @@ def followups_new():
 def followups_view(report_id: int):
     _require_followups_access()
     report, access_level = _get_report_or_abort(report_id)
+    # Meeting tasks can become overdue after the report was created.  Refresh
+    # them on every report view so older reports show the same overdue work as
+    # newly-created reports.  Explicit employee exclusions are preserved by
+    # _extract_completed_meeting_tasks.
+    try:
+        synchronized_tasks = _extract_completed_meeting_tasks(report)
+        if synchronized_tasks:
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "Failed to synchronise meeting tasks for followup %s",
+            report_id,
+        )
     # Keep the super-admin decision form visible even if the super admin is
     # also the employee who owns this particular report.
     can_edit = _employee_can_edit(report) and access_level != "super_admin"
@@ -1696,6 +1825,16 @@ def followups_delete_item(report_id: int, item_id: int):
     if not _employee_can_edit(report):
         abort(403)
     item = EmployeeFollowupItem.query.filter_by(id=item_id, report_id=report.id).first_or_404()
+    if item.source_type == "MEETING_TASK" and item.source_id:
+        excluded_meeting_task_ids = _meeting_task_exclusion_ids(report)
+        excluded_meeting_task_ids.add(int(item.source_id))
+        _set_meeting_task_exclusion_ids(report, excluded_meeting_task_ids)
+        # Keep the source meeting task intact.  Only remove it from this
+        # report, so a user can still manage the meeting from its own screen.
+        item.is_included = False
+        db.session.commit()
+        flash("تمت إزالة الاجتماع من التقرير دون حذف الاجتماع الأصلي.", "success")
+        return redirect(url_for("portal.followups_view", report_id=report.id))
     db.session.delete(item)
     db.session.commit()
     flash("تم حذف البند.", "success")
@@ -1787,6 +1926,33 @@ def followups_download_attachment(report_id: int, attachment_id: int):
         mimetype=attachment.mime_type or None,
         as_attachment=not inline,
         download_name=attachment.original_name,
+    )
+
+
+@portal_bp.route("/followups/attachments/link/<token>")
+def followups_download_attachment_link(token: str):
+    """Serve a Word attachment directly through a signed, time-limited URL.
+
+    Generated Word files are often opened outside the authenticated browser
+    session.  The signed token is scoped to one report attachment and avoids
+    sending the user to the HTML report page or the login page first.
+    """
+    payload = _decode_followup_attachment_link(token)
+    if not payload:
+        abort(404)
+    report = EmployeeFollowupReport.query.get_or_404(payload["report_id"])
+    attachment = EmployeeFollowupAttachment.query.filter_by(
+        id=payload["attachment_id"],
+        report_id=report.id,
+    ).first_or_404()
+    inline = (request.args.get("inline") or "").strip().lower() in {"1", "true", "yes"}
+    return send_from_directory(
+        str(_report_storage_dir(report.id)),
+        attachment.stored_name,
+        mimetype=attachment.mime_type or None,
+        as_attachment=not inline,
+        download_name=attachment.original_name,
+        max_age=0,
     )
 
 
