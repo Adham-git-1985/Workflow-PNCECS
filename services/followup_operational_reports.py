@@ -124,9 +124,9 @@ def _as_visibility_value(value, default=True) -> bool:
 
 
 def get_followup_operational_visibility(report) -> dict[str, bool]:
-    """Return saved section visibility, defaulting legacy reports to visible."""
+    """Return saved section visibility, defaulting unconfigured reports to hidden."""
     visibility = {
-        option["key"]: True
+        option["key"]: False
         for option in FOLLOWUP_OPERATIONAL_SECTION_OPTIONS
     }
     raw = getattr(report, "operational_sections_json", None)

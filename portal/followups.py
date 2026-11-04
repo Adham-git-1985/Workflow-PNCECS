@@ -48,6 +48,8 @@ from models import (
     OrgNode,
     OrgNodeAssignment,
     OrgUnitAssignment,
+    PortalMeeting,
+    PortalMeetingParticipant,
     PortalMeetingTask,
     User,
 )
@@ -442,6 +444,13 @@ def _remove_report_storage(report_id: int) -> None:
 
 
 def _meeting_task_exclusion_ids(report: EmployeeFollowupReport) -> set[int]:
+    return _meeting_source_exclusion_ids(report, "MEETING_TASK")
+
+
+def _meeting_source_exclusion_ids(
+    report: EmployeeFollowupReport,
+    source_type: str,
+) -> set[int]:
     raw = getattr(report, "excluded_meeting_task_ids_json", None)
     if not raw:
         return set()
@@ -453,7 +462,11 @@ def _meeting_task_exclusion_ids(report: EmployeeFollowupReport) -> set[int]:
         except (TypeError, ValueError):
             return set()
     if isinstance(payload, dict):
-        payload = payload.get("task_ids", [])
+        key = "meeting_ids" if source_type == "MEETING" else "task_ids"
+        payload = payload.get(key, [])
+    elif source_type != "MEETING_TASK":
+        # Older reports stored task exclusions as a bare JSON list.
+        return set()
     if not isinstance(payload, (list, tuple, set)):
         return set()
     excluded = set()
@@ -467,18 +480,48 @@ def _meeting_task_exclusion_ids(report: EmployeeFollowupReport) -> set[int]:
     return excluded
 
 
-def _set_meeting_task_exclusion_ids(report: EmployeeFollowupReport, task_ids: set[int]) -> None:
+def _normalize_meeting_source_ids(values) -> set[int]:
     normalized = set()
-    for value in task_ids:
+    for value in values or ():
         try:
             task_id = int(value)
         except (TypeError, ValueError):
             continue
         if task_id > 0:
             normalized.add(task_id)
-    report.excluded_meeting_task_ids_json = (
-        json.dumps(sorted(normalized), separators=(",", ":")) if normalized else None
+    return normalized
+
+
+def _set_meeting_exclusion_ids(
+    report: EmployeeFollowupReport,
+    task_ids: set[int],
+    meeting_ids: set[int] | None = None,
+) -> None:
+    normalized_tasks = _normalize_meeting_source_ids(task_ids)
+    normalized_meetings = (
+        _meeting_source_exclusion_ids(report, "MEETING")
+        if meeting_ids is None
+        else _normalize_meeting_source_ids(meeting_ids)
     )
+    if normalized_meetings:
+        payload = {
+            "task_ids": sorted(normalized_tasks),
+            "meeting_ids": sorted(normalized_meetings),
+        }
+        report.excluded_meeting_task_ids_json = json.dumps(
+            payload,
+            separators=(",", ":"),
+        )
+        return
+    report.excluded_meeting_task_ids_json = (
+        json.dumps(sorted(normalized_tasks), separators=(",", ":"))
+        if normalized_tasks else None
+    )
+
+
+def _set_meeting_task_exclusion_ids(report: EmployeeFollowupReport, task_ids: set[int]) -> None:
+    """Backward-compatible writer for callers that only handle task rows."""
+    _set_meeting_exclusion_ids(report, task_ids)
 
 
 def _extract_completed_meeting_tasks(report: EmployeeFollowupReport) -> int:
@@ -581,23 +624,106 @@ def _extract_completed_meeting_tasks(report: EmployeeFollowupReport) -> int:
     return synchronized
 
 
+def _extract_completed_meetings(report: EmployeeFollowupReport) -> int:
+    """Import past meetings attended by invitation into the report items.
+
+    A meeting does not need a follow-up task to count as work performed.  The
+    meeting itself is therefore a completed report item when its start falls
+    inside the selected period and the employee was the organizer or an
+    explicitly invited participant.
+    """
+    start_at = datetime.combine(report.period_start, time.min)
+    end_at = datetime.combine(report.period_end + timedelta(days=1), time.min)
+    now = datetime.utcnow()
+    participant_meeting_ids = db.session.query(
+        PortalMeetingParticipant.meeting_id,
+    ).filter(
+        PortalMeetingParticipant.user_id == report.employee_user_id,
+    )
+    meetings = (
+        PortalMeeting.query
+        .filter(
+            PortalMeeting.start_at >= start_at,
+            PortalMeeting.start_at < end_at,
+            PortalMeeting.start_at < now,
+            PortalMeeting.status != "CANCELLED",
+            or_(
+                PortalMeeting.created_by_user_id == report.employee_user_id,
+                PortalMeeting.id.in_(participant_meeting_ids),
+            ),
+        )
+        .order_by(PortalMeeting.start_at.desc(), PortalMeeting.id.desc())
+        .all()
+    )
+    existing_items = {
+        int(item.source_id): item
+        for item in EmployeeFollowupItem.query.filter_by(
+            report_id=report.id,
+            source_type="MEETING",
+        ).filter(EmployeeFollowupItem.source_id.isnot(None)).all()
+    }
+    excluded_meeting_ids = _meeting_source_exclusion_ids(report, "MEETING")
+    synchronized = 0
+    for meeting in meetings:
+        meeting_id = int(meeting.id)
+        if meeting_id in excluded_meeting_ids:
+            continue
+        description_parts = []
+        if (meeting.description or "").strip():
+            description_parts.append(f"الوصف: {meeting.description.strip()}")
+        if (meeting.location or "").strip():
+            description_parts.append(f"المكان: {meeting.location.strip()}")
+        if (meeting.decisions_text or "").strip():
+            description_parts.append(f"القرارات: {meeting.decisions_text.strip()}")
+        values = {
+            "title": f"اجتماع: {meeting.title or 'اجتماع'}",
+            "description": "\n".join(description_parts)[:5000] or None,
+            "completed_on": meeting.start_at.date() if meeting.start_at else report.period_start,
+            "status": "COMPLETED",
+        }
+        existing = existing_items.get(meeting_id)
+        if existing:
+            if not existing.is_included:
+                continue
+            changed = any(
+                getattr(existing, field) != value
+                for field, value in values.items()
+            )
+            existing.title = values["title"]
+            existing.description = values["description"]
+            existing.completed_on = values["completed_on"]
+            existing.status = values["status"]
+            if changed:
+                synchronized += 1
+            continue
+        db.session.add(EmployeeFollowupItem(
+            report_id=report.id,
+            source_type="MEETING",
+            source_id=meeting_id,
+            is_included=True,
+            **values,
+        ))
+        synchronized += 1
+    return synchronized
+
+
 def _extract_workflow_accomplishments(report: EmployeeFollowupReport) -> int:
     start_at = datetime.combine(report.period_start, time.min)
     end_at = datetime.combine(report.period_end + timedelta(days=1), time.min)
-    delay_workflow_exists = db.session.query(HRAttendanceDelayRequest.id).filter(
-        HRAttendanceDelayRequest.workflow_request_id == AuditLog.request_id,
-    ).exists()
+    delay_request_ids = db.session.query(
+        HRAttendanceDelayRequest.workflow_request_id,
+    ).scalar_subquery()
     # Attendance-delay paths are administrative attendance procedures, not
-    # employee accomplishments.  Exclude them at the query level so a large
-    # audit history does not cause an N+1 lookup for every workflow event.
+    # employee accomplishments.  The exclusion is based on the workflow
+    # request itself, not the audit actor: a delay path may be routed to this
+    # employee or started by this employee for other users.
     delay_audit_ids = {
         int(audit_id)
         for (audit_id,) in db.session.query(AuditLog.id)
-        .filter(AuditLog.user_id == report.employee_user_id)
         .filter(AuditLog.request_id.isnot(None))
+        .filter(AuditLog.request_id.in_(delay_request_ids))
         .filter(AuditLog.action.in_(WORKFLOW_ACCOMPLISHMENT_ACTIONS))
         .filter(AuditLog.created_at >= start_at, AuditLog.created_at < end_at)
-        .filter(delay_workflow_exists)
         .all()
         if audit_id
     }
@@ -618,7 +744,7 @@ def _extract_workflow_accomplishments(report: EmployeeFollowupReport) -> int:
         .filter(AuditLog.request_id.isnot(None))
         .filter(AuditLog.action.in_(WORKFLOW_ACCOMPLISHMENT_ACTIONS))
         .filter(AuditLog.created_at >= start_at, AuditLog.created_at < end_at)
-        .filter(~delay_workflow_exists)
+        .filter(~AuditLog.request_id.in_(delay_request_ids))
         .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
         .all()
     )
@@ -807,6 +933,7 @@ def _apply_employee_changes(report: EmployeeFollowupReport) -> None:
         )
 
     excluded_meeting_task_ids = _meeting_task_exclusion_ids(report)
+    excluded_meeting_ids = _meeting_source_exclusion_ids(report, "MEETING")
     for item in report.items or []:
         item.title = (request.form.get(f"title_{item.id}") or "").strip() or item.title
         suggestion_field = f"ai_suggestion_{item.id}"
@@ -823,14 +950,23 @@ def _apply_employee_changes(report: EmployeeFollowupReport) -> None:
         if requested_status in ITEM_STATUS_LABELS:
             item.status = requested_status
         item.is_included = request.form.get(f"included_{item.id}") == "1"
-        if item.source_type == "MEETING_TASK" and item.source_id:
+        if item.source_type in {"MEETING_TASK", "MEETING"} and item.source_id:
             task_id = int(item.source_id)
+            exclusion_ids = (
+                excluded_meeting_ids
+                if item.source_type == "MEETING"
+                else excluded_meeting_task_ids
+            )
             if item.is_included:
-                excluded_meeting_task_ids.discard(task_id)
+                exclusion_ids.discard(task_id)
             else:
-                excluded_meeting_task_ids.add(task_id)
+                exclusion_ids.add(task_id)
 
-    _set_meeting_task_exclusion_ids(report, excluded_meeting_task_ids)
+    _set_meeting_exclusion_ids(
+        report,
+        excluded_meeting_task_ids,
+        excluded_meeting_ids,
+    )
 
 
 def _run_followup_assistant(report: EmployeeFollowupReport) -> None:
@@ -1580,7 +1716,8 @@ def followups_new():
             db.session.add(report)
             db.session.flush()
             extracted_count = (
-                _extract_completed_meeting_tasks(report)
+                _extract_completed_meetings(report)
+                + _extract_completed_meeting_tasks(report)
                 + _extract_workflow_accomplishments(report)
             )
             db.session.commit()
@@ -1600,13 +1737,16 @@ def followups_new():
 def followups_view(report_id: int):
     _require_followups_access()
     report, access_level = _get_report_or_abort(report_id)
-    # Meeting tasks can become overdue after the report was created.  Refresh
-    # them on every report view so older reports show the same overdue work as
-    # newly-created reports.  Explicit employee exclusions are preserved by
-    # _extract_completed_meeting_tasks.
+    # Meetings and meeting tasks can become reportable after the report was
+    # created. Refresh them on every report view so older reports show the
+    # same past meetings and overdue work as newly-created reports. Explicit
+    # employee exclusions are preserved by the synchronisers.
     try:
-        synchronized_tasks = _extract_completed_meeting_tasks(report)
-        if synchronized_tasks:
+        synchronized_items = (
+            _extract_completed_meetings(report)
+            + _extract_completed_meeting_tasks(report)
+        )
+        if synchronized_items:
             db.session.commit()
     except Exception:
         db.session.rollback()
@@ -1825,10 +1965,18 @@ def followups_delete_item(report_id: int, item_id: int):
     if not _employee_can_edit(report):
         abort(403)
     item = EmployeeFollowupItem.query.filter_by(id=item_id, report_id=report.id).first_or_404()
-    if item.source_type == "MEETING_TASK" and item.source_id:
+    if item.source_type in {"MEETING_TASK", "MEETING"} and item.source_id:
         excluded_meeting_task_ids = _meeting_task_exclusion_ids(report)
-        excluded_meeting_task_ids.add(int(item.source_id))
-        _set_meeting_task_exclusion_ids(report, excluded_meeting_task_ids)
+        excluded_meeting_ids = _meeting_source_exclusion_ids(report, "MEETING")
+        if item.source_type == "MEETING":
+            excluded_meeting_ids.add(int(item.source_id))
+        else:
+            excluded_meeting_task_ids.add(int(item.source_id))
+        _set_meeting_exclusion_ids(
+            report,
+            excluded_meeting_task_ids,
+            excluded_meeting_ids,
+        )
         # Keep the source meeting task intact.  Only remove it from this
         # report, so a user can still manage the meeting from its own screen.
         item.is_included = False

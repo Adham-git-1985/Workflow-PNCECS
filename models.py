@@ -7051,13 +7051,15 @@ class EmployeeFollowupReport(db.Model):
     employee_summary = db.Column(db.Text, nullable=True)
     ai_summary = db.Column(db.Text, nullable=True)
     ai_notes = db.Column(db.Text, nullable=True)
-    # JSON map of operational section keys to visibility booleans.  NULL is
-    # intentionally treated as the legacy default: every permitted section is
-    # shown until the employee chooses otherwise.
+    # JSON map of operational section keys to visibility booleans. NULL keeps
+    # all optional warehouse/transport sections hidden until the employee
+    # explicitly selects them.
     operational_sections_json = db.Column(db.Text, nullable=True)
-    # JSON list of meeting-task IDs explicitly removed from this report.  A
-    # report is synchronised with overdue meeting tasks when it is opened, so
-    # the exclusion must survive that synchronisation.
+    # JSON list/map of meeting and meeting-task IDs explicitly removed from
+    # this report. A report is synchronised with past meetings when it is
+    # opened, so the exclusion must survive that synchronisation. Older rows
+    # may contain a bare task-ID list; newer rows may contain task_ids and
+    # meeting_ids keys.
     excluded_meeting_task_ids_json = db.Column(db.Text, nullable=True)
 
     manager_comment = db.Column(db.Text, nullable=True)

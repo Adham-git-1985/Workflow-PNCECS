@@ -19,9 +19,11 @@ from models import (
     EmployeeFollowupCopyRecipient,
     EmployeeFollowupItem,
     EmployeeFollowupReport,
+    HRAttendanceDelayRequest,
     Notification,
     NotificationEmailDelivery,
     PortalMeeting,
+    PortalMeetingParticipant,
     PortalMeetingTask,
     User,
     UserPermission,
@@ -29,7 +31,9 @@ from models import (
 )
 from portal import portal_bp
 from portal.followups import (
+    _extract_completed_meetings,
     _extract_completed_meeting_tasks,
+    _extract_workflow_accomplishments,
     _followup_attachment_link_token,
     _report_docx_filename,
     send_followup_reminders,
@@ -528,6 +532,19 @@ class FollowupFlowTests(unittest.TestCase):
         page = self.employee_client.get(f"/portal/followups/{report_id}")
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"show_operational_consumables", page.data)
+        self.assertNotIn(b"bi-box-seam", page.data)
+
+        response = self.employee_client.post(
+            f"/portal/followups/{report_id}/update",
+            data={
+                "action": "save",
+                "operational_visibility_form": "1",
+                "show_operational_consumables": "1",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        enabled_page = self.employee_client.get(f"/portal/followups/{report_id}")
+        self.assertIn(b"bi-box-seam", enabled_page.data)
 
         response = self.employee_client.post(
             f"/portal/followups/{report_id}/update",
@@ -594,6 +611,109 @@ class FollowupFlowTests(unittest.TestCase):
             self.assertFalse(item.is_included)
             self.assertEqual(json.loads(report.excluded_meeting_task_ids_json), [task_id])
             self.assertEqual(_extract_completed_meeting_tasks(report), 0)
+
+    def test_invited_past_meeting_is_added_to_report_even_without_a_task(self):
+        with self.app.app_context():
+            meeting = PortalMeeting(
+                title="Invited October meeting",
+                description="Meeting details",
+                start_at=datetime(2026, 10, 20, 10, 0),
+                created_by_user_id=self.manager_id,
+            )
+            db.session.add(meeting)
+            db.session.flush()
+            db.session.add(PortalMeetingParticipant(
+                meeting_id=meeting.id,
+                user_id=self.employee_id,
+                role="ATTENDEE",
+                attendance_status="INVITED",
+            ))
+            report = EmployeeFollowupReport(
+                employee_user_id=self.employee_id,
+                manager_user_id=self.manager_id,
+                period_start=date(2026, 10, 1),
+                period_end=date(2026, 10, 31),
+                status="DRAFT",
+            )
+            db.session.add(report)
+            db.session.commit()
+            report_id = report.id
+            meeting_id = meeting.id
+
+        page = self.employee_client.get(f"/portal/followups/{report_id}")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("اجتماع: Invited October meeting".encode(), page.data)
+        with self.app.app_context():
+            item = EmployeeFollowupItem.query.filter_by(
+                report_id=report_id,
+                source_type="MEETING",
+                source_id=meeting_id,
+            ).one()
+            self.assertEqual(item.completed_on, date(2026, 10, 20))
+            self.assertEqual(item.status, "COMPLETED")
+
+    def test_attendance_delay_workflows_are_never_imported_or_left_in_report(self):
+        with self.app.app_context():
+            delay_request = WorkflowRequest(
+                requester_id=self.employee_id,
+                title="نموذج تبرير غياب / تأخير",
+                description="مسار تبرير العمل",
+                status="IN_PROGRESS",
+            )
+            normal_request = WorkflowRequest(
+                requester_id=self.employee_id,
+                title="معاملة عمل عادية",
+                description="إنجاز فعلي",
+                status="IN_PROGRESS",
+            )
+            db.session.add_all([delay_request, normal_request])
+            db.session.flush()
+            db.session.add(HRAttendanceDelayRequest(
+                workflow_request_id=delay_request.id,
+                employee_id=self.employee_id,
+                initiated_by_id=self.manager_id,
+                delay_day="2026-10-20",
+                late_minutes=25,
+            ))
+            delay_audit = AuditLog(
+                request_id=delay_request.id,
+                user_id=self.manager_id,
+                action="STEP_APPROVED",
+                created_at=datetime(2026, 10, 20, 11, 0),
+            )
+            normal_audit = AuditLog(
+                request_id=normal_request.id,
+                user_id=self.employee_id,
+                action="STEP_APPROVED",
+                created_at=datetime(2026, 10, 21, 11, 0),
+            )
+            report = EmployeeFollowupReport(
+                employee_user_id=self.employee_id,
+                manager_user_id=self.manager_id,
+                period_start=date(2026, 10, 1),
+                period_end=date(2026, 10, 31),
+                status="DRAFT",
+            )
+            db.session.add_all([delay_audit, normal_audit, report])
+            db.session.flush()
+            db.session.add(EmployeeFollowupItem(
+                report_id=report.id,
+                source_type="WORKFLOW_AUDIT",
+                source_id=delay_audit.id,
+                title="مسار تبرير قديم يجب إزالته",
+                completed_on=date(2026, 10, 20),
+                status="COMPLETED",
+                is_included=True,
+            ))
+            db.session.commit()
+            report_id = report.id
+
+            imported = _extract_workflow_accomplishments(report)
+            db.session.commit()
+            items = EmployeeFollowupItem.query.filter_by(report_id=report_id).all()
+            self.assertEqual(imported, 1)
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0].source_id, normal_audit.id)
 
     def test_word_attachment_link_returns_the_file_without_report_page_redirect(self):
         with self.app.app_context():

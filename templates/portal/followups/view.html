@@ -170,7 +170,7 @@
                   <td><input class="form-control" name="completed_on_{{ item.id }}" type="date" value="{{ item.completed_on.isoformat() if item.completed_on else '' }}"></td>
                   <td><select class="form-select" name="status_{{ item.id }}">{% for key, label in item_status_labels.items() %}<option value="{{ key }}" {% if item.status == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></td>
                   <td><div class="form-check"><input class="form-check-input" id="included_{{ item.id }}" type="checkbox" name="included_{{ item.id }}" value="1" {% if item.is_included %}checked{% endif %}><label class="form-check-label" for="included_{{ item.id }}">إدراج</label></div></td>
-                  <td><button class="btn btn-sm btn-outline-danger" type="submit" form="delete-item-{{ item.id }}" title="{% if item.source_type == 'MEETING_TASK' %}إزالة الاجتماع من التقرير{% else %}حذف الإنجاز{% endif %}"><i class="bi bi-trash"></i><span class="visually-hidden">{% if item.source_type == 'MEETING_TASK' %}إزالة من التقرير{% else %}حذف{% endif %}</span></button></td>
+                  <td><button class="btn btn-sm btn-outline-danger" type="submit" form="delete-item-{{ item.id }}" title="{% if item.source_type in ['MEETING_TASK', 'MEETING'] %}إزالة الاجتماع من التقرير{% else %}حذف الإنجاز{% endif %}"><i class="bi bi-trash"></i><span class="visually-hidden">{% if item.source_type in ['MEETING_TASK', 'MEETING'] %}إزالة من التقرير{% else %}حذف{% endif %}</span></button></td>
                 </tr>
             {% else %}<tr><td colspan="5" class="p-4 text-muted">لا توجد بنود بعد. أضف إنجازاً يدوياً أدناه.</td></tr>{% endfor %}
               </tbody>
