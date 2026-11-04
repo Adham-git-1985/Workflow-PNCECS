@@ -37,6 +37,7 @@ from services.official_request_forms import (
 )
 from services.hr_request_workflow import secretary_general_user_ids
 from utils.inventory_numbers import auto_inventory_voucher_no
+from utils.excel import make_xlsx_bytes
 
 
 ROUTE_NORMAL = "NORMAL"
@@ -1860,14 +1861,45 @@ def inventory_employee_requests_report():
         line.consumed_qty = max(0.0, float(line.approved_qty or 0) - line.returned_qty)
         item_summary[line.item.label] += line.consumed_qty
         employee_summary[line.request.requester.full_name] += line.consumed_qty
+
+    if request.args.get("export", "").lower() in {"xlsx", "excel"}:
+        export_rows = [
+            [
+                line.issue_voucher.voucher_date if line.issue_voucher else "",
+                line.request.requester.full_name if line.request and line.request.requester else "",
+                line.item.label if line.item else "",
+                line.consumed_qty,
+                line.returned_qty,
+                line.warehouse.label if line.warehouse else "-",
+                line.request_id,
+                line.issue_voucher.voucher_no if line.issue_voucher else "",
+            ]
+            for line in rows
+        ]
+        return send_file(
+            BytesIO(make_xlsx_bytes(
+                "استهلاك الموظفين",
+                ["التاريخ", "الموظف", "الصنف", "المصروف الصافي", "المعاد", "المستودع", "الطلب", "سند الصرف"],
+                export_rows,
+            )),
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name="inventory_employee_consumption.xlsx",
+        )
+
+    total_consumed = sum(float(line.consumed_qty or 0) for line in rows)
+    total_returned = sum(float(line.returned_qty or 0) for line in rows)
     return render_template(
         "portal/inventory/employee_consumption_report.html",
         rows=rows,
-        item_summary=sorted(item_summary.items(), key=lambda pair: pair[0]),
-        employee_summary=sorted(employee_summary.items(), key=lambda pair: pair[0]),
+        item_summary=sorted(item_summary.items(), key=lambda pair: (-pair[1], pair[0])),
+        employee_summary=sorted(employee_summary.items(), key=lambda pair: (-pair[1], pair[0])),
         users=User.query.order_by(User.name.asc()).all(),
         items=InvItem.query.order_by(InvItem.name.asc()).all(),
         selected_month=selected_month,
         selected_user_id=int(selected_user_id) if selected_user_id.isdigit() else None,
         selected_item_id=int(selected_item_id) if selected_item_id.isdigit() else None,
+        total_consumed=total_consumed,
+        total_returned=total_returned,
+        print_view=request.args.get("print") in {"1", "true", "yes"},
     )

@@ -19,6 +19,7 @@ import mimetypes
 import math
 import unicodedata
 import hashlib
+from collections import defaultdict
 from pathlib import Path
 from io import BytesIO
 from urllib.parse import quote
@@ -54945,6 +54946,19 @@ def _inv_build_balances(*, warehouse_ids=None, item_ids=None):
     return balances
 
 
+def _inventory_report_xlsx(filename, sheet_name, headers, rows):
+    """Return a consistently formatted XLSX response for inventory reports."""
+    from utils.excel import make_xlsx_bytes
+
+    payload = make_xlsx_bytes(sheet_name, headers, rows)
+    return send_file(
+        BytesIO(payload),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=filename,
+    )
+
+
 @portal_bp.route("/inventory/reports/warehouses")
 @login_required
 @_perm_any(STORE_READ, STORE_MANAGE)
@@ -54952,38 +54966,104 @@ def inventory_report_warehouses():
     warehouses = InvWarehouse.query.filter(InvWarehouse.is_active == True).order_by(InvWarehouse.name.asc()).all()  # noqa: E712
     balances = _inv_build_balances()
 
-    rows = []
-    for w in warehouses:
-        total_qty = 0.0
-        item_count = 0
-        for (wh_id, _item_id), qty in balances.items():
-            if wh_id != w.id:
-                continue
-            if abs(qty) < 1e-9:
-                continue
-            item_count += 1
-            total_qty += float(qty or 0)
-        rows.append({"warehouse": w, "item_count": item_count, "total_qty": total_qty})
+    # Aggregate once instead of scanning the complete balance map for every
+    # warehouse.  This is noticeable on installations with many warehouses
+    # and a large catalogue.
+    warehouse_totals = defaultdict(lambda: {"item_count": 0, "total_qty": 0.0})
+    for (warehouse_id, _item_id), qty in balances.items():
+        qty = float(qty or 0)
+        if abs(qty) < 1e-9:
+            continue
+        warehouse_totals[warehouse_id]["item_count"] += 1
+        warehouse_totals[warehouse_id]["total_qty"] += qty
 
-    return render_template("portal/inventory/report_warehouses.html", rows=rows)
+    rows = [
+        {
+            "warehouse": warehouse,
+            "item_count": warehouse_totals[warehouse.id]["item_count"],
+            "total_qty": warehouse_totals[warehouse.id]["total_qty"],
+        }
+        for warehouse in warehouses
+    ]
+    if request.args.get("export", "").lower() in {"xlsx", "excel"}:
+        return _inventory_report_xlsx(
+            "inventory_warehouses.xlsx",
+            "المخازن",
+            ["المخزن", "عدد الأصناف", "إجمالي الكميات"],
+            [[row["warehouse"].name, row["item_count"], row["total_qty"]] for row in rows],
+        )
+
+    return render_template(
+        "portal/inventory/report_warehouses.html",
+        rows=rows,
+        print_view=request.args.get("print") in {"1", "true", "yes"},
+    )
 
 
 @portal_bp.route("/inventory/reports/items")
 @login_required
 @_perm_any(STORE_READ, STORE_MANAGE)
 def inventory_report_items_all():
-    items = InvItem.query.filter(InvItem.is_active == True).order_by(InvItem.name.asc()).all()  # noqa: E712
-    balances = _inv_build_balances()
+    search = (request.args.get("q") or "").strip()
+    page = max(request.args.get("page", 1, type=int) or 1, 1)
+
+    query = InvItem.query.filter(InvItem.is_active == True)  # noqa: E712
+    if search:
+        like = f"%{search}%"
+        query = query.filter(or_(
+            InvItem.name.ilike(like),
+            InvItem.code.ilike(like),
+            InvItem.variant.ilike(like),
+            InvItem.attributes.any(or_(
+                InvItemAttribute.name.ilike(like),
+                InvItemAttribute.value.ilike(like),
+            )),
+        ))
+
+    pagination = query.order_by(
+        InvItem.name.asc(),
+        InvItem.code.asc(),
+        InvItem.id.asc(),
+    ).paginate(page=page, per_page=50, error_out=False)
+
+    # Restrict the balance query to the visible page. This keeps the report
+    # responsive even when the catalogue contains many thousands of items.
+    balances = _inv_build_balances(item_ids=[item.id for item in pagination.items])
 
     agg = {}
     for (wh_id, item_id), qty in balances.items():
         agg[item_id] = agg.get(item_id, 0.0) + float(qty or 0)
 
     rows = []
-    for it in items:
+    for it in pagination.items:
         rows.append({"item": it, "qty": agg.get(it.id, 0.0)})
 
-    return render_template("portal/inventory/report_items_all.html", rows=rows)
+    if request.args.get("export", "").lower() in {"xlsx", "excel"}:
+        # An explicit export represents the complete filtered report, not
+        # only the 50 rows currently visible on screen.
+        export_items = query.order_by(
+            InvItem.name.asc(),
+            InvItem.code.asc(),
+            InvItem.id.asc(),
+        ).all()
+        export_balances = _inv_build_balances(item_ids=[item.id for item in export_items])
+        export_agg = defaultdict(float)
+        for (_warehouse_id, item_id), qty in export_balances.items():
+            export_agg[item_id] += float(qty or 0)
+        return _inventory_report_xlsx(
+            "inventory_items.xlsx",
+            "الأصناف",
+            ["الكود", "الصنف", "الكمية الإجمالية"],
+            [[item.code or "", item.label, export_agg.get(item.id, 0.0)] for item in export_items],
+        )
+
+    return render_template(
+        "portal/inventory/report_items_all.html",
+        rows=rows,
+        pagination=pagination,
+        search=search,
+        print_view=request.args.get("print") in {"1", "true", "yes"},
+    )
 
 
 @portal_bp.route("/inventory/reports/item-card")
@@ -55096,6 +55176,23 @@ def inventory_report_item_card():
     # footer display 0.00 regardless of the movement rows.
     total_qty = sum(float(m.get("qty") or 0) for m in movements)
 
+    if request.args.get("export", "").lower() in {"xlsx", "excel"}:
+        return _inventory_report_xlsx(
+            "inventory_item_card.xlsx",
+            "بطاقة الصنف",
+            ["التاريخ", "النوع", "رقم السند", "المخزن", "الكمية (+/-)"],
+            [
+                [
+                    movement.get("date") or "",
+                    movement.get("type") or "",
+                    movement.get("voucher_no") or "",
+                    getattr(movement.get("warehouse"), "name", "-") or "-",
+                    movement.get("qty") or 0,
+                ]
+                for movement in movements
+            ],
+        )
+
     return render_template(
         "portal/inventory/report_item_card.html",
         warehouses=warehouses,
@@ -55104,6 +55201,7 @@ def inventory_report_item_card():
         item=sel_item,
         movements=movements,
         total_qty=total_qty,
+        print_view=request.args.get("print") in {"1", "true", "yes"},
     )
 
 
@@ -55134,7 +55232,24 @@ def inventory_report_yearly_vouchers():
     for y in years:
         rows_out.append({"year": y, "data": counts[y]})
 
-    return render_template("portal/inventory/report_yearly_vouchers.html", rows=rows_out, selected_year=year)
+    if request.args.get("export", "").lower() in {"xlsx", "excel"}:
+        labels = ["إدخال", "صرف", "إرجاع", "إتلاف", "تصحيح", "جرد"]
+        return _inventory_report_xlsx(
+            "inventory_yearly_vouchers.xlsx",
+            "السندات السنوية",
+            ["السنة", *labels],
+            [
+                [row["year"], *[row["data"].get(label, 0) for label in labels]]
+                for row in rows_out
+            ],
+        )
+
+    return render_template(
+        "portal/inventory/report_yearly_vouchers.html",
+        rows=rows_out,
+        selected_year=year,
+        print_view=request.args.get("print") in {"1", "true", "yes"},
+    )
 
 
 @portal_bp.route("/inventory/reports/yearly-qty")
@@ -55225,7 +55340,24 @@ def inventory_report_yearly_qty():
     for y in years:
         rows_out.append({"year": y, "data": sums[y]})
 
-    return render_template("portal/inventory/report_yearly_qty.html", rows=rows_out, selected_year=year)
+    if request.args.get("export", "").lower() in {"xlsx", "excel"}:
+        labels = ["إدخال", "صرف", "إرجاع", "إتلاف", "تصحيح", "جرد"]
+        return _inventory_report_xlsx(
+            "inventory_yearly_quantities.xlsx",
+            "الكميات السنوية",
+            ["السنة", *labels],
+            [
+                [row["year"], *[row["data"].get(label, 0) for label in labels]]
+                for row in rows_out
+            ],
+        )
+
+    return render_template(
+        "portal/inventory/report_yearly_qty.html",
+        rows=rows_out,
+        selected_year=year,
+        print_view=request.args.get("print") in {"1", "true", "yes"},
+    )
 
 
 @portal_bp.route("/inventory/reports/issue-log")
@@ -55260,11 +55392,30 @@ def inventory_report_issue_log():
         "contains": contains,
     }
 
+    if request.args.get("export", "").lower() in {"xlsx", "excel"}:
+        return _inventory_report_xlsx(
+            "inventory_issue_log.xlsx",
+            "سجل الصرف",
+            ["التاريخ", "رقم السند", "من مخزن", "نوع الصرف", "الصنف", "الكمية"],
+            [
+                [
+                    voucher.voucher_date or "",
+                    voucher.voucher_no or "",
+                    voucher.from_warehouse.name if voucher.from_warehouse else "-",
+                    voucher.issue_kind or "",
+                    line.item.label if line.item else "-",
+                    line.qty or 0,
+                ]
+                for voucher, line in rows
+            ],
+        )
+
     return render_template(
         "portal/inventory/report_issue_log.html",
         warehouses=warehouses,
         rows=rows,
         selected=selected,
+        print_view=request.args.get("print") in {"1", "true", "yes"},
     )
 
 

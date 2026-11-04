@@ -240,7 +240,122 @@ def _add_rtl_table(document, headers: tuple[str, ...], rows, widths: tuple[float
     return table
 
 
-def build_followup_docx(report, template_path: str | Path | None = None) -> bytes:
+def _add_hyperlink(paragraph, text: str, url: str) -> None:
+    """Add a clickable external hyperlink without changing paragraph layout."""
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    relationship_id = paragraph.part.relate_to(url, RT.HYPERLINK, is_external=True)
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), relationship_id)
+    run = OxmlElement("w:r")
+    properties = OxmlElement("w:rPr")
+    color = OxmlElement("w:color")
+    color.set(qn("w:val"), "0563C1")
+    properties.append(color)
+    underline = OxmlElement("w:u")
+    underline.set(qn("w:val"), "single")
+    properties.append(underline)
+    fonts = OxmlElement("w:rFonts")
+    fonts.set(qn("w:ascii"), ARABIC_FONT)
+    fonts.set(qn("w:hAnsi"), ARABIC_FONT)
+    fonts.set(qn("w:cs"), ARABIC_FONT)
+    properties.append(fonts)
+    run.append(properties)
+    text_node = OxmlElement("w:t")
+    text_node.text = text
+    run.append(text_node)
+    hyperlink.append(run)
+    paragraph._p.append(hyperlink)
+
+
+def _append_attachment_links(document, attachment_links) -> None:
+    links = list(attachment_links or [])
+    if not links:
+        return
+    _paragraph(document, "الملفات الداعمة", bold=True)
+    for attachment in links:
+        paragraph = document.add_paragraph()
+        _add_hyperlink(
+            paragraph,
+            f"📎 {attachment.get('name') or 'ملف داعم'}",
+            str(attachment.get("url") or ""),
+        )
+        _set_rtl(paragraph, size=DOCUMENT_FONT_SIZE)
+
+
+def _operational_rows(section: dict) -> tuple[tuple[str, ...], list[tuple[str, ...]], tuple[float, ...]]:
+    key = section.get("key")
+    rows = list(section.get("rows") or [])
+    if key == "consumables":
+        headers = ("التاريخ", "الموظف", "الصنف", "الصرف الصافي", "المستودع")
+        values = [
+            (
+                row.get("date", "-"),
+                row.get("employee", "-"),
+                row.get("item", "-"),
+                f"{float(row.get('consumed_qty') or 0):g}",
+                row.get("warehouse", "-"),
+            )
+            for row in rows
+        ]
+        return headers, values, (1.0, 1.5, 2.6, 1.0, 1.2)
+    if key in {"technology_requests", "maintenance_requests"}:
+        headers = ("التاريخ", "الموظف", "الصنف", "المطلوب", "المعتمد", "الحالة")
+        values = [
+            (
+                row.get("date", "-"),
+                row.get("employee", "-"),
+                row.get("item", "-"),
+                f"{float(row.get('requested_qty') or 0):g}",
+                f"{float(row.get('approved_qty') or 0):g}",
+                row.get("status", "-"),
+            )
+            for row in rows
+        ]
+        return headers, values, (1.0, 1.4, 2.4, 0.8, 0.8, 1.3)
+    headers = ("التاريخ", "الموظف", "المسار", "السائق", "الحالة", "الغرض")
+    values = [
+        (
+            row.get("date", "-"),
+            row.get("employee", "-"),
+            row.get("route", "-"),
+            row.get("driver", "-"),
+            row.get("status", "-"),
+            row.get("purpose", "-"),
+        )
+        for row in rows
+    ]
+    return headers, values, (1.2, 1.4, 2.0, 1.1, 1.2, 1.8)
+
+
+def _append_operational_sections(document, operational_sections) -> None:
+    for section in operational_sections or []:
+        _paragraph(document, section.get("title") or "تقرير تشغيلي", bold=True, size=18)
+        _paragraph(document, section.get("subtitle") or "")
+        metric_rows = [
+            (metric.get("label", "-"), str(metric.get("value", "-")))
+            for metric in section.get("metrics") or []
+        ]
+        if metric_rows:
+            _add_rtl_table(document, ("المؤشر", "القيمة"), metric_rows, _fit_table_widths(document, (2.0, 3.8)))
+        headers, rows, proportions = _operational_rows(section)
+        if rows:
+            _add_rtl_table(document, headers, rows, _fit_table_widths(document, proportions))
+        else:
+            _paragraph(document, "لا توجد حركات أو طلبات خلال فترة التقرير.")
+        if section.get("truncated"):
+            _paragraph(document, "تم عرض أول 250 سجلاً فقط للمحافظة على سرعة التقرير.")
+
+
+def build_followup_docx(
+    report,
+    template_path: str | Path | None = None,
+    *,
+    attachment_links=None,
+    operational_sections=None,
+) -> bytes:
     """Build a reviewable report document and preserve an uploaded letterhead."""
     from docx import Document
     from docx.shared import Inches, Pt
@@ -324,6 +439,9 @@ def build_followup_docx(report, template_path: str | Path | None = None) -> byte
         _paragraph(document, report.manager_comment or "-")
         _paragraph(document, f"التقييم المختصر: {report.manager_rating or '-'}")
 
+    _append_operational_sections(document, operational_sections)
+    _append_attachment_links(document, attachment_links)
+
     stream = io.BytesIO()
     document.save(stream)
     return stream.getvalue()
@@ -386,7 +504,15 @@ def _prepare_bundle_document(document) -> None:
         pass
 
 
-def _append_bundle_report(document, report, *, organization_label: str, number: int) -> None:
+def _append_bundle_report(
+    document,
+    report,
+    *,
+    organization_label: str,
+    number: int,
+    attachment_links=None,
+    operational_sections=None,
+) -> None:
     """Append one self-contained employee section to a consolidated document."""
     from docx.shared import Pt
 
@@ -470,12 +596,17 @@ def _append_bundle_report(document, report, *, organization_label: str, number: 
         _paragraph(document, manager_comment or "-")
         _paragraph(document, f"التقييم المختصر: {manager_rating or '-'}")
 
+    _append_operational_sections(document, operational_sections)
+    _append_attachment_links(document, attachment_links)
+
 
 def build_followups_bundle_docx(
     reports,
     *,
     organization_contexts: dict | None = None,
     title: str = "تقرير الإنجاز الموحّد",
+    attachment_links_by_report: dict | None = None,
+    operational_sections_by_report: dict | None = None,
 ) -> bytes:
     """Build one Word file containing approved employee reports.
 
@@ -509,6 +640,8 @@ def build_followups_bundle_docx(
             report,
             organization_label=_bundle_org_label(report, organization_contexts),
             number=index,
+            attachment_links=(attachment_links_by_report or {}).get(getattr(report, "id", None)),
+            operational_sections=(operational_sections_by_report or {}).get(getattr(report, "id", None)),
         )
 
     stream = io.BytesIO()

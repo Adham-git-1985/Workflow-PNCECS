@@ -22,7 +22,6 @@ from flask import (
     url_for,
 )
 from flask_login import current_user, login_required
-from sqlalchemy import and_, case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased, load_only, noload
 
@@ -34,6 +33,7 @@ from models import (
     EmployeeFollowupAttachment,
     EmployeeFollowupItem,
     EmployeeFollowupReport,
+    HRAttendanceDelayRequest,
     Notification,
     Organization,
     Directorate,
@@ -56,6 +56,7 @@ from services.followup_docx import (
     is_valid_docx,
 )
 from services.followup_pdf import PDF_MIME, build_followups_bundle_pdf
+from services.followup_operational_reports import build_followup_operational_sections
 from services.hr_request_workflow import (
     resolve_responsible_managers,
     secretary_general_user_ids,
@@ -480,12 +481,41 @@ def _extract_completed_meeting_tasks(report: EmployeeFollowupReport) -> int:
 def _extract_workflow_accomplishments(report: EmployeeFollowupReport) -> int:
     start_at = datetime.combine(report.period_start, time.min)
     end_at = datetime.combine(report.period_end + timedelta(days=1), time.min)
+    delay_workflow_exists = db.session.query(HRAttendanceDelayRequest.id).filter(
+        HRAttendanceDelayRequest.workflow_request_id == AuditLog.request_id,
+    ).exists()
+    # Attendance-delay paths are administrative attendance procedures, not
+    # employee accomplishments.  Exclude them at the query level so a large
+    # audit history does not cause an N+1 lookup for every workflow event.
+    delay_audit_ids = {
+        int(audit_id)
+        for (audit_id,) in db.session.query(AuditLog.id)
+        .filter(AuditLog.user_id == report.employee_user_id)
+        .filter(AuditLog.request_id.isnot(None))
+        .filter(AuditLog.action.in_(WORKFLOW_ACCOMPLISHMENT_ACTIONS))
+        .filter(AuditLog.created_at >= start_at, AuditLog.created_at < end_at)
+        .filter(delay_workflow_exists)
+        .all()
+        if audit_id
+    }
+    if delay_audit_ids:
+        # Also clean up rows imported by an older version when the employee
+        # presses "تحديث من مسار" on an existing report.
+        old_delay_items = EmployeeFollowupItem.query.filter(
+            EmployeeFollowupItem.report_id == report.id,
+            EmployeeFollowupItem.source_type == "WORKFLOW_AUDIT",
+            EmployeeFollowupItem.source_id.in_(delay_audit_ids),
+        ).all()
+        for old_item in old_delay_items:
+            db.session.delete(old_item)
+
     audit_logs = (
         AuditLog.query
         .filter(AuditLog.user_id == report.employee_user_id)
         .filter(AuditLog.request_id.isnot(None))
         .filter(AuditLog.action.in_(WORKFLOW_ACCOMPLISHMENT_ACTIONS))
         .filter(AuditLog.created_at >= start_at, AuditLog.created_at < end_at)
+        .filter(~delay_workflow_exists)
         .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
         .all()
     )
@@ -704,6 +734,32 @@ def _apply_assistant_suggestions(report: EmployeeFollowupReport) -> int:
 
 def _followup_attachment_for_kind(report: EmployeeFollowupReport, kind: str) -> EmployeeFollowupAttachment | None:
     return next((attachment for attachment in (report.attachments or []) if attachment.kind == kind), None)
+
+
+def _followup_attachment_links(
+    report: EmployeeFollowupReport,
+    *,
+    supporting_only: bool = False,
+) -> list[dict[str, str | int]]:
+    """Return safe, fully-qualified links used by the page and Word export."""
+    links = []
+    for attachment in report.attachments or []:
+        if supporting_only and attachment.kind != "SUPPORTING":
+            continue
+        links.append({
+            "id": int(attachment.id),
+            "name": attachment.original_name,
+            "kind": attachment.kind,
+            "mime_type": attachment.mime_type or "application/octet-stream",
+            "url": url_for(
+                "portal.followups_download_attachment",
+                report_id=report.id,
+                attachment_id=attachment.id,
+                inline=1,
+                _external=True,
+            ),
+        })
+    return links
 
 
 def _followup_org_unit_label(unit) -> str:
@@ -1345,6 +1401,8 @@ def followups_view(report_id: int):
         report_status_labels=REPORT_STATUS_LABELS,
         item_status_labels=ITEM_STATUS_LABELS,
         rating_labels=RATING_LABELS,
+        operational_sections=build_followup_operational_sections(report),
+        attachment_links=_followup_attachment_links(report),
     )
 
 
@@ -1614,11 +1672,12 @@ def followups_download_attachment(report_id: int, attachment_id: int):
     _require_followups_access()
     report, _ = _get_report_or_abort(report_id)
     attachment = EmployeeFollowupAttachment.query.filter_by(id=attachment_id, report_id=report.id).first_or_404()
+    inline = (request.args.get("inline") or "").strip().lower() in {"1", "true", "yes"}
     return send_from_directory(
         str(_report_storage_dir(report.id)),
         attachment.stored_name,
         mimetype=attachment.mime_type or None,
-        as_attachment=True,
+        as_attachment=not inline,
         download_name=attachment.original_name,
     )
 
@@ -1646,7 +1705,12 @@ def followups_export_docx(report_id: int):
     letterhead = _followup_attachment_for_kind(report, "LETTERHEAD")
     template_path = _report_storage_dir(report.id) / letterhead.stored_name if letterhead else None
     try:
-        document_bytes = build_followup_docx(report, template_path=template_path)
+        document_bytes = build_followup_docx(
+            report,
+            template_path=template_path,
+            attachment_links=_followup_attachment_links(report, supporting_only=True),
+            operational_sections=build_followup_operational_sections(report),
+        )
     except Exception:
         current_app.logger.exception("Failed to create followup docx for %s", report.id)
         flash("تعذر إنشاء ملف Word للتقرير.", "danger")
@@ -1670,9 +1734,19 @@ def followups_export_consolidated_docx():
         flash("لا توجد تقارير إنجاز معتمدة ضمن نطاقك حالياً.", "info")
         return redirect(url_for("portal.followups_dashboard"))
     try:
+        operational_sections_by_report = {
+            int(report.id): build_followup_operational_sections(report)
+            for report in reports
+        }
+        attachment_links_by_report = {
+            int(report.id): _followup_attachment_links(report, supporting_only=True)
+            for report in reports
+        }
         document_bytes = build_followups_bundle_docx(
             reports,
             organization_contexts=organization_contexts,
+            operational_sections_by_report=operational_sections_by_report,
+            attachment_links_by_report=attachment_links_by_report,
         )
     except Exception:
         current_app.logger.exception("Failed to create consolidated followup docx")
@@ -1696,9 +1770,14 @@ def followups_export_consolidated_pdf():
         flash("لا توجد تقارير إنجاز معتمدة ضمن نطاقك حالياً.", "info")
         return redirect(url_for("portal.followups_dashboard"))
     try:
+        operational_sections_by_report = {
+            int(report.id): build_followup_operational_sections(report)
+            for report in reports
+        }
         pdf_bytes = build_followups_bundle_pdf(
             reports,
             organization_contexts=organization_contexts,
+            operational_sections_by_report=operational_sections_by_report,
         )
     except Exception:
         current_app.logger.exception("Failed to create consolidated followup PDF")

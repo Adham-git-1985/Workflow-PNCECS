@@ -213,7 +213,69 @@ def _section_banner(text: str, width: float, style: ParagraphStyle) -> Table:
     return banner
 
 
-def _report_story(report, *, organization_label: str, number: int, doc_width: float, styles: dict):
+def _operational_story(sections, *, doc_width: float, styles: dict):
+    story = []
+    for section in sections or []:
+        story.append(_paragraph(section.get("title") or "تقرير تشغيلي", styles["heading"]))
+        story.append(_paragraph(section.get("subtitle") or "", styles["body"]))
+        metrics = [
+            [_paragraph("المؤشر", styles["header"]), _paragraph("القيمة", styles["header"])]
+        ]
+        metrics.extend([
+            [_paragraph(metric.get("label", "-"), styles["body"]), _paragraph(metric.get("value", "-"), styles["body"])]
+            for metric in section.get("metrics") or []
+        ])
+        if len(metrics) > 1:
+            story.append(_table(
+                metrics,
+                widths=[doc_width * 0.45, doc_width * 0.55],
+                header_style=styles["header"],
+                body_style=styles["body"],
+                repeat_rows=1,
+            ))
+        rows = list(section.get("rows") or [])
+        if section.get("key") == "consumables":
+            headers = ("التاريخ", "الموظف", "الصنف", "الصرف الصافي", "المستودع")
+            values = [
+                [row.get("date", "-"), row.get("employee", "-"), row.get("item", "-"), row.get("consumed_qty", 0), row.get("warehouse", "-")]
+                for row in rows
+            ]
+        elif section.get("key") in {"technology_requests", "maintenance_requests"}:
+            headers = ("التاريخ", "الموظف", "الصنف", "المطلوب", "المعتمد", "الحالة")
+            values = [
+                [row.get("date", "-"), row.get("employee", "-"), row.get("item", "-"), row.get("requested_qty", 0), row.get("approved_qty", 0), row.get("status", "-")]
+                for row in rows
+            ]
+        else:
+            headers = ("التاريخ", "الموظف", "المسار", "السائق", "الحالة", "الغرض")
+            values = [
+                [row.get("date", "-"), row.get("employee", "-"), row.get("route", "-"), row.get("driver", "-"), row.get("status", "-"), row.get("purpose", "-")]
+                for row in rows
+            ]
+        if values:
+            data = [[_paragraph(header, styles["header"]) for header in headers]]
+            data.extend([[_paragraph(value, styles["body"]) for value in row] for row in values])
+            story.append(_table(
+                data,
+                widths=[doc_width / len(headers)] * len(headers),
+                header_style=styles["header"],
+                body_style=styles["body"],
+                repeat_rows=1,
+            ))
+        else:
+            story.append(_paragraph("لا توجد حركات أو طلبات خلال فترة التقرير.", styles["body"]))
+    return story
+
+
+def _report_story(
+    report,
+    *,
+    organization_label: str,
+    number: int,
+    doc_width: float,
+    styles: dict,
+    operational_sections=None,
+):
     employee_name = _employee_name(report)
     story = [
         _section_banner(
@@ -299,6 +361,7 @@ def _report_story(report, *, organization_label: str, number: int, doc_width: fl
                 styles["body"],
             ),
         ])
+    story.extend(_operational_story(operational_sections, doc_width=doc_width, styles=styles))
     return story
 
 
@@ -315,6 +378,7 @@ def build_followups_bundle_pdf(
     *,
     organization_contexts: dict | None = None,
     title: str = "تقرير الإنجاز الموحّد",
+    operational_sections_by_report: dict | None = None,
 ) -> bytes:
     """Build a paginated Arabic PDF containing one separated section per employee."""
     reports = list(reports or [])
@@ -352,6 +416,7 @@ def build_followups_bundle_pdf(
                 number=index,
                 doc_width=document.width,
                 styles=styles,
+                operational_sections=(operational_sections_by_report or {}).get(getattr(report, "id", None)),
             )
         )
     document.build(

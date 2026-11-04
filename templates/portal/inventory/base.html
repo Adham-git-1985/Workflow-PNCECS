@@ -41,16 +41,42 @@
   .inventory-voucher-lines th:nth-child(6),
   .inventory-voucher-lines td:nth-child(6) { min-width: 360px; }
 
+  @media print {
+    .inventory-report-layout > .col-lg-3,
+    .inventory-report-page .no-print,
+    .inventory-report-page form {
+      display: none !important;
+    }
+
+    .inventory-report-layout > .inventory-report-page {
+      flex: 0 0 100%;
+      max-width: 100%;
+      width: 100%;
+    }
+
+    .inventory-report-page .card {
+      border: 0 !important;
+      box-shadow: none !important;
+    }
+
+    .inventory-report-page .table {
+      font-size: 11px;
+    }
+  }
+
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="row g-3">
+<div class="row g-3{% if print_view|default(false) %} inventory-report-layout{% endif %}">
   <div class="col-lg-3">
     {% include "portal/inventory/_sidebar.html" %}
   </div>
-  <div class="col-lg-9">
+  <div class="col-lg-9{% if print_view|default(false) %} inventory-report-page{% endif %}">
     {% block inv_content %}{% endblock %}
   </div>
 </div>
+{% if print_view|default(false) %}
+<script>window.addEventListener("load", function () { window.print(); });</script>
+{% endif %}
 {% endblock %}
