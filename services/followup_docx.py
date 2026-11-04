@@ -22,6 +22,30 @@ def is_valid_docx(path: str | Path) -> bool:
         return False
 
 
+def extract_docx_text(path: str | Path) -> str:
+    """Extract readable paragraphs and table rows from an uploaded DOCX."""
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+    from docx import Document
+
+    document = Document(str(path))
+    blocks: list[str] = []
+    body = document.element.body
+    for element in body.iterchildren():
+        if element.tag.endswith("}p"):
+            text = Paragraph(element, document).text.strip()
+            if text:
+                blocks.append(text)
+        elif element.tag.endswith("}tbl"):
+            table = Table(element, document)
+            for row in table.rows:
+                cells = [cell.text.strip() for cell in row.cells]
+                values = [value for value in cells if value]
+                if values:
+                    blocks.append(" | ".join(values))
+    return "\n".join(blocks).strip()
+
+
 def _set_rtl(
     paragraph,
     *,

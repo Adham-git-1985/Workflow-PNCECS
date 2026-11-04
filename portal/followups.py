@@ -58,6 +58,7 @@ from services.followup_docx import (
     DOCX_MIME,
     build_followup_docx,
     build_followups_bundle_docx,
+    extract_docx_text,
     is_valid_docx,
 )
 from services.followup_pdf import PDF_MIME, build_followups_bundle_pdf
@@ -717,27 +718,6 @@ def _extract_workflow_accomplishments(report: EmployeeFollowupReport) -> int:
     # employee accomplishments.  The exclusion is based on the workflow
     # request itself, not the audit actor: a delay path may be routed to this
     # employee or started by this employee for other users.
-    delay_audit_ids = {
-        int(audit_id)
-        for (audit_id,) in db.session.query(AuditLog.id)
-        .filter(AuditLog.request_id.isnot(None))
-        .filter(AuditLog.request_id.in_(delay_request_ids))
-        .filter(AuditLog.action.in_(WORKFLOW_ACCOMPLISHMENT_ACTIONS))
-        .filter(AuditLog.created_at >= start_at, AuditLog.created_at < end_at)
-        .all()
-        if audit_id
-    }
-    if delay_audit_ids:
-        # Also clean up rows imported by an older version when the employee
-        # presses "تحديث من مسار" on an existing report.
-        old_delay_items = EmployeeFollowupItem.query.filter(
-            EmployeeFollowupItem.report_id == report.id,
-            EmployeeFollowupItem.source_type == "WORKFLOW_AUDIT",
-            EmployeeFollowupItem.source_id.in_(delay_audit_ids),
-        ).all()
-        for old_item in old_delay_items:
-            db.session.delete(old_item)
-
     audit_logs = (
         AuditLog.query
         .filter(AuditLog.user_id == report.employee_user_id)
@@ -749,39 +729,121 @@ def _extract_workflow_accomplishments(report: EmployeeFollowupReport) -> int:
         .all()
     )
 
-    synchronized = 0
+    # A path can generate several audit rows while one request is being
+    # processed.  The follow-up report represents the path as one task, so
+    # group all of its steps by the workflow request instead of creating one
+    # report item per audit row.
+    grouped_logs: dict[int, list[AuditLog]] = {}
     for audit_log in audit_logs:
-        existing = EmployeeFollowupItem.query.filter_by(
-            report_id=report.id,
-            source_type="WORKFLOW_AUDIT",
-            source_id=audit_log.id,
-        ).first()
-        request_title = (getattr(audit_log.request, "title", None) or "").strip()
-        request_label = request_title or f"معاملة #{audit_log.request_id}"
-        action_label = WORKFLOW_ACCOMPLISHMENT_ACTIONS[audit_log.action]
-        details = []
+        request_id = int(audit_log.request_id)
+        grouped_logs.setdefault(request_id, []).append(audit_log)
+
+    request_ids = set(grouped_logs)
+    workflow_items = EmployeeFollowupItem.query.filter_by(
+        report_id=report.id,
+        source_type="WORKFLOW_AUDIT",
+    ).all()
+    legacy_audit_ids = {
+        int(item.source_id)
+        for item in workflow_items
+        if item.source_id is not None
+        and int(item.source_id) not in request_ids
+    }
+    legacy_request_by_audit_id = {}
+    if legacy_audit_ids:
+        legacy_request_by_audit_id = {
+            int(audit_log.id): int(audit_log.request_id)
+            for audit_log in AuditLog.query.filter(
+                AuditLog.id.in_(legacy_audit_ids),
+            ).all()
+            if audit_log.request_id is not None
+        }
+
+    # Reuse an existing item when possible so manual inclusion choices and
+    # manager notes survive the migration from the old per-step format.  Any
+    # duplicate legacy rows for the same request are removed.
+    existing_by_request: dict[int, EmployeeFollowupItem] = {}
+    for item in workflow_items:
+        source_id = int(item.source_id) if item.source_id is not None else None
+        request_id = (
+            source_id
+            if source_id in request_ids
+            else legacy_request_by_audit_id.get(source_id)
+        )
+        if request_id not in request_ids:
+            db.session.delete(item)
+            continue
+        current_item = existing_by_request.get(request_id)
+        if current_item is None:
+            existing_by_request[request_id] = item
+        elif source_id == request_id and current_item.source_id != request_id:
+            db.session.delete(current_item)
+            existing_by_request[request_id] = item
+        else:
+            db.session.delete(item)
+    db.session.flush()
+
+    synchronized = 0
+    for request_id, request_audit_logs in grouped_logs.items():
+        first_audit_log = request_audit_logs[0]
+        request_title = (getattr(first_audit_log.request, "title", None) or "").strip()
+        request_label = request_title or f"معاملة #{request_id}"
         request_description = (
-            getattr(audit_log.request, "description", None) or ""
+            getattr(first_audit_log.request, "description", None) or ""
         ).strip()
+        step_lines = []
+        for audit_log in request_audit_logs:
+            action_label = WORKFLOW_ACCOMPLISHMENT_ACTIONS.get(
+                audit_log.action,
+                audit_log.action or "تنفيذ خطوة",
+            )
+            step_date = (
+                audit_log.created_at.date().isoformat()
+                if audit_log.created_at
+                else "بدون تاريخ"
+            )
+            step_line = f"- {step_date}: {action_label}"
+            action_note = (audit_log.note or "").strip()
+            if action_note:
+                step_line += f"\n  ملاحظة الإجراء: {action_note}"
+            step_lines.append(step_line)
+        title_parts = [f"مسار: {request_label}", "الخطوات المنجزة:", *step_lines]
         if request_description:
-            details.append(f"تفاصيل المعاملة: {request_description}")
-        action_note = (audit_log.note or "").strip()
-        if action_note:
-            details.append(f"ملاحظة الإجراء: {action_note}")
-        title = "\n".join([f"{action_label}: {request_label}", *details])
+            title_parts.append(f"تفاصيل المعاملة: {request_description}")
+        title = "\n".join(title_parts)
+        completed_dates = [
+            audit_log.created_at.date()
+            for audit_log in request_audit_logs
+            if audit_log.created_at
+        ]
+        completed_on = max(completed_dates) if completed_dates else report.period_end
+        existing = existing_by_request.get(request_id)
         if existing:
-            if existing.title != title or existing.description is not None:
-                existing.title = title
-                existing.description = None
+            changed = any(
+                getattr(existing, field) != value
+                for field, value in {
+                    "source_id": request_id,
+                    "title": title,
+                    "description": request_description or None,
+                    "completed_on": completed_on,
+                    "status": "COMPLETED",
+                }.items()
+            )
+            existing.source_id = request_id
+            existing.title = title
+            existing.description = request_description or None
+            existing.completed_on = completed_on
+            existing.status = "COMPLETED"
+            if changed:
                 synchronized += 1
             continue
         db.session.add(EmployeeFollowupItem(
             report_id=report.id,
             source_type="WORKFLOW_AUDIT",
-            source_id=audit_log.id,
+            source_id=request_id,
             title=title,
-            description=None,
-            completed_on=audit_log.created_at.date(),
+            description=request_description or None,
+            completed_on=completed_on,
             status="COMPLETED",
             is_included=True,
         ))
@@ -830,6 +892,35 @@ def _save_attachment(report: EmployeeFollowupReport, upload, kind: str) -> Emplo
         except OSError:
             pass
         raise
+
+
+def _sync_report_docx_item(
+    report: EmployeeFollowupReport,
+    attachment: EmployeeFollowupAttachment,
+    path: Path,
+) -> bool:
+    """Turn the uploaded revised report into one completed report item."""
+    extracted_text = extract_docx_text(path)
+    if not extracted_text:
+        return False
+
+    for old_item in EmployeeFollowupItem.query.filter_by(
+        report_id=report.id,
+        source_type="REPORT_DOCX",
+    ).all():
+        db.session.delete(old_item)
+
+    db.session.add(EmployeeFollowupItem(
+        report_id=report.id,
+        source_type="REPORT_DOCX",
+        source_id=attachment.id,
+        title=f"تفريغ نسخة التقرير المعدلة:\n{extracted_text}",
+        description=f"تم تفريغ الملف المرفوع: {attachment.original_name}",
+        completed_on=report.period_end,
+        status="COMPLETED",
+        is_included=True,
+    ))
+    return True
 
 
 def _notify(
@@ -1998,6 +2089,7 @@ def followups_upload_attachments(report_id: int):
         abort(403)
     saved_paths: list[Path] = []
     replaced_paths: list[Path] = []
+    report_docx_extracted = False
     try:
         uploads = (
             (request.files.get("letterhead_docx"), "LETTERHEAD"),
@@ -2016,6 +2108,16 @@ def followups_upload_attachments(report_id: int):
                 attachment = _save_attachment(report, upload, kind)
                 if attachment:
                     saved_paths.append(_report_storage_dir(report.id) / attachment.stored_name)
+                    if kind == "REPORT_DOCX":
+                        # The attachment remains the original revised Word
+                        # file, while its readable contents also become one
+                        # completed item in the report.
+                        db.session.flush()
+                        report_docx_extracted = _sync_report_docx_item(
+                            report,
+                            attachment,
+                            saved_paths[-1],
+                        )
                     for previous_attachment in previous_attachments:
                         replaced_paths.append(
                             _report_storage_dir(report.id) / previous_attachment.stored_name
@@ -2040,7 +2142,12 @@ def followups_upload_attachments(report_id: int):
                         "Failed to remove replaced followup attachment %s",
                         replaced_path,
                     )
-            flash(f"تم رفع {added} مرفق.", "success")
+            message = f"تم رفع {added} مرفق."
+            if report_docx_extracted:
+                message += " وتم تفريغ النسخة المعدلة داخل مهمات التقرير."
+            elif request.files.get("report_docx"):
+                message += " لم يتضمن ملف DOCX نصاً قابلاً للتفريغ."
+            flash(message, "success")
     except ValueError:
         db.session.rollback()
         for saved_path in saved_paths:

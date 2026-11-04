@@ -41,6 +41,10 @@
     background: transparent;
   }
 
+  .followup-actions .action-buttons > * {
+    flex: 1 1 auto;
+  }
+
   @media print {
     .followup-report .btn,
     .followup-report form,
@@ -128,18 +132,40 @@
   {% endif %}
 
   {% if can_edit %}
-  <form method="post" action="{{ url_for('portal.followups_update', report_id=report.id) }}">
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+      <h2 class="h6 mb-3">إضافة إنجاز يدوي</h2>
+      <form method="post" action="{{ url_for('portal.followups_add_item', report_id=report.id) }}" class="row g-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-12">
+          <label class="form-label" for="newAchievementTitle">الإنجاز</label>
+          <textarea class="form-control" id="newAchievementTitle" name="title" required rows="5" placeholder="اكتب الإنجاز بالتفصيل"></textarea>
+        </div>
+        <div class="col-md-5"><input class="form-control" name="completed_on" type="date"></div>
+        <div class="col-md-5"><select class="form-select" name="status">{% for key, label in item_status_labels.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
+        <div class="col-md-2"><button class="btn btn-outline-primary w-100">إضافة</button></div>
+      </form>
+    </div>
+  </div>
+
+  <form id="followup-update-{{ report.id }}" method="post" action="{{ url_for('portal.followups_update', report_id=report.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="operational_visibility_form" value="1">
     <div class="row g-4">
       <div class="col-xl-8">
         <div class="card border-0 shadow-sm mb-4">
-          <div class="card-header bg-white"><h2 class="h6 mb-0">الإنجازات</h2></div>
+          <div class="card-header bg-white d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <h2 class="h6 mb-0">مهمات على مسار</h2>
+            <div class="form-check mb-0">
+              <input class="form-check-input" id="include-all-items-{{ report.id }}" type="checkbox">
+              <label class="form-check-label" for="include-all-items-{{ report.id }}">تحديد/إلغاء تحديد الكل</label>
+            </div>
+          </div>
           <div class="table-responsive">
             <table class="table table-hover align-middle mb-0">
               <thead class="table-light">
                 <tr>
-                  <th>الإنجاز</th>
+                  <th>المهمة</th>
                   <th style="width: 170px">التاريخ</th>
                   <th style="width: 180px">الحالة</th>
                   <th style="width: 90px">إدراج</th>
@@ -150,8 +176,8 @@
             {% for item in report.items %}
                 <tr>
                   <td>
-                    <label class="visually-hidden" for="title_{{ item.id }}">الإنجاز</label>
-                    <textarea id="title_{{ item.id }}" class="form-control" name="title_{{ item.id }}" rows="5" placeholder="اكتب الإنجاز بالتفصيل">{{ item.title }}</textarea>
+                    <label class="visually-hidden" for="title_{{ item.id }}">المهمة</label>
+                    <textarea id="title_{{ item.id }}" class="form-control" name="title_{{ item.id }}" rows="5" placeholder="اكتب المهمة بالتفصيل">{{ item.title }}</textarea>
                     {% if item.source_type == 'MEETING_TASK' and item.status != 'COMPLETED' %}<div class="small text-warning-emphasis mt-1"><i class="bi bi-calendar-x"></i> اجتماع/مهمة متأخرة عن موعدها</div>{% endif %}
                     {% if item.ai_suggestion %}
                     <div class="alert alert-info py-2 mt-2 mb-0">
@@ -172,7 +198,7 @@
                   <td><div class="form-check"><input class="form-check-input" id="included_{{ item.id }}" type="checkbox" name="included_{{ item.id }}" value="1" {% if item.is_included %}checked{% endif %}><label class="form-check-label" for="included_{{ item.id }}">إدراج</label></div></td>
                   <td><button class="btn btn-sm btn-outline-danger" type="submit" form="delete-item-{{ item.id }}" title="{% if item.source_type in ['MEETING_TASK', 'MEETING'] %}إزالة الاجتماع من التقرير{% else %}حذف الإنجاز{% endif %}"><i class="bi bi-trash"></i><span class="visually-hidden">{% if item.source_type in ['MEETING_TASK', 'MEETING'] %}إزالة من التقرير{% else %}حذف{% endif %}</span></button></td>
                 </tr>
-            {% else %}<tr><td colspan="5" class="p-4 text-muted">لا توجد بنود بعد. أضف إنجازاً يدوياً أدناه.</td></tr>{% endfor %}
+            {% else %}<tr><td colspan="5" class="p-4 text-muted">لا توجد بنود بعد. أضف إنجازاً يدوياً أعلاه.</td></tr>{% endfor %}
               </tbody>
             </table>
           </div>
@@ -208,22 +234,6 @@
           </div>
         </div>
         {% endif %}
-        <div class="card border-0 shadow-sm mb-4">
-          <div class="card-body">
-            <h2 class="h6">إجراءات التقرير</h2>
-            <p class="small text-muted">يعيد المساعد صياغة كل إنجاز باختصار، ويُنشئ ملخصاً عاماً في سطر أو سطرين يوضح ما حدث فعلياً، ثم يعرضه للمراجعة.</p>
-            <div class="d-grid gap-2">
-              <button class="btn btn-outline-primary" type="submit" name="action" value="save"><i class="bi bi-save"></i> حفظ مسودة</button>
-              <button class="btn btn-outline-secondary" type="submit" form="import-workflow-{{ report.id }}"><i class="bi bi-arrow-repeat"></i> تحديث من مسار</button>
-              <button class="btn btn-outline-info" type="submit" name="action" value="ai"><i class="bi bi-stars"></i> إعادة الصياغة المختصرة</button>
-              {% if has_ai_suggestions %}
-              <button class="btn btn-info" type="submit" name="action" value="apply_ai" onclick="return confirm('سيتم استبدال نصوص الإنجازات بالصياغات المقترحة بعد تعديلاتك. هل تريد المتابعة؟');"><i class="bi bi-box-arrow-in-down"></i> اعتماد الصياغات على الإنجازات</button>
-              <div class="small text-muted">يمكنك تعديل كل صياغة مقترحة في جدول الإنجازات قبل الاعتماد.</div>
-              {% endif %}
-              <button class="btn btn-success" type="submit" name="action" value="submit"><i class="bi bi-send"></i> إرسال للمدير</button>
-            </div>
-          </div>
-        </div>
         <div class="card border-0 shadow-sm"><div class="card-body"><h2 class="h6">ملفات التقرير</h2><div class="small text-muted">الملفات الداعمة تظهر كرابط فتح مباشر ويمكن إدراج روابطها في Word المولّد.</div>{% for attachment in attachment_links %}<div class="d-flex justify-content-between gap-2 align-items-center border-bottom py-2"><span class="text-truncate"><i class="bi bi-paperclip"></i> {{ attachment.name }}</span><span class="d-flex gap-1"><a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener" href="{{ attachment.url }}">فتح</a><a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.followups_download_attachment', report_id=report.id, attachment_id=attachment.id) }}">تنزيل</a></span></div>{% else %}<div class="small text-muted mt-2">لا توجد مرفقات.</div>{% endfor %}</div></div>
       </div>
     </div>
@@ -231,21 +241,56 @@
   <form id="import-workflow-{{ report.id }}" method="post" action="{{ url_for('portal.followups_import_workflow_accomplishments', report_id=report.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>
   {% for item in report.items %}<form id="delete-item-{{ item.id }}" method="post" action="{{ url_for('portal.followups_delete_item', report_id=report.id, item_id=item.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>{% endfor %}
 
-  <div class="card border-0 shadow-sm mt-4"><div class="card-body"><h2 class="h6 mb-3">إضافة إنجاز يدوي</h2><form method="post" action="{{ url_for('portal.followups_add_item', report_id=report.id) }}" class="row g-2"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="col-12"><label class="form-label" for="newAchievementTitle">الإنجاز</label><textarea class="form-control" id="newAchievementTitle" name="title" required rows="5" placeholder="اكتب الإنجاز بالتفصيل"></textarea></div><div class="col-md-5"><input class="form-control" name="completed_on" type="date"></div><div class="col-md-5"><select class="form-select" name="status">{% for key, label in item_status_labels.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div><div class="col-md-2"><button class="btn btn-outline-primary w-100">إضافة</button></div></form></div></div>
-  <div class="card border-0 shadow-sm mt-4"><div class="card-body"><h2 class="h6 mb-3">رفع ترويسة ومرفقات</h2><form method="post" action="{{ url_for('portal.followups_upload_attachments', report_id=report.id) }}" enctype="multipart/form-data" class="row g-3"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="col-md-4"><label class="form-label">ترويسة Word (DOCX)</label><input class="form-control" type="file" name="letterhead_docx" accept=".docx"></div><div class="col-md-4"><label class="form-label">نسخة التقرير المعدلة (DOCX)</label><input class="form-control" type="file" name="report_docx" accept=".docx"></div><div class="col-md-4"><label class="form-label">مرفقات داعمة</label><input class="form-control" type="file" name="supporting_files" multiple></div><div class="col-12 text-start"><button class="btn btn-outline-primary">رفع الملفات</button></div></form></div></div>
+  <div class="card border-0 shadow-sm mt-4"><div class="card-body"><h2 class="h6 mb-3">رفع ترويسة ومرفقات</h2><p class="small text-muted">عند رفع نسخة التقرير المعدلة (DOCX)، يتم تفريغ محتواها تلقائياً كبند منجز داخل «مهمات على مسار».</p><form method="post" action="{{ url_for('portal.followups_upload_attachments', report_id=report.id) }}" enctype="multipart/form-data" class="row g-3"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="col-md-4"><label class="form-label">ترويسة Word (DOCX)</label><input class="form-control" type="file" name="letterhead_docx" accept=".docx"></div><div class="col-md-4"><label class="form-label">نسخة التقرير المعدلة (DOCX)</label><input class="form-control" type="file" name="report_docx" accept=".docx"></div><div class="col-md-4"><label class="form-label">مرفقات داعمة</label><input class="form-control" type="file" name="supporting_files" multiple></div><div class="col-12 text-start"><button class="btn btn-outline-primary">رفع الملفات</button></div></form></div></div>
+
+  <section class="card border-0 shadow-sm mt-4 followup-actions" aria-labelledby="followup-actions-title-{{ report.id }}">
+    <div class="card-body">
+      <h2 class="h6 mb-1" id="followup-actions-title-{{ report.id }}">إجراءات التقرير</h2>
+      <p class="small text-muted">راجع البنود ثم اختر الإجراء المطلوب.</p>
+      <div class="action-buttons d-flex flex-wrap gap-2">
+        <button class="btn btn-outline-primary" type="submit" form="followup-update-{{ report.id }}" name="action" value="save"><i class="bi bi-save"></i> حفظ مسودة</button>
+        <button class="btn btn-outline-secondary" type="submit" form="import-workflow-{{ report.id }}"><i class="bi bi-arrow-repeat"></i> تحديث من مسار</button>
+        <button class="btn btn-outline-info" type="submit" form="followup-update-{{ report.id }}" name="action" value="ai"><i class="bi bi-stars"></i> إعادة الصياغة المختصرة</button>
+        {% if has_ai_suggestions %}
+        <button class="btn btn-info" type="submit" form="followup-update-{{ report.id }}" name="action" value="apply_ai" onclick="return confirm('سيتم استبدال نصوص الإنجازات بالصياغات المقترحة بعد تعديلاتك. هل تريد المتابعة؟');"><i class="bi bi-box-arrow-in-down"></i> اعتماد الصياغات على المهام</button>
+        {% endif %}
+        <button class="btn btn-success" type="submit" form="followup-update-{{ report.id }}" name="action" value="submit"><i class="bi bi-send"></i> إرسال للمدير</button>
+      </div>
+      {% if has_ai_suggestions %}<div class="small text-muted mt-2">يمكنك تعديل كل صياغة مقترحة في جدول المهام قبل الاعتماد.</div>{% endif %}
+    </div>
+  </section>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      const toggle = document.getElementById('include-all-items-{{ report.id }}');
+      if (!toggle) return;
+      const inputs = Array.from(document.querySelectorAll('input[name^="included_"]'));
+      const syncToggle = function () {
+        const checkedCount = inputs.filter((input) => input.checked).length;
+        toggle.checked = inputs.length > 0 && checkedCount === inputs.length;
+        toggle.indeterminate = checkedCount > 0 && checkedCount < inputs.length;
+      };
+      toggle.addEventListener('change', function () {
+        inputs.forEach((input) => { input.checked = toggle.checked; });
+        toggle.indeterminate = false;
+      });
+      inputs.forEach((input) => input.addEventListener('change', syncToggle));
+      syncToggle();
+    });
+  </script>
   {% elif can_review %}
   <form method="post" action="{{ url_for('portal.followups_review', report_id=report.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="card border-0 shadow-sm mb-4"><div class="card-header bg-white"><h2 class="h6 mb-0">الإنجازات</h2></div><div class="table-responsive"><table class="table mb-0 align-middle"><thead><tr><th>الإنجاز</th><th>التاريخ</th><th>الحالة</th><th>ملاحظة المدير</th><th>التقييم</th></tr></thead><tbody>{% for item in report.items if item.is_included %}<tr><td><strong>{{ item.title }}</strong>{% if item.source_type == 'MEETING_TASK' and item.status != 'COMPLETED' %}<div class="small text-warning-emphasis mt-1"><i class="bi bi-calendar-x"></i> اجتماع/مهمة متأخرة عن موعدها</div>{% endif %}</td><td>{{ item.completed_on or '-' }}</td><td>{{ item_status_labels[item.status] }}</td><td><input class="form-control form-control-sm" name="manager_comment_{{ item.id }}" value="{{ item.manager_comment or '' }}"></td><td><select class="form-select form-select-sm" name="manager_rating_{{ item.id }}"><option value="">-</option>{% for key, label in rating_labels.items() %}<option value="{{ key }}" {% if item.manager_rating == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted">لا توجد بنود مدرجة.</td></tr>{% endfor %}</tbody></table></div></div>
+    <div class="card border-0 shadow-sm mb-4"><div class="card-header bg-white"><h2 class="h6 mb-0">مهمات على مسار</h2></div><div class="table-responsive"><table class="table mb-0 align-middle"><thead><tr><th>المهمة</th><th>التاريخ</th><th>الحالة</th><th>ملاحظة المدير</th><th>التقييم</th></tr></thead><tbody>{% for item in report.items if item.is_included %}<tr><td><strong>{{ item.title }}</strong>{% if item.source_type == 'MEETING_TASK' and item.status != 'COMPLETED' %}<div class="small text-warning-emphasis mt-1"><i class="bi bi-calendar-x"></i> اجتماع/مهمة متأخرة عن موعدها</div>{% endif %}</td><td>{{ item.completed_on or '-' }}</td><td>{{ item_status_labels[item.status] }}</td><td><input class="form-control form-control-sm" name="manager_comment_{{ item.id }}" value="{{ item.manager_comment or '' }}"></td><td><select class="form-select form-select-sm" name="manager_rating_{{ item.id }}"><option value="">-</option>{% for key, label in rating_labels.items() %}<option value="{{ key }}" {% if item.manager_rating == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted">لا توجد بنود مدرجة.</td></tr>{% endfor %}</tbody></table></div></div>
     <div class="row g-4"><div class="col-lg-7"><div class="card border-0 shadow-sm h-100"><div class="card-body"><h2 class="h6">تفاصيل الموظف</h2><p><strong>ملخص الإنجازات:</strong><br>{{ report.employee_summary or report.ai_summary or '-' }}</p><p><strong>التحديات:</strong><br>{{ report.challenges or '-' }}</p><p class="mb-0"><strong>المطلوب من المدير:</strong><br>{{ report.manager_request or '-' }}</p></div></div></div><div class="col-lg-5"><div class="card border-0 shadow-sm h-100"><div class="card-body"><h2 class="h6">{% if is_super_admin_review %}اعتماد السوبر أدمن{% else %}مراجعة المدير{% endif %}</h2>{% if is_super_admin_review %}<p class="small text-muted">يمكن اعتماد التقرير مباشرة، سواء وُجد اعتماد مدير أم لا.</p>{% endif %}<div class="mb-3"><label class="form-label">التقييم المختصر</label><select class="form-select" name="manager_rating"><option value="">-</option>{% for key, label in rating_labels.items() %}<option value="{{ key }}" {% if report.manager_rating == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div><div class="mb-3"><label class="form-label">{% if is_super_admin_review %}ملاحظات الاعتماد{% else %}ملاحظات المدير{% endif %}</label><textarea class="form-control" name="manager_comment" rows="4">{{ report.manager_comment or '' }}</textarea></div><div class="d-flex gap-2"><button class="btn btn-success" name="action" value="review"><i class="bi bi-patch-check"></i> {% if is_super_admin_review %}اعتماد التقرير{% else %}اعتماد إلكتروني{% endif %}</button><button class="btn btn-outline-warning" name="action" value="return"><i class="bi bi-arrow-return-right"></i> إعادة للتعديل</button></div></div></div></div></div>
   </form>
   {% else %}
   {% if access_level == 'secretary_general' %}<div class="alert alert-success"><i class="bi bi-eye"></i> هذا التقرير معتمد ومتاح للأمين العام للاطلاع.</div>{% endif %}
   <div class="card border-0 shadow-sm mb-4">
-    <div class="card-header bg-white"><h2 class="h6 mb-0">الإنجازات</h2></div>
+    <div class="card-header bg-white"><h2 class="h6 mb-0">مهمات على مسار</h2></div>
     <div class="table-responsive">
-      <table class="table table-hover align-middle mb-0">
-        <thead class="table-light"><tr><th>الإنجاز</th><th style="width: 170px">التاريخ</th></tr></thead>
+       <table class="table table-hover align-middle mb-0">
+        <thead class="table-light"><tr><th>المهمة</th><th style="width: 170px">التاريخ</th></tr></thead>
         <tbody>
           {% for item in report.items if item.is_included %}
           <tr><td><strong>{{ item.title }}</strong>{% if item.source_type == 'MEETING_TASK' and item.status != 'COMPLETED' %}<div class="small text-warning-emphasis mt-1"><i class="bi bi-calendar-x"></i> اجتماع/مهمة متأخرة عن موعدها</div>{% endif %}</td><td>{{ item.completed_on or '-' }}</td></tr>

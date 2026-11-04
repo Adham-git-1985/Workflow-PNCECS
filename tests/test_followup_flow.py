@@ -471,6 +471,12 @@ class FollowupFlowTests(unittest.TestCase):
         self.assertEqual(view.status_code, 200)
         self.assertIn(b'<textarea id="title_', view.data)
         self.assertIn(b'name="title" required rows="5"', view.data)
+        self.assertIn(b'include-all-items-', view.data)
+        self.assertIn("مهمات على مسار".encode(), view.data)
+        self.assertLess(
+            view.data.index("إضافة إنجاز يدوي".encode()),
+            view.data.index("مهمات على مسار".encode()),
+        )
         with self.app.app_context():
             item = EmployeeFollowupReport.query.get(report_id).items[0]
             self.assertEqual(item.title, long_title.strip())
@@ -771,7 +777,7 @@ class FollowupFlowTests(unittest.TestCase):
             items = EmployeeFollowupItem.query.filter_by(report_id=report_id).all()
             self.assertEqual(imported, 1)
             self.assertEqual(len(items), 1)
-            self.assertEqual(items[0].source_id, normal_audit.id)
+            self.assertEqual(items[0].source_id, normal_request.id)
 
     def test_word_attachment_link_returns_the_file_without_report_page_redirect(self):
         with self.app.app_context():
@@ -840,6 +846,13 @@ class FollowupFlowTests(unittest.TestCase):
                 / str(report_id) / first_attachment.stored_name
             )
             self.assertTrue(first_path.is_file())
+            extracted_items = [
+                item
+                for item in EmployeeFollowupReport.query.get(report_id).items
+                if item.source_type == "REPORT_DOCX"
+            ]
+            self.assertEqual(len(extracted_items), 1)
+            self.assertIn("first version", extracted_items[0].title)
 
         response = self.employee_client.post(
             f"/portal/followups/{report_id}/attachments",
@@ -854,6 +867,13 @@ class FollowupFlowTests(unittest.TestCase):
             self.assertEqual(len(report_attachments), 1)
             self.assertEqual(report_attachments[0].original_name, "second.docx")
             self.assertFalse(first_path.exists())
+            extracted_items = [
+                item
+                for item in EmployeeFollowupReport.query.get(report_id).items
+                if item.source_type == "REPORT_DOCX"
+            ]
+            self.assertEqual(len(extracted_items), 1)
+            self.assertIn("second version", extracted_items[0].title)
 
         # Saving the draft after uploading the revised file must not generate
         # a different document or replace the employee-approved DOCX.
@@ -1004,6 +1024,14 @@ class FollowupFlowTests(unittest.TestCase):
                 note="ملاحظة الإجراء من مسار",
                 created_at=datetime(2026, 9, 3, 10, 30),
             ))
+            db.session.add(AuditLog(
+                request_id=workflow_request.id,
+                user_id=self.employee_id,
+                action="WORKFLOW_COMPLETED",
+                note="اكتملت المعاملة من مسار",
+                created_at=datetime(2026, 9, 4, 10, 30),
+            ))
+            workflow_request_id = workflow_request.id
             db.session.commit()
 
         response = self.employee_client.post(
@@ -1018,14 +1046,17 @@ class FollowupFlowTests(unittest.TestCase):
                 item for item in report.items if item.source_type == "WORKFLOW_AUDIT"
             )
             self.assertIn("متابعة واعتماد خطوة", imported_item.title)
+            self.assertIn("إكمال مسار معاملة", imported_item.title)
             self.assertIn("معاملة لاختبار الاستيراد", imported_item.title)
             self.assertIn("تفاصيل المعاملة من مسار", imported_item.title)
             self.assertIn("ملاحظة الإجراء من مسار", imported_item.title)
-            self.assertIsNone(imported_item.description)
-            self.assertEqual(imported_item.completed_on.isoformat(), "2026-09-03")
+            self.assertIn("اكتملت المعاملة من مسار", imported_item.title)
+            self.assertEqual(imported_item.source_id, workflow_request_id)
+            self.assertEqual(imported_item.description, "تفاصيل المعاملة من مسار")
+            self.assertEqual(imported_item.completed_on.isoformat(), "2026-09-04")
 
         with self.app.app_context():
-            audit_log = AuditLog.query.one()
+            audit_log = AuditLog.query.filter_by(action="STEP_APPROVED").one()
             audit_log.note = "ملاحظة محدّثة من مسار"
             db.session.commit()
 
