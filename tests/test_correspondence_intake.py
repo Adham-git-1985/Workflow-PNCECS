@@ -721,6 +721,9 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         self.assertIn("org_node_approver_names_map.get", request_template)
         self.assertIn("grid-template-columns:max-content minmax(0, 1fr)", portal_layout)
         self.assertIn("portal-masar-return", portal_layout)
+        self.assertIn("{% set masar_return_url = url_for('workflow.inbox') %}", portal_layout)
+        self.assertIn('href="{{ masar_return_url }}"', portal_layout)
+        self.assertIn('href="{{ masar_home_url }}"', portal_layout)
 
     def test_dynamic_workflow_uses_compact_audit_and_follow_up_status_wording(self):
         project_root = Path(__file__).resolve().parents[1]
