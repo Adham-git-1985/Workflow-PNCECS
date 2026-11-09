@@ -983,6 +983,31 @@ class WorkflowRequest(db.Model):
     source_corr_kind = db.Column(db.String(10), nullable=True, index=True)
     source_corr_id = db.Column(db.Integer, nullable=True, index=True)
 
+    # A correspondence can receive more replies after its original workflow
+    # has finished (or while it is still in progress).  Each reply starts a
+    # new workflow request, but the requests remain grouped under the same
+    # parent path so the UI can present them as coloured cycles/tabs without
+    # reopening or resetting an older cycle.
+    parent_request_id = db.Column(
+        db.Integer,
+        db.ForeignKey("workflow_request.id"),
+        nullable=True,
+        index=True,
+    )
+    cycle_number = db.Column(db.Integer, nullable=False, default=1, index=True)
+    cycle_color = db.Column(db.String(30), nullable=True)
+    cycle_opened_at = db.Column(db.DateTime, nullable=True, index=True)
+
+    parent_request = db.relationship(
+        "WorkflowRequest",
+        remote_side=[id],
+        backref=db.backref(
+            "child_cycles",
+            lazy="selectin",
+            order_by="WorkflowRequest.cycle_number",
+        ),
+    )
+
     # Request Type (optional)
     request_type_id = db.Column(db.Integer, db.ForeignKey("request_types.id"), nullable=True)
     request_type = db.relationship("RequestType")

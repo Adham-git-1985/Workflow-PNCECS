@@ -145,6 +145,7 @@
               <option value="{{ t.id }}" {% if item.workflow_template_id == t.id %}selected{% endif %}>{{ t.name }}</option>
             {% endfor %}
           </select>
+          {% include 'portal/corr/_workflow_cycle_picker.html' %}
           <div>
             <label class="form-label small mb-1" for="outboundWorkflowTarget">الإدارة العامة المعنية بالمسار</label>
             <select class="form-select form-select-sm" name="workflow_target" id="outboundWorkflowTarget" data-searchable="1" data-searchable-mode="bounded">

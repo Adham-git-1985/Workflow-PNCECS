@@ -240,6 +240,7 @@ from models import (
     ArchivedFile,
     RequestAttachment,
     WorkflowRequest,
+    WorkflowRequestView,
     UserCalendarEvent,
     WorkflowInstance,
     WorkflowInstanceStep,
@@ -355,6 +356,7 @@ from workflow.engine import (
     decide_step,
     resolve_template_parallel_candidate_user_ids,
     resolve_template_participant_user_ids,
+    resolve_step_approver_user_ids,
     start_workflow_for_request,
 )
 from workflow.template_access import (
@@ -379,6 +381,12 @@ from services.correspondence_workflow import (
     correspondence_target_user_ids,
     filter_correspondence_notification_user_ids,
     sync_correspondence_from_workflow,
+)
+from services.workflow_cycles import (
+    cycle_color,
+    cycle_root,
+    cycles_for,
+    next_cycle_number,
 )
 from services.circulars import (
     CIRCULAR_SCOPE_ALL,
@@ -2317,6 +2325,146 @@ def _ensure_corr_card_archived(kind: str, label: str, item) -> ArchivedFile | No
         return None
 
 
+def _corr_cycle_parent_request(parent_request_id, *, item=None):
+    """Resolve and authorize a selected old workflow path.
+
+    The selected row may be any cycle in the group. New cycles always point
+    to the group's root request, so selecting an open or closed cycle never
+    mutates that older request.
+    """
+    try:
+        selected_id = int(parent_request_id)
+    except (TypeError, ValueError):
+        return None
+    if selected_id <= 0:
+        return None
+
+    selected = db.session.get(WorkflowRequest, selected_id)
+    if not selected:
+        return None
+
+    source_kind = (getattr(selected, "source_corr_kind", None) or "").strip().upper()
+    source_id = getattr(selected, "source_corr_id", None)
+    source = None
+    if source_kind == "IN" and source_id:
+        source = db.session.get(InboundMail, int(source_id))
+    elif source_kind == "OUT" and source_id:
+        source = db.session.get(OutboundMail, int(source_id))
+    if source is None:
+        return None
+
+    # Do not allow a search result to become a side channel around the
+    # correspondence confidentiality rules.
+    try:
+        if not _corr_can_access(source):
+            return None
+    except Exception:
+        return None
+
+    return cycle_root(selected) or selected
+
+
+def _corr_cycle_participant_ids(root_request_id: int) -> set[int]:
+    """Collect users who participated in any cycle of a path group."""
+    try:
+        root = db.session.get(WorkflowRequest, int(root_request_id))
+        cycle_rows = cycles_for(root)
+    except (TypeError, ValueError):
+        return set()
+    if not cycle_rows:
+        return set()
+
+    request_ids = [int(row.id) for row in cycle_rows if getattr(row, "id", None)]
+    participant_ids = {
+        int(row.requester_id)
+        for row in cycle_rows
+        if getattr(row, "requester_id", None)
+    }
+
+    source_pairs = {
+        ((row.source_corr_kind or "").strip().upper(), int(row.source_corr_id))
+        for row in cycle_rows
+        if getattr(row, "source_corr_kind", None) and getattr(row, "source_corr_id", None)
+    }
+    for kind, source_id in source_pairs:
+        source = (
+            db.session.get(InboundMail if kind == "IN" else OutboundMail, source_id)
+            if kind in {"IN", "OUT"}
+            else None
+        )
+        if source and getattr(source, "current_assignee_id", None):
+            participant_ids.add(int(source.current_assignee_id))
+
+    instances = WorkflowInstance.query.filter(WorkflowInstance.request_id.in_(request_ids)).all()
+    instance_ids = [int(row.id) for row in instances if getattr(row, "id", None)]
+    participant_ids.update(
+        int(row.last_step_actor_id)
+        for row in instances
+        if getattr(row, "last_step_actor_id", None)
+    )
+    if instance_ids:
+        steps = WorkflowInstanceStep.query.filter(
+            WorkflowInstanceStep.instance_id.in_(instance_ids)
+        ).all()
+        participant_ids.update(
+            int(user_id)
+            for step in steps
+            for user_id in (
+                getattr(step, "approver_user_id", None),
+                getattr(step, "decided_by_id", None),
+            )
+            if user_id
+        )
+        for step in steps:
+            if (getattr(step, "mode", "") or "").strip().upper() == "PARALLEL_SYNC":
+                continue
+            try:
+                participant_ids.update(resolve_step_approver_user_ids(step))
+            except Exception:
+                pass
+        participant_ids.update(
+            int(task.assignee_user_id)
+            for task in WorkflowStepTask.query.filter(
+                WorkflowStepTask.instance_id.in_(instance_ids)
+            ).all()
+            if getattr(task, "assignee_user_id", None)
+        )
+    try:
+        participant_ids.update(
+            int(user_id)
+            for (user_id,) in db.session.query(WorkflowRequestView.user_id)
+            .filter(WorkflowRequestView.request_id.in_(request_ids))
+            .all()
+            if user_id
+        )
+    except Exception:
+        pass
+    try:
+        mention_logs = AuditLog.query.filter(
+            AuditLog.request_id.in_(request_ids),
+            AuditLog.action.in_(
+                ("WORKFLOW_MENTION_ACCESS", "WORKFLOW_MENTION_ACCESS_REVOKED")
+            ),
+            AuditLog.target_type == "USER",
+            AuditLog.target_id.isnot(None),
+        ).order_by(AuditLog.created_at.asc(), AuditLog.id.asc()).all()
+        active_mentions = set()
+        for log in mention_logs:
+            user_id = int(log.target_id)
+            if log.action == "WORKFLOW_MENTION_ACCESS":
+                active_mentions.add(user_id)
+            else:
+                active_mentions.discard(user_id)
+        participant_ids.update(
+            int(user_id)
+            for user_id in active_mentions
+            if user_id
+        )
+    except Exception:
+        pass
+    return participant_ids
+
+
 def _start_corr_workflow(
     kind: str,
     item,
@@ -2325,6 +2473,7 @@ def _start_corr_workflow(
     *,
     auto_commit: bool = True,
     initial_parallel_user_ids=None,
+    parent_request_id: str | int | None = None,
 ):
     existing = (
         WorkflowRequest.query
@@ -2336,6 +2485,31 @@ def _start_corr_workflow(
     if existing:
         flash(f"المعاملة مرتبطة بالفعل بمسار نشط رقم #{existing.id}.", "info")
         return existing
+
+    parent_request = None
+    cycle_number = 1
+    cycle_participant_ids: set[int] = set()
+    if parent_request_id:
+        parent_request = _corr_cycle_parent_request(parent_request_id, item=item)
+        if not parent_request:
+            flash("المسار القديم المختار غير متاح أو غير موجود.", "danger")
+            return None
+        cycle_number = next_cycle_number(int(parent_request.id))
+        cycle_participant_ids = _corr_cycle_participant_ids(int(parent_request.id))
+
+        # A cycle uses the same template as the selected path. This starts a
+        # fresh run of the same process without reopening or resetting the
+        # older request.
+        parent_instance = WorkflowInstance.query.filter_by(
+            request_id=parent_request.id
+        ).first()
+        inherited_template_id = getattr(parent_instance, "template_id", None)
+        if inherited_template_id and not str(template_id or "").strip():
+            if WorkflowTemplate.query.filter_by(
+                id=int(inherited_template_id),
+                is_active=True,
+            ).first():
+                template_id = str(inherited_template_id)
 
     template_id = (template_id or getattr(item, "workflow_template_id", None) or "")
     template_id = str(template_id).strip()
@@ -2438,17 +2612,44 @@ def _start_corr_workflow(
     if len(title) > 200:
         title = title[:197] + "..."
 
+    cycle_opened_at = datetime.utcnow()
     req = WorkflowRequest(
         requester_id=current_user.id,
         status="DRAFT",
         title=title or f"مسار {label} رقم {ref}",
-        description=_corr_workflow_description(kind, label, item, attachments),
+        description=(
+            _corr_workflow_description(kind, label, item, attachments)
+            + (
+                f"\n\nالدورة رقم {cycle_number} ضمن المسار الرئيسي #{parent_request.id}."
+                if parent_request
+                else ""
+            )
+        ),
         confidentiality=(getattr(item, "confidentiality", None) or "NORMAL").upper(),
         source_corr_kind=kind,
         source_corr_id=getattr(item, "id", None),
+        parent_request_id=(parent_request.id if parent_request else None),
+        cycle_number=cycle_number,
+        cycle_color=cycle_color(cycle_number),
+        cycle_opened_at=cycle_opened_at,
     )
     db.session.add(req)
     db.session.flush()
+
+    if parent_request:
+        db.session.add(AuditLog(
+            request_id=req.id,
+            user_id=current_user.id,
+            action="WORKFLOW_CYCLE_OPENED",
+            note=(
+                f"تمت إضافة إيميل جديد وفتح الدورة {cycle_number} "
+                f"ضمن المسار الرئيسي #{parent_request.id}. "
+                "الدورة السابقة محفوظة ولم تتم إعادة فتحها أو إعادة ضبطها."
+            ),
+            target_type="WORKFLOW_CYCLE",
+            target_id=req.id,
+            created_at=cycle_opened_at,
+        ))
 
     attachment_batch_id = uuid.uuid4().hex
     for archived in archived_files:
@@ -2495,6 +2696,65 @@ def _start_corr_workflow(
         target_id=getattr(item, "id", None),
         created_at=datetime.utcnow(),
     ))
+
+    if parent_request:
+        db.session.add(AuditLog(
+            request_id=req.id,
+            user_id=current_user.id,
+            action="CORR_WORKFLOW_CYCLE_LINKED",
+            note=(
+                f"تم ربط الإيميل الجديد بالمسار الرئيسي #{parent_request.id} "
+                f"كالدورة رقم {cycle_number}."
+            ),
+            target_type=target_type,
+            target_id=getattr(item, "id", None),
+            created_at=datetime.utcnow(),
+        ))
+
+        # The workflow engine already alerts the first-step assignee. This
+        # additional event alerts people who participated in older cycles,
+        # including when the selected old cycle was closed.
+        new_instance = WorkflowInstance.query.filter_by(request_id=req.id).first()
+        first_step_user_ids = {
+            int(step.approver_user_id)
+            for step in (
+                WorkflowInstanceStep.query.filter_by(
+                    instance_id=new_instance.id,
+                    step_order=1,
+                ).all()
+                if new_instance
+                else []
+            )
+            if getattr(step, "approver_user_id", None)
+        }
+        cycle_followers = _corr_notification_recipient_ids(item, cycle_participant_ids)
+        cycle_followers.discard(int(current_user.id))
+        for follower_id in sorted(cycle_followers):
+            db.session.add(AuditLog(
+                request_id=req.id,
+                user_id=current_user.id,
+                action="WORKFLOW_CYCLE_FOLLOWER",
+                note=(
+                    f"تم منح المستخدم #{follower_id} حق متابعة الدورة الجديدة "
+                    f"{cycle_number} المرتبطة بالمسار #{parent_request.id}."
+                ),
+                target_type="USER",
+                target_id=follower_id,
+                created_at=datetime.utcnow(),
+            ))
+        cycle_recipients = cycle_followers.difference(first_step_user_ids)
+        if cycle_recipients:
+            _notify_users(
+                sorted(cycle_recipients),
+                (
+                    f"تمت إضافة إيميل جديد وفتح الدورة {cycle_number} "
+                    f"في المسار #{parent_request.id}. الدورة السابقة محفوظة كما هي. "
+                    f"الإجراء الجديد: #{req.id}."
+                ),
+                level="WORKFLOW",
+                link_url=url_for("workflow.view_request", request_id=req.id),
+            )
+
     if auto_commit:
         db.session.commit()
     flash("تم إنشاء المسار وربطه بالمعاملة.", "success")
@@ -43554,6 +43814,137 @@ def inbound_analyze_attachment():
         }), 500
 
 
+@portal_bp.route("/corr/workflow/search")
+@login_required
+@_perm(CORR_CREATE)
+def correspondence_workflow_search():
+    """Search old correspondence workflows for the new-cycle picker."""
+    term = (request.args.get("q") or "").strip().casefold()
+    rows = (
+        WorkflowRequest.query
+        .filter(func.upper(WorkflowRequest.source_corr_kind).in_(["IN", "OUT"]))
+        .order_by(WorkflowRequest.created_at.desc(), WorkflowRequest.id.desc())
+        .limit(500 if term else 80)
+        .all()
+    )
+
+    status_labels = {
+        "DRAFT": "مسودة",
+        "IN_PROGRESS": "مفتوحة",
+        "APPROVED": "مكتملة",
+        "REJECTED": "موقوفة",
+        "CLOSED": "مغلقة",
+    }
+    results = []
+    seen_roots: set[int] = set()
+    for row in rows:
+        root = _corr_cycle_parent_request(row.id)
+        if not root or int(root.id) in seen_roots:
+            continue
+        cycles = cycles_for(root)
+        if not cycles:
+            continue
+        latest = cycles[-1]
+        source_kind = (getattr(latest, "source_corr_kind", None) or "").strip().upper()
+        source_id = getattr(latest, "source_corr_id", None)
+        source = (
+            db.session.get(InboundMail if source_kind == "IN" else OutboundMail, int(source_id))
+            if source_kind in {"IN", "OUT"} and source_id
+            else None
+        )
+        if not source:
+            continue
+
+        searchable = " ".join(
+            str(value or "")
+            for value in (
+                root.id,
+                root.title,
+                root.description,
+                source.ref_no,
+                source.subject,
+                source.sender if source_kind == "IN" else source.recipient,
+                source.competence_label,
+            )
+        ).casefold()
+        if term and term not in searchable:
+            # The selected row may not be the latest cycle. Check all cycle
+            # sources before discarding the group.
+            cycle_searchable = []
+            for cycle in cycles:
+                cycle_source_kind = (getattr(cycle, "source_corr_kind", None) or "").strip().upper()
+                cycle_source_id = getattr(cycle, "source_corr_id", None)
+                cycle_source = (
+                    db.session.get(
+                        InboundMail if cycle_source_kind == "IN" else OutboundMail,
+                        int(cycle_source_id),
+                    )
+                    if cycle_source_kind in {"IN", "OUT"} and cycle_source_id
+                    else None
+                )
+                if cycle_source:
+                    cycle_searchable.append(
+                        " ".join(
+                            str(value or "")
+                            for value in (
+                                cycle.id,
+                                cycle.title,
+                                cycle_source.ref_no,
+                                cycle_source.subject,
+                                cycle_source.sender
+                                if cycle_source_kind == "IN"
+                                else cycle_source.recipient,
+                            )
+                        ).casefold()
+                    )
+            if not any(term in value for value in cycle_searchable):
+                continue
+
+        seen_roots.add(int(root.id))
+        latest_source_kind = (getattr(latest, "source_corr_kind", None) or "").strip().upper()
+        latest_source_id = getattr(latest, "source_corr_id", None)
+        latest_source = (
+            db.session.get(
+                InboundMail if latest_source_kind == "IN" else OutboundMail,
+                int(latest_source_id),
+            )
+            if latest_source_kind in {"IN", "OUT"} and latest_source_id
+            else None
+        )
+        template_id = None
+        latest_instance = WorkflowInstance.query.filter_by(request_id=latest.id).first()
+        if latest_instance and latest_instance.template_id:
+            template_id = int(latest_instance.template_id)
+        elif latest_source and getattr(latest_source, "workflow_template_id", None):
+            template_id = int(latest_source.workflow_template_id)
+
+        results.append({
+            "id": int(root.id),
+            "title": (root.title or f"المسار #{root.id}").strip(),
+            "cycle_count": len(cycles),
+            "latest_cycle": int(getattr(latest, "cycle_number", None) or len(cycles)),
+            "latest_status": (getattr(latest, "status", None) or "").strip().upper(),
+            "latest_status_label": status_labels.get(
+                (getattr(latest, "status", None) or "").strip().upper(),
+                getattr(latest, "status", None) or "غير محددة",
+            ),
+            "template_id": template_id,
+            "kind": latest_source_kind,
+            "ref_no": getattr(latest_source, "ref_no", None) if latest_source else None,
+            "subject": getattr(latest_source, "subject", None) if latest_source else None,
+            "party": (
+                getattr(latest_source, "sender", None)
+                if latest_source_kind == "IN"
+                else getattr(latest_source, "recipient", None)
+            ) if latest_source else None,
+            "url": url_for("workflow.view_request", request_id=root.id),
+        })
+        if len(results) >= 30:
+            break
+
+    return jsonify({"results": results})
+
+
 @portal_bp.route("/corr/inbound/new", methods=["GET", "POST"])
 @login_required
 @_perm(CORR_CREATE)
@@ -43704,6 +44095,7 @@ def inbound_new():
                     item,
                     attachments,
                     request.form.get("workflow_template_id"),
+                    parent_request_id=request.form.get("parent_workflow_id"),
                 )
                 if workflow_request:
                     return redirect(url_for("workflow.view_request", request_id=workflow_request.id))
@@ -44243,7 +44635,13 @@ def inbound_start_workflow(inbound_id: int):
         return redirect(url_for("portal.inbound_view", inbound_id=item.id))
     attachments = CorrAttachment.query.filter_by(inbound_id=item.id).order_by(CorrAttachment.id.asc()).all()
     try:
-        req = _start_corr_workflow("IN", item, attachments, request.form.get("template_id"))
+        req = _start_corr_workflow(
+            "IN",
+            item,
+            attachments,
+            request.form.get("template_id"),
+            parent_request_id=request.form.get("parent_workflow_id"),
+        )
         if req:
             return redirect(url_for("workflow.view_request", request_id=req.id))
     except Exception:
@@ -44270,6 +44668,7 @@ def outbound_start_workflow(outbound_id: int):
             attachments,
             request.form.get("template_id"),
             initial_parallel_user_ids=request.form.getlist("parallel_assignee_ids"),
+            parent_request_id=request.form.get("parent_workflow_id"),
         )
         if req:
             return redirect(url_for("workflow.view_request", request_id=req.id))

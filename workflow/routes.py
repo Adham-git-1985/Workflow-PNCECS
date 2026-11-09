@@ -89,6 +89,11 @@ from services.correspondence_workflow import (
     correspondence_context,
     sync_correspondence_from_workflow,
 )
+from services.workflow_cycles import (
+    attach_cycle_display,
+    cycle_root,
+    cycles_for,
+)
 from services.correspondence_procedure import (
     ACTION_LABELS as CORR_ACTION_LABELS,
     STATUS_LABELS as CORR_STATUS_LABELS,
@@ -202,6 +207,7 @@ from workflow.engine import (
     can_committee_chair_bypass_parallel_step,
     HIERARCHY_BYPASS_FOLLOWER_ACTION,
     ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
+    WORKFLOW_CYCLE_FOLLOWER_ACTION,
 )
 from workflow.reports import build_employee_workflow_report
 from workflow.approval_reports import build_open_approval_report
@@ -3955,6 +3961,7 @@ def _user_can_view_request(user, req: WorkflowRequest) -> bool:
                 (
                     HIERARCHY_BYPASS_FOLLOWER_ACTION,
                     ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
+                    WORKFLOW_CYCLE_FOLLOWER_ACTION,
                 )
             ))
             .first()
@@ -4117,6 +4124,7 @@ def _get_request_followers_user_ids(req_id: int) -> set[int]:
                     (
                         HIERARCHY_BYPASS_FOLLOWER_ACTION,
                         ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
+                        WORKFLOW_CYCLE_FOLLOWER_ACTION,
                     )
                 ),
                 AuditLog.target_type == "USER",
@@ -5561,6 +5569,7 @@ def inbox():
         retained_follower_actions=(
             HIERARCHY_BYPASS_FOLLOWER_ACTION,
             ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
+            WORKFLOW_CYCLE_FOLLOWER_ACTION,
         ),
         mention_task_notes=MENTION_TASK_NOTES,
         mention_task_prefix=MENTION_TASK_NOTE,
@@ -5828,6 +5837,7 @@ def work_dashboard():
         retained_follower_actions=(
             HIERARCHY_BYPASS_FOLLOWER_ACTION,
             ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
+            WORKFLOW_CYCLE_FOLLOWER_ACTION,
         ),
         mention_task_notes=MENTION_TASK_NOTES,
         mention_task_prefix=MENTION_TASK_NOTE,
@@ -6757,6 +6767,7 @@ def _following_page(
         retained_follower_actions=(
             HIERARCHY_BYPASS_FOLLOWER_ACTION,
             ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
+            WORKFLOW_CYCLE_FOLLOWER_ACTION,
         ),
         mention_task_notes=MENTION_TASK_NOTES,
         mention_task_prefix=MENTION_TASK_NOTE,
@@ -7525,11 +7536,15 @@ def view_request(request_id):
         "USER_ACTION_FAILED",
         "WORKFLOW_COMMENT_DELETED",
         ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
+        WORKFLOW_CYCLE_FOLLOWER_ACTION,
     }
     action_labels = {
         "WORKFLOW_STARTED": "تم بدء المسار",
         "WORKFLOW_COMPLETED": "اكتمل المسار",
         "WORKFLOW_REOPENED_TO_STEP": "تمت إعادة فتح المسار",
+        "WORKFLOW_CYCLE_OPENED": "تم فتح دورة جديدة بسبب إيميل جديد",
+        "CORR_WORKFLOW_CYCLE_LINKED": "تم ربط الإيميل الجديد بالمسار",
+        "CORR_WORKFLOW_START": "تم ربط البريد الإلكتروني وبدء الدورة",
         ASSISTANT_SECRETARY_STEP_REDIRECT_ACTION: "تمت إعادة التوجيه من مساعد الأمين العام",
         "STEP_APPROVED": "تم الاطلاع والمتابعة",
         "STEP_REJECTED": "تم توقيف المسار",
@@ -7676,6 +7691,143 @@ def view_request(request_id):
                     "created_at": latest_step.decided_at,
                     "note": _clean_workflow_note(latest_step.note),
                 })
+
+    # A correspondence path can contain several independent workflow runs.
+    # Keep the old requests immutable and expose the group as coloured,
+    # numbered tabs.  Visibility is checked per cycle so an older confidential
+    # cycle cannot become visible merely because the user can see the newest
+    # reply.
+    cycle_root_request = cycle_root(req) or req
+    cycle_rows = cycles_for(req) or [req]
+    visible_cycle_rows = []
+    for cycle_row in cycle_rows:
+        is_current_cycle = int(getattr(cycle_row, "id", 0) or 0) == int(req.id)
+        if is_current_cycle:
+            visible_cycle_rows.append(cycle_row)
+            continue
+        try:
+            if _user_can_view_request(audit_viewer, cycle_row):
+                visible_cycle_rows.append(cycle_row)
+        except Exception:
+            current_app.logger.exception(
+                "Unable to check visibility for cycle %s in request group %s",
+                getattr(cycle_row, "id", None),
+                getattr(cycle_root_request, "id", None),
+            )
+    if not any(int(getattr(row, "id", 0) or 0) == int(req.id) for row in visible_cycle_rows):
+        visible_cycle_rows.append(req)
+    visible_cycle_rows.sort(
+        key=lambda row: (
+            int(getattr(row, "cycle_number", None) or 1),
+            getattr(row, "created_at", None) or datetime.min,
+            int(getattr(row, "id", 0) or 0),
+        )
+    )
+
+    cycle_tabs = []
+    cycle_tab_by_id = {}
+    cycle_context_by_id = {}
+    for cycle_row in visible_cycle_rows:
+        cycle_tab = attach_cycle_display(
+            cycle_row,
+            is_current=int(getattr(cycle_row, "id", 0) or 0) == int(req.id),
+        )
+        cycle_tab["url"] = url_for("workflow.view_request", request_id=cycle_row.id)
+        cycle_tabs.append(cycle_tab)
+        cycle_tab_by_id[int(cycle_row.id)] = cycle_tab
+        try:
+            cycle_context_by_id[int(cycle_row.id)] = correspondence_context(cycle_row)
+        except Exception:
+            cycle_context_by_id[int(cycle_row.id)] = None
+
+    # The grouped story contains the milestones that matter to a reader:
+    # email/cycle creation, route start and completion, decisions, comments,
+    # mentions, attachments, and explicit reopen actions.  Page-view and
+    # internal audit noise stays in the detailed audit section.
+    cycle_story_events = []
+    cycle_story_actions = {
+        "WORKFLOW_CYCLE_OPENED",
+        "CORR_WORKFLOW_CYCLE_LINKED",
+        "WORKFLOW_STARTED",
+        "WORKFLOW_COMPLETED",
+        "WORKFLOW_REOPENED_TO_STEP",
+        ASSISTANT_SECRETARY_STEP_REDIRECT_ACTION,
+        "STEP_APPROVED",
+        "STEP_REJECTED",
+        "WORKFLOW_COMMENT",
+        "WORKFLOW_REPLY",
+        MENTION_ACCESS_ACTION,
+        MENTION_ACCESS_REVOKED_ACTION,
+        MENTION_TASK_COMPLETED_ACTION,
+        "DYNAMIC_BRANCH_SELECTED",
+        "PARALLEL_SYNC_AUTHORIZED",
+        "PARALLEL_SYNC_RESPONDED",
+        "WORKFLOW_ATTACHMENT_UPLOADED",
+        "WORKFLOW_ATTACHMENT_DELETED",
+    }
+    for cycle_row in visible_cycle_rows:
+        cycle_id = int(cycle_row.id)
+        cycle_tab = cycle_tab_by_id[cycle_id]
+        cycle_source = cycle_context_by_id.get(cycle_id) or {}
+        cycle_audit = (
+            list(reversed(audit))
+            if cycle_id == int(req.id)
+            else AuditLog.query
+            .filter_by(request_id=cycle_id)
+            .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
+            .all()
+        )
+        attachment_count = sum(
+            1 for log in cycle_audit
+            if (getattr(log, "action", None) or "").upper() == "WORKFLOW_ATTACHMENT_UPLOADED"
+        )
+        attachment_seen = False
+        for log in cycle_audit:
+            action = (getattr(log, "action", None) or "").upper()
+            if action not in cycle_story_actions:
+                continue
+            if action == "WORKFLOW_ATTACHMENT_UPLOADED":
+                if attachment_seen:
+                    continue
+                attachment_seen = True
+                note = (
+                    f"تمت إضافة {attachment_count} مرفق"
+                    if attachment_count == 1
+                    else f"تمت إضافة {attachment_count} مرفقات"
+                )
+            else:
+                note = _clean_workflow_note(
+                    _strip_workflow_operation_source(
+                        audit_display_note(log, audit_viewer)
+                    )
+                )
+            actor = audit_display_actor(log, audit_viewer)
+            actor_name = (
+                (getattr(actor, "full_name", None) or getattr(actor, "email", None))
+                if actor else None
+            ) or "النظام"
+            cycle_story_events.append({
+                "id": int(getattr(log, "id", 0) or 0),
+                "cycle_request_id": cycle_id,
+                "cycle_number": cycle_tab["number"],
+                "cycle_label": cycle_tab["label"],
+                "cycle_color": cycle_tab["color"],
+                "cycle_soft_color": cycle_tab["soft_color"],
+                "cycle_border_color": cycle_tab["border_color"],
+                "action": action_labels.get(action, ui_label(action)),
+                "action_code": action,
+                "author": actor_name,
+                "created_at": getattr(log, "created_at", None),
+                "note": note,
+                "email_subject": cycle_source.get("subject") or "",
+                "email_ref": cycle_source.get("ref_no") or "",
+            })
+    cycle_story_events.sort(
+        key=lambda event: (
+            event.get("created_at") or datetime.min,
+            int(event.get("id") or 0),
+        )
+    )
 
     step_att_counts = {}
     attachment_upload_logs = []
@@ -8231,6 +8383,10 @@ def view_request(request_id):
         mention_removable_user_ids=mention_removable_user_ids,
         story_mentions_by_step=story_mentions_by_step,
         corr_source=corr_source,
+        cycle_root_request=cycle_root_request,
+        cycle_tabs=cycle_tabs,
+        cycle_story_events=cycle_story_events,
+        cycle_count=len(cycle_tabs),
         corr_status_labels=CORR_STATUS_LABELS,
         corr_action_labels=CORR_ACTION_LABELS,
         execution_context=(

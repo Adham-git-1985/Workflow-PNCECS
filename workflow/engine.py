@@ -46,9 +46,11 @@ from services.attendance_delay_workflow import (
 DYNAMIC_RETURN_REASON = "عودة المسار وفق التسلسل الإداري"
 HIERARCHY_BYPASS_FOLLOWER_ACTION = "HIERARCHY_BYPASS_FOLLOWER"
 ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION = "ASSISTANT_SECRETARY_REDIRECT_FOLLOWER"
+WORKFLOW_CYCLE_FOLLOWER_ACTION = "WORKFLOW_CYCLE_FOLLOWER"
 RETAINED_FOLLOWER_ACTIONS = (
     HIERARCHY_BYPASS_FOLLOWER_ACTION,
     ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
+    WORKFLOW_CYCLE_FOLLOWER_ACTION,
 )
 SLA_SUSPENDED = -1
 
@@ -1146,7 +1148,13 @@ def _ensure_parallel_tasks(
         invalidate_workflow_request_views(req.id, user_ids=created_ids)
         _notify_users(
             notify_ids,
-            f"مهمة متزامنة للطلب #{req.id}: يرجى الرد (للتوثيق فقط).",
+            (
+                f"تمت إضافة إيميل جديد وفتح الدورة {getattr(req, 'cycle_number', 1)} "
+                f"في المسار #{req.parent_request_id}. الإجراء الجديد #{req.id}: "
+                "يرجى الرد (للتوثيق فقط)."
+                if getattr(req, "parent_request_id", None)
+                else f"مهمة متزامنة للطلب #{req.id}: يرجى الرد (للتوثيق فقط)."
+            ),
             ntype="WORKFLOW",
             req=req,
             task_assignment=True,
@@ -1440,7 +1448,13 @@ def start_workflow_for_request(
             approvers = _resolve_approver_users(first)
             _notify_users(
                 approvers,
-                message=f"طلب جديد يحتاج إجراء: #{req.id} (الخطوة 1)",
+                message=(
+                    f"تمت إضافة إيميل جديد وفتح الدورة {getattr(req, 'cycle_number', 1)} "
+                    f"في المسار #{req.parent_request_id}. الإجراء الجديد #{req.id} "
+                    "يحتاج إجراء (الخطوة 1)."
+                    if getattr(req, "parent_request_id", None)
+                    else f"طلب جديد يحتاج إجراء: #{req.id} (الخطوة 1)"
+                ),
                 ntype="WORKFLOW",
                 role=first.approver_role,
                 actor_id=req.requester_id,

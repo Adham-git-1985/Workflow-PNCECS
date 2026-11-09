@@ -1443,9 +1443,28 @@ def _ensure_runtime_schema():
                 ("confidentiality", "TEXT NOT NULL DEFAULT 'NORMAL'"),
                 ("source_corr_kind", "TEXT"),
                 ("source_corr_id", "INTEGER"),
+                # A correspondence path may contain several independent
+                # workflow cycles.  Keep older requests as cycle 1 and add
+                # only nullable/root-safe columns to existing SQLite files.
+                ("parent_request_id", "INTEGER"),
+                ("cycle_number", "INTEGER NOT NULL DEFAULT 1"),
+                ("cycle_color", "TEXT"),
+                ("cycle_opened_at", "DATETIME"),
             ]:
                 if not _col_exists("workflow_request", col):
                     _add_column_retry("workflow_request", col, ctype)
+            try:
+                db.session.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_workflow_request_parent_request_id "
+                    "ON workflow_request (parent_request_id)"
+                ))
+                db.session.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_workflow_request_cycle_group "
+                    "ON workflow_request (parent_request_id, cycle_number)"
+                ))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
 
             # Official outbound replies keep a durable link to their source
             # inbound record.  Keep the lightweight SQLite deployment path in

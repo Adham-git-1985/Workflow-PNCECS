@@ -129,6 +129,10 @@
       {% include 'portal/corr/_procedure_fields.html' %}
 
       <div class="col-12">
+        {% include 'portal/corr/_workflow_cycle_picker.html' %}
+      </div>
+
+      <div class="col-12">
         <label class="form-label">الموضوع <span class="text-danger">*</span></label>
         <input class="form-control" name="subject" required value="{{ request.form.get('subject','') }}">
       </div>

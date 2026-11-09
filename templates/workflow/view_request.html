@@ -18,6 +18,13 @@
   .workflow-story-stage .workflow-note-card summary { display: none; }
   .workflow-story-only { display: none; }
   .workflow-story-stage .workflow-story-only { display: block; }
+  .workflow-cycle-tabs { display: flex; gap: .65rem; overflow-x: auto; padding-bottom: .25rem; }
+  .workflow-cycle-tab { min-width: 13rem; color: inherit; text-decoration: none; border: 1px solid var(--cycle-border); border-top: .28rem solid var(--cycle-color); border-radius: .7rem; background: var(--cycle-soft); padding: .7rem .8rem; transition: transform .15s ease, box-shadow .15s ease; }
+  .workflow-cycle-tab:hover, .workflow-cycle-tab.active { color: inherit; transform: translateY(-1px); box-shadow: 0 .25rem .8rem rgba(33, 37, 41, .12); }
+  .workflow-cycle-tab.active { outline: 2px solid var(--cycle-color); outline-offset: 1px; }
+  .workflow-cycle-dot { display: inline-block; width: .65rem; height: .65rem; border-radius: 50%; background: var(--cycle-color); flex: 0 0 auto; }
+  .workflow-cycle-story-item { border-right: .28rem solid var(--cycle-color); background: linear-gradient(90deg, var(--cycle-soft), #fff); }
+  .workflow-cycle-story-item .workflow-cycle-story-marker { width: .8rem; height: .8rem; border-radius: 50%; background: var(--cycle-color); box-shadow: 0 0 0 .25rem var(--cycle-soft); flex: 0 0 auto; }
   @media (max-width: 575.98px) { .workflow-story-modal .modal-dialog { margin: .35rem; } }
 </style>
 {% endblock %}
@@ -31,6 +38,7 @@
       الحالة: <span class="badge {{ 'bg-secondary' if req.status == 'CLOSED' else ('bg-success' if req.status == 'APPROVED' else ('bg-danger' if req.status == 'REJECTED' else 'bg-primary')) }}">{{ req.status|workflow_status_label }}</span>
       · الأولوية: <span class="badge {{ 'text-bg-danger' if req.priority == 'URGENT' else ('text-bg-warning' if req.priority == 'HIGH' else 'text-bg-light border') }}">{{ req.priority|ui_label }}</span>
       {% if inst %} · الخطوة الحالية: <strong>{{ inst.current_step_order }}</strong>{% endif %}
+      {% if cycle_count > 1 %} · الدورة الحالية: <strong>{{ req.cycle_number or 1 }}</strong>{% endif %}
       {% if template %} · المسار: <strong>{{ template.name }} (#{{ template.id }})</strong>{% elif inst %} · المسار: <strong>ديناميكي حسب الهيكل الإداري</strong>{% endif %}
     </small>
   </div>
@@ -246,6 +254,83 @@
     {% endif %}
   </div>
 </div>
+{% endif %}
+
+{% if req.parent_request_id %}
+<div class="alert alert-primary d-flex align-items-start gap-2 shadow-sm" role="status">
+  <i class="bi bi-envelope-plus fs-5"></i>
+  <div>
+    <strong>تمت إضافة إيميل جديد وفتح دورة جديدة.</strong>
+    هذه هي <strong>الدورة {{ req.cycle_number or 1 }}</strong> ضمن المسار الرئيسي
+    <a class="alert-link" href="{{ url_for('workflow.view_request', request_id=cycle_root_request.id) }}">#{{ cycle_root_request.id }}</a>.
+    الدورة السابقة محفوظة كما هي، وبدأت هذه الدورة من الخطوة الأولى.
+  </div>
+</div>
+{% endif %}
+
+{% if cycle_count > 1 %}
+<div class="card shadow-sm mb-3 border-0">
+  <div class="card-header bg-body-tertiary d-flex flex-wrap align-items-center justify-content-between gap-2">
+    <div>
+      <strong><i class="bi bi-collection"></i> دورات هذا المسار</strong>
+      <span class="badge text-bg-light border">{{ cycle_count }} دورات</span>
+    </div>
+    <span class="small text-muted">كل تبويب دورة مستقلة؛ لا تعيد فتح الدورات السابقة.</span>
+  </div>
+  <div class="card-body">
+    <div class="workflow-cycle-tabs" role="tablist" aria-label="دورات المسار">
+      {% for cycle in cycle_tabs %}
+      <a class="workflow-cycle-tab {% if cycle.is_current %}active{% endif %}"
+         style="--cycle-color: {{ cycle.color }}; --cycle-soft: {{ cycle.soft_color }}; --cycle-border: {{ cycle.border_color }};"
+         href="{{ cycle.url }}" role="tab" aria-current="{{ 'page' if cycle.is_current else 'false' }}">
+        <div class="d-flex align-items-center justify-content-between gap-2">
+          <span class="d-flex align-items-center gap-2">
+            <span class="workflow-cycle-dot" aria-hidden="true"></span>
+            <strong>{{ cycle.label }}</strong>
+          </span>
+          <span class="badge rounded-pill" style="background: {{ cycle.color }}; color: #fff;">{{ cycle.status_label }}</span>
+        </div>
+        <div class="small text-muted mt-2">طلب #{{ cycle.id }}</div>
+        <div class="small mt-1 text-truncate" title="{{ cycle.title }}">{{ cycle.title or 'بدون عنوان' }}</div>
+        {% if cycle.is_current %}<div class="small fw-semibold mt-2" style="color: {{ cycle.color }};">أنت هنا</div>{% endif %}
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{% if cycle_story_events %}
+<div class="card shadow-sm mb-3 border-0">
+  <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+    <div><strong><i class="bi bi-journal-text"></i> قصة المسار كاملة</strong></div>
+    <span class="small text-muted">الأحداث المهمة مرتبة من الأقدم إلى الأحدث</span>
+  </div>
+  <div class="card-body">
+    <div class="d-grid gap-2">
+      {% for event in cycle_story_events %}
+      <div class="workflow-cycle-story-item rounded-3 border p-3"
+           style="--cycle-color: {{ event.cycle_color }}; --cycle-soft: {{ event.cycle_soft_color }};">
+        <div class="d-flex align-items-start gap-3">
+          <span class="workflow-cycle-story-marker mt-1" aria-hidden="true"></span>
+          <div class="flex-grow-1">
+            <div class="d-flex flex-wrap align-items-center gap-2">
+              <span class="badge" style="background: {{ event.cycle_color }}; color: #fff;">{{ event.cycle_label }}</span>
+              <strong>{{ event.action }}</strong>
+              {% if event.created_at %}<span class="small text-muted">{{ event.created_at|local_datetime }}</span>{% endif %}
+            </div>
+            <div class="small text-muted mt-1">بواسطة: {{ event.author }}</div>
+            {% if event.action_code in ['WORKFLOW_CYCLE_OPENED', 'CORR_WORKFLOW_CYCLE_LINKED', 'WORKFLOW_STARTED'] and (event.email_subject or event.email_ref) %}
+            <div class="small mt-2"><i class="bi bi-envelope"></i> {% if event.email_ref %}{{ event.email_ref }}{% endif %}{% if event.email_ref and event.email_subject %} — {% endif %}{{ event.email_subject }}</div>
+            {% endif %}
+            {% if event.note %}<div class="small mt-2" style="white-space: pre-wrap;">{{ event.note }}</div>{% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
 {% endif %}
 
 {% if corr_source %}

@@ -1,0 +1,144 @@
+<div class="border rounded-3 bg-white p-3" data-workflow-cycle-picker
+     data-search-url="{{ url_for('portal.correspondence_workflow_search') }}">
+  <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+    <label class="form-label small fw-semibold mb-0">
+      <i class="bi bi-link-45deg"></i> ربط بدورة قديمة <span class="text-muted fw-normal">(اختياري)</span>
+    </label>
+    <span class="badge text-bg-light border">مفتوحة أو مغلقة</span>
+  </div>
+  <div class="input-group input-group-sm">
+    <input class="form-control" type="search" autocomplete="off"
+           data-cycle-search
+           placeholder="ابحث برقم المسار أو المرجع أو الموضوع أو الجهة">
+    <button class="btn btn-outline-secondary" type="button" data-cycle-clear>إلغاء الربط</button>
+  </div>
+  <input type="hidden" name="parent_workflow_id" data-cycle-value
+         value="{{ request.form.get('parent_workflow_id', '') }}">
+  <div class="small mt-2 d-none" data-cycle-selected role="status"></div>
+  <div class="list-group mt-2 d-none" data-cycle-results></div>
+  <div class="form-text">
+    عند اختيار مسار قديم سيُفتح تبويب/دورة جديدة من الخطوة الأولى، مع إبقاء الدورات السابقة كما هي.
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var picker = document.querySelector("[data-workflow-cycle-picker]");
+  if (!picker || picker.dataset.bound === "1") return;
+  picker.dataset.bound = "1";
+
+  var search = picker.querySelector("[data-cycle-search]");
+  var value = picker.querySelector("[data-cycle-value]");
+  var selected = picker.querySelector("[data-cycle-selected]");
+  var results = picker.querySelector("[data-cycle-results]");
+  var clearButton = picker.querySelector("[data-cycle-clear]");
+  var templateSelect = picker.closest("form") && picker.closest("form").querySelector(
+    '[name="template_id"], [name="workflow_template_id"]'
+  );
+  var timer = null;
+  var requestToken = 0;
+
+  function statusClass(status) {
+    status = String(status || "").toUpperCase();
+    if (status === "IN_PROGRESS" || status === "DRAFT") return "text-bg-primary";
+    if (status === "APPROVED") return "text-bg-success";
+    if (status === "REJECTED") return "text-bg-danger";
+    if (status === "CLOSED") return "text-bg-secondary";
+    return "text-bg-light border";
+  }
+
+  function showSelected(row) {
+    if (!row) {
+      value.value = "";
+      selected.textContent = "";
+      selected.classList.add("d-none");
+      return;
+    }
+    value.value = String(row.id || "");
+    selected.className = "small mt-2 alert alert-primary py-2 px-3 mb-0";
+    selected.textContent = "تم اختيار المسار #" + row.id + " — الدورة " +
+      (row.latest_cycle || 1) + " — " + (row.latest_status_label || "");
+    if (templateSelect && row.template_id) {
+      templateSelect.value = String(row.template_id);
+      templateSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    results.classList.add("d-none");
+  }
+
+  function renderRows(rows) {
+    results.textContent = "";
+    if (!rows || !rows.length) {
+      var empty = document.createElement("div");
+      empty.className = "list-group-item small text-muted";
+      empty.textContent = "لا توجد مسارات مطابقة للبحث.";
+      results.appendChild(empty);
+      results.classList.remove("d-none");
+      return;
+    }
+    rows.forEach(function (row) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "list-group-item list-group-item-action text-start";
+
+      var heading = document.createElement("div");
+      heading.className = "d-flex justify-content-between align-items-center gap-2";
+      var title = document.createElement("span");
+      title.className = "fw-semibold";
+      title.textContent = "مسار #" + row.id + " — " + (row.title || "بدون عنوان");
+      var badge = document.createElement("span");
+      badge.className = "badge " + statusClass(row.latest_status);
+      badge.textContent = row.latest_status_label || "غير محددة";
+      heading.appendChild(title);
+      heading.appendChild(badge);
+
+      var details = document.createElement("div");
+      details.className = "small text-muted mt-1";
+      details.textContent = "الدورات: " + (row.cycle_count || 1) +
+        " · آخر دورة: " + (row.latest_cycle || 1) +
+        (row.ref_no ? " · المرجع: " + row.ref_no : "") +
+        (row.subject ? " · " + row.subject : "") +
+        (row.party ? " · " + row.party : "");
+
+      button.appendChild(heading);
+      button.appendChild(details);
+      button.addEventListener("click", function () { showSelected(row); });
+      results.appendChild(button);
+    });
+    results.classList.remove("d-none");
+  }
+
+  function loadRows() {
+    var token = ++requestToken;
+    var url = picker.dataset.searchUrl + "?q=" + encodeURIComponent(search.value || "");
+    fetch(url, { headers: { "Accept": "application/json" } })
+      .then(function (response) { return response.ok ? response.json() : { results: [] }; })
+      .then(function (payload) {
+        if (token === requestToken) renderRows(payload.results || []);
+      })
+      .catch(function () {
+        if (token !== requestToken) return;
+        results.textContent = "";
+        var error = document.createElement("div");
+        error.className = "list-group-item small text-danger";
+        error.textContent = "تعذر تحميل المسارات القديمة الآن.";
+        results.appendChild(error);
+        results.classList.remove("d-none");
+      });
+  }
+
+  search.addEventListener("focus", function () {
+    if (results.classList.contains("d-none")) loadRows();
+  });
+  search.addEventListener("input", function () {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(loadRows, 250);
+  });
+  clearButton.addEventListener("click", function () {
+    showSelected(null);
+    search.value = "";
+    results.textContent = "";
+    results.classList.add("d-none");
+  });
+})();
+</script>
