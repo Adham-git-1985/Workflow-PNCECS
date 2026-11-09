@@ -1,23 +1,39 @@
+{% set cycle_search_endpoint = cycle_search_url|default(url_for('portal.correspondence_workflow_search'), true) %}
+{% set cycle_search_placeholder = cycle_search_placeholder|default('ابحث برقم المسار أو المرجع أو الموضوع أو الجهة', true) %}
+{% set cycle_is_linked = request.form.get('link_old_workflow') in ['1', 'true', 'on', 'yes'] or request.form.get('parent_workflow_id') %}
 <div class="border rounded-3 bg-white p-3" data-workflow-cycle-picker
-     data-search-url="{{ url_for('portal.correspondence_workflow_search') }}">
-  <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
-    <label class="form-label small fw-semibold mb-0">
-      <i class="bi bi-link-45deg"></i> ربط بدورة قديمة <span class="text-muted fw-normal">(اختياري)</span>
+     data-search-url="{{ cycle_search_endpoint }}" data-page-size="20">
+  <div class="form-check form-switch mb-2">
+    <input class="form-check-input" type="checkbox" role="switch"
+           id="linkOldWorkflow{{ loop.index0 if loop is defined else 'Form' }}"
+           name="link_old_workflow" value="1" data-cycle-toggle
+           {% if cycle_is_linked %}checked{% endif %}>
+    <label class="form-check-label small fw-semibold" for="linkOldWorkflow{{ loop.index0 if loop is defined else 'Form' }}">
+      <i class="bi bi-link-45deg"></i> ربط الطلب بمسار قديم <span class="text-muted fw-normal">(اختياري)</span>
     </label>
-    <span class="badge text-bg-light border">مفتوحة أو مغلقة</span>
   </div>
-  <div class="input-group input-group-sm">
-    <input class="form-control" type="search" autocomplete="off"
-           data-cycle-search
-           placeholder="ابحث برقم المسار أو المرجع أو الموضوع أو الجهة">
-    <button class="btn btn-outline-secondary" type="button" data-cycle-clear>إلغاء الربط</button>
-  </div>
-  <input type="hidden" name="parent_workflow_id" data-cycle-value
-         value="{{ request.form.get('parent_workflow_id', '') }}">
-  <div class="small mt-2 d-none" data-cycle-selected role="status"></div>
-  <div class="list-group mt-2 d-none" data-cycle-results></div>
-  <div class="form-text">
-    عند اختيار مسار قديم سيُفتح تبويب/دورة جديدة من الخطوة الأولى، مع إبقاء الدورات السابقة كما هي.
+
+  <div class="d-none" data-cycle-panel>
+    <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+      <span class="small text-muted">اختر مسارًا مفتوحًا أو مغلقًا لبدء دورة جديدة داخله.</span>
+      <span class="badge text-bg-light border">مفتوحة أو مغلقة</span>
+    </div>
+    <div class="input-group input-group-sm">
+      <input class="form-control" type="search" autocomplete="off"
+             data-cycle-search
+             placeholder="{{ cycle_search_placeholder }}">
+      <button class="btn btn-outline-secondary" type="button" data-cycle-clear>إلغاء الربط</button>
+    </div>
+    <input type="hidden" name="parent_workflow_id" data-cycle-value
+           value="{{ request.form.get('parent_workflow_id', '') }}">
+    <div class="small mt-2 d-none" data-cycle-selected role="status"></div>
+    <div class="list-group mt-2 d-none" data-cycle-results></div>
+    <button class="btn btn-sm btn-outline-primary mt-2 d-none" type="button" data-cycle-more>
+      عرض نتائج إضافية
+    </button>
+    <div class="form-text">
+      عند اختيار مسار قديم سيُفتح تبويب/دورة جديدة من الخطوة الأولى، مع إبقاء الدورات السابقة كما هي.
+    </div>
   </div>
 </div>
 
@@ -28,16 +44,24 @@
   if (!picker || picker.dataset.bound === "1") return;
   picker.dataset.bound = "1";
 
+  var toggle = picker.querySelector("[data-cycle-toggle]");
+  var panel = picker.querySelector("[data-cycle-panel]");
   var search = picker.querySelector("[data-cycle-search]");
   var value = picker.querySelector("[data-cycle-value]");
   var selected = picker.querySelector("[data-cycle-selected]");
   var results = picker.querySelector("[data-cycle-results]");
   var clearButton = picker.querySelector("[data-cycle-clear]");
+  var moreButton = picker.querySelector("[data-cycle-more]");
   var templateSelect = picker.closest("form") && picker.closest("form").querySelector(
     '[name="template_id"], [name="workflow_template_id"]'
   );
   var timer = null;
   var requestToken = 0;
+  var currentPage = 0;
+  var loadedQuery = null;
+  var hasMore = false;
+  var loading = false;
+  var controller = null;
 
   function statusClass(status) {
     status = String(status || "").toUpperCase();
@@ -66,9 +90,14 @@
     results.classList.add("d-none");
   }
 
-  function renderRows(rows) {
-    results.textContent = "";
+  function renderRows(rows, append) {
+    if (!append) results.textContent = "";
     if (!rows || !rows.length) {
+      if (append) {
+        hasMore = false;
+        moreButton.classList.add("d-none");
+        return;
+      }
       var empty = document.createElement("div");
       empty.className = "list-group-item small text-muted";
       empty.textContent = "لا توجد مسارات مطابقة للبحث.";
@@ -96,6 +125,7 @@
       details.className = "small text-muted mt-1";
       details.textContent = "الدورات: " + (row.cycle_count || 1) +
         " · آخر دورة: " + (row.latest_cycle || 1) +
+        (row.route_label ? " · " + row.route_label : "") +
         (row.ref_no ? " · المرجع: " + row.ref_no : "") +
         (row.subject ? " · " + row.subject : "") +
         (row.party ? " · " + row.party : "");
@@ -108,37 +138,105 @@
     results.classList.remove("d-none");
   }
 
-  function loadRows() {
+  function updateMoreButton() {
+    moreButton.classList.toggle("d-none", !hasMore || loading);
+  }
+
+  function loadRows(reset) {
+    if (!search || !results) return;
+    var query = (search.value || "").trim();
+    if (reset) {
+      currentPage = 0;
+      loadedQuery = query;
+      results.textContent = "";
+      results.classList.add("d-none");
+      hasMore = false;
+      updateMoreButton();
+    }
     var token = ++requestToken;
-    var url = picker.dataset.searchUrl + "?q=" + encodeURIComponent(search.value || "");
-    fetch(url, { headers: { "Accept": "application/json" } })
-      .then(function (response) { return response.ok ? response.json() : { results: [] }; })
+    loading = true;
+    updateMoreButton();
+    if (controller) controller.abort();
+    controller = window.AbortController ? new AbortController() : null;
+    var pageSize = Number(picker.dataset.pageSize || 20);
+    var url = picker.dataset.searchUrl + "?q=" + encodeURIComponent(query) +
+      "&page=" + String(currentPage) + "&limit=" + String(pageSize);
+    fetch(url, {
+      headers: { "Accept": "application/json" },
+      credentials: "same-origin",
+      signal: controller ? controller.signal : undefined
+    })
+      .then(function (response) {
+        if (!response.ok) throw new Error("search_failed");
+        return response.json();
+      })
       .then(function (payload) {
-        if (token === requestToken) renderRows(payload.results || []);
+        if (token !== requestToken) return;
+        hasMore = Boolean(payload.has_more);
+        renderRows(payload.results || [], currentPage > 0 && loadedQuery === query);
+        loadedQuery = query;
+        updateMoreButton();
       })
       .catch(function () {
-        if (token !== requestToken) return;
+        if (token !== requestToken || (controller && controller.signal.aborted)) return;
         results.textContent = "";
         var error = document.createElement("div");
         error.className = "list-group-item small text-danger";
         error.textContent = "تعذر تحميل المسارات القديمة الآن.";
         results.appendChild(error);
         results.classList.remove("d-none");
+        loadedQuery = null;
+        hasMore = false;
+        updateMoreButton();
+      })
+      .finally(function () {
+        if (token !== requestToken) return;
+        loading = false;
+        updateMoreButton();
       });
   }
 
+  function setPanelVisible(visible) {
+    panel.classList.toggle("d-none", !visible);
+    if (!visible) {
+      requestToken += 1;
+      if (controller) controller.abort();
+      controller = null;
+      loading = false;
+      showSelected(null);
+      search.value = "";
+      results.textContent = "";
+      results.classList.add("d-none");
+      loadedQuery = null;
+      hasMore = false;
+      updateMoreButton();
+      return;
+    }
+    if (loadedQuery === null) loadRows(true);
+  }
+
   search.addEventListener("focus", function () {
-    if (results.classList.contains("d-none")) loadRows();
+    if (loadedQuery === null) loadRows(true);
   });
   search.addEventListener("input", function () {
+    if (value.value) showSelected(null);
     window.clearTimeout(timer);
-    timer = window.setTimeout(loadRows, 250);
+    timer = window.setTimeout(function () { loadRows(true); }, 250);
   });
   clearButton.addEventListener("click", function () {
     showSelected(null);
     search.value = "";
-    results.textContent = "";
-    results.classList.add("d-none");
+    loadRows(true);
+    search.focus();
   });
+  moreButton.addEventListener("click", function () {
+    if (loading || !hasMore) return;
+    currentPage += 1;
+    loadRows(false);
+  });
+  toggle.addEventListener("change", function () {
+    setPanelVisible(toggle.checked);
+  });
+  setPanelVisible(toggle.checked);
 })();
 </script>

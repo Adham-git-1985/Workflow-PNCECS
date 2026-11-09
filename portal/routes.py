@@ -43820,13 +43820,68 @@ def inbound_analyze_attachment():
 def correspondence_workflow_search():
     """Search old correspondence workflows for the new-cycle picker."""
     term = (request.args.get("q") or "").strip().casefold()
-    rows = (
+    page = max(request.args.get("page", type=int, default=0), 0)
+    page_size = min(max(request.args.get("limit", type=int, default=20), 1), 20)
+
+    filters = [WorkflowRequest.source_corr_kind.in_(["IN", "OUT"])]
+    if term:
+        like = f"%{term}%"
+        search_conditions = [
+            WorkflowRequest.title.ilike(like),
+            WorkflowRequest.description.ilike(like),
+        ]
+        if term.isdigit():
+            search_conditions.append(WorkflowRequest.id == int(term))
+        search_conditions.extend([
+            exists().where(and_(
+                InboundMail.id == WorkflowRequest.source_corr_id,
+                WorkflowRequest.source_corr_kind == "IN",
+                or_(
+                    InboundMail.ref_no.ilike(like),
+                    InboundMail.subject.ilike(like),
+                    InboundMail.sender.ilike(like),
+                    InboundMail.competence_label.ilike(like),
+                ),
+            )),
+            exists().where(and_(
+                OutboundMail.id == WorkflowRequest.source_corr_id,
+                WorkflowRequest.source_corr_kind == "OUT",
+                or_(
+                    OutboundMail.ref_no.ilike(like),
+                    OutboundMail.subject.ilike(like),
+                    OutboundMail.recipient.ilike(like),
+                    OutboundMail.competence_label.ilike(like),
+                ),
+            )),
+        ])
+        filters.append(or_(*search_conditions))
+
+    # Page over path groups in SQL.  The previous implementation loaded a
+    # large arbitrary window and then searched it in Python, which made old
+    # paths invisible and caused avoidable N+1 work on every keystroke.
+    group_root = func.coalesce(
+        WorkflowRequest.parent_request_id,
+        WorkflowRequest.id,
+    )
+    grouped_rows = (
         WorkflowRequest.query
-        .filter(func.upper(WorkflowRequest.source_corr_kind).in_(["IN", "OUT"]))
-        .order_by(WorkflowRequest.created_at.desc(), WorkflowRequest.id.desc())
-        .limit(500 if term else 80)
+        .filter(*filters)
+        .with_entities(
+            group_root.label("root_id"),
+            func.max(WorkflowRequest.id).label("candidate_id"),
+            func.max(WorkflowRequest.created_at).label("latest_created_at"),
+        )
+        .group_by(group_root)
+        .order_by(
+            func.max(WorkflowRequest.created_at).desc(),
+            func.max(WorkflowRequest.id).desc(),
+        )
+        .offset(page * page_size)
+        .limit(page_size + 1)
         .all()
     )
+    has_more = len(grouped_rows) > page_size
+    grouped_rows = grouped_rows[:page_size]
 
     status_labels = {
         "DRAFT": "مسودة",
@@ -43836,10 +43891,9 @@ def correspondence_workflow_search():
         "CLOSED": "مغلقة",
     }
     results = []
-    seen_roots: set[int] = set()
-    for row in rows:
-        root = _corr_cycle_parent_request(row.id)
-        if not root or int(root.id) in seen_roots:
+    for grouped_row in grouped_rows:
+        root = _corr_cycle_parent_request(grouped_row.candidate_id)
+        if not root:
             continue
         cycles = cycles_for(root)
         if not cycles:
@@ -43855,52 +43909,6 @@ def correspondence_workflow_search():
         if not source:
             continue
 
-        searchable = " ".join(
-            str(value or "")
-            for value in (
-                root.id,
-                root.title,
-                root.description,
-                source.ref_no,
-                source.subject,
-                source.sender if source_kind == "IN" else source.recipient,
-                source.competence_label,
-            )
-        ).casefold()
-        if term and term not in searchable:
-            # The selected row may not be the latest cycle. Check all cycle
-            # sources before discarding the group.
-            cycle_searchable = []
-            for cycle in cycles:
-                cycle_source_kind = (getattr(cycle, "source_corr_kind", None) or "").strip().upper()
-                cycle_source_id = getattr(cycle, "source_corr_id", None)
-                cycle_source = (
-                    db.session.get(
-                        InboundMail if cycle_source_kind == "IN" else OutboundMail,
-                        int(cycle_source_id),
-                    )
-                    if cycle_source_kind in {"IN", "OUT"} and cycle_source_id
-                    else None
-                )
-                if cycle_source:
-                    cycle_searchable.append(
-                        " ".join(
-                            str(value or "")
-                            for value in (
-                                cycle.id,
-                                cycle.title,
-                                cycle_source.ref_no,
-                                cycle_source.subject,
-                                cycle_source.sender
-                                if cycle_source_kind == "IN"
-                                else cycle_source.recipient,
-                            )
-                        ).casefold()
-                    )
-            if not any(term in value for value in cycle_searchable):
-                continue
-
-        seen_roots.add(int(root.id))
         latest_source_kind = (getattr(latest, "source_corr_kind", None) or "").strip().upper()
         latest_source_id = getattr(latest, "source_corr_id", None)
         latest_source = (
@@ -43929,6 +43937,7 @@ def correspondence_workflow_search():
                 getattr(latest, "status", None) or "غير محددة",
             ),
             "template_id": template_id,
+            "route_label": "مسار محفوظ" if template_id else "مسار ديناميكي",
             "kind": latest_source_kind,
             "ref_no": getattr(latest_source, "ref_no", None) if latest_source else None,
             "subject": getattr(latest_source, "subject", None) if latest_source else None,
@@ -43939,10 +43948,12 @@ def correspondence_workflow_search():
             ) if latest_source else None,
             "url": url_for("workflow.view_request", request_id=root.id),
         })
-        if len(results) >= 30:
-            break
 
-    return jsonify({"results": results})
+    return jsonify({
+        "results": results,
+        "page": page,
+        "has_more": has_more,
+    })
 
 
 @portal_bp.route("/corr/inbound/new", methods=["GET", "POST"])
@@ -44095,7 +44106,12 @@ def inbound_new():
                     item,
                     attachments,
                     request.form.get("workflow_template_id"),
-                    parent_request_id=request.form.get("parent_workflow_id"),
+                    parent_request_id=(
+                        request.form.get("parent_workflow_id")
+                        if (request.form.get("link_old_workflow") or "").strip().lower()
+                        in {"1", "true", "on", "yes"}
+                        else None
+                    ),
                 )
                 if workflow_request:
                     return redirect(url_for("workflow.view_request", request_id=workflow_request.id))
@@ -44640,7 +44656,12 @@ def inbound_start_workflow(inbound_id: int):
             item,
             attachments,
             request.form.get("template_id"),
-            parent_request_id=request.form.get("parent_workflow_id"),
+            parent_request_id=(
+                request.form.get("parent_workflow_id")
+                if (request.form.get("link_old_workflow") or "").strip().lower()
+                in {"1", "true", "on", "yes"}
+                else None
+            ),
         )
         if req:
             return redirect(url_for("workflow.view_request", request_id=req.id))
@@ -44668,7 +44689,12 @@ def outbound_start_workflow(outbound_id: int):
             attachments,
             request.form.get("template_id"),
             initial_parallel_user_ids=request.form.getlist("parallel_assignee_ids"),
-            parent_request_id=request.form.get("parent_workflow_id"),
+            parent_request_id=(
+                request.form.get("parent_workflow_id")
+                if (request.form.get("link_old_workflow") or "").strip().lower()
+                in {"1", "true", "on", "yes"}
+                else None
+            ),
         )
         if req:
             return redirect(url_for("workflow.view_request", request_id=req.id))

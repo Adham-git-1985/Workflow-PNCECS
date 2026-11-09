@@ -92,7 +92,10 @@ from services.correspondence_workflow import (
 from services.workflow_cycles import (
     attach_cycle_display,
     cycle_root,
+    cycle_color,
+    cycle_participant_ids,
     cycles_for,
+    next_cycle_number,
 )
 from services.correspondence_procedure import (
     ACTION_LABELS as CORR_ACTION_LABELS,
@@ -192,6 +195,7 @@ from workflow.read_models import (
 from workflow.temporary_delete import can_delete_workflow_request, is_super_admin
 
 from workflow.engine import (
+    _notify_users,
     start_workflow_for_request,
     decide_step,
     bypass_parallel_task,
@@ -4403,6 +4407,121 @@ def delete_dynamic_path_preset():
     return jsonify({"ok": True, "message": "تم حذف المسار من ملفك الشخصي."})
 
 
+@workflow_bp.route("/new/old-workflow-search")
+@login_required
+def workflow_cycle_search():
+    """Return visible workflow path groups for the new-request picker."""
+    term = (request.args.get("q") or "").strip()
+    page = max(request.args.get("page", type=int, default=0), 0)
+    page_size = min(max(request.args.get("limit", type=int, default=20), 1), 20)
+
+    query = WorkflowRequest.query
+    if term:
+        like = f"%{term}%"
+        conditions = [
+            WorkflowRequest.title.ilike(like),
+            WorkflowRequest.description.ilike(like),
+            WorkflowRequest.requester.has(or_(
+                User.name.ilike(like),
+                User.email.ilike(like),
+            )),
+        ]
+        if term.isdigit():
+            conditions.append(WorkflowRequest.id == int(term))
+        query = query.filter(or_(*conditions))
+
+    group_root = func.coalesce(
+        WorkflowRequest.parent_request_id,
+        WorkflowRequest.id,
+    )
+    grouped_rows = (
+        query
+        .with_entities(
+            group_root.label("root_id"),
+            func.max(WorkflowRequest.created_at).label("latest_created_at"),
+        )
+        .group_by(group_root)
+        .order_by(
+            func.max(WorkflowRequest.created_at).desc(),
+            group_root.desc(),
+        )
+        .offset(page * page_size)
+        .limit(page_size + 1)
+        .all()
+    )
+    has_more = len(grouped_rows) > page_size
+    grouped_rows = grouped_rows[:page_size]
+    working_user = _workflow_actor()
+    status_labels = {
+        "DRAFT": "مسودة",
+        "IN_PROGRESS": "مفتوحة",
+        "APPROVED": "مكتملة",
+        "REJECTED": "موقوفة",
+        "CLOSED": "مغلقة",
+    }
+
+    results = []
+    for grouped_row in grouped_rows:
+        root = db.session.get(WorkflowRequest, int(grouped_row.root_id))
+        if not root:
+            continue
+        cycles = cycles_for(root)
+        visible_cycles = [
+            cycle
+            for cycle in cycles
+            if _actor_context_can_view_request(cycle, [working_user])
+        ]
+        if not visible_cycles:
+            continue
+        visible_cycles.sort(
+            key=lambda cycle: (
+                int(getattr(cycle, "cycle_number", None) or 1),
+                getattr(cycle, "created_at", None) or datetime.min,
+                int(getattr(cycle, "id", 0) or 0),
+            )
+        )
+        latest = visible_cycles[-1]
+        latest_instance = WorkflowInstance.query.filter_by(
+            request_id=latest.id
+        ).first()
+        requester = getattr(latest, "requester", None) or getattr(root, "requester", None)
+        status = (getattr(latest, "status", None) or "").strip().upper()
+        selected_id = int(latest.id)
+        results.append({
+            "id": selected_id,
+            "title": (getattr(latest, "title", None) or getattr(root, "title", None) or f"المسار #{selected_id}").strip(),
+            "cycle_count": len(visible_cycles),
+            "latest_cycle": int(getattr(latest, "cycle_number", None) or len(visible_cycles)),
+            "latest_status": status,
+            "latest_status_label": status_labels.get(status, status or "غير محددة"),
+            "template_id": (
+                int(latest_instance.template_id)
+                if latest_instance and latest_instance.template_id
+                else None
+            ),
+            "route_label": (
+                "مسار محفوظ"
+                if latest_instance and latest_instance.template_id
+                else "مسار ديناميكي"
+            ),
+            "kind": "WORKFLOW",
+            "ref_no": None,
+            "subject": None,
+            "party": (
+                getattr(requester, "full_name", None)
+                or getattr(requester, "email", None)
+                if requester else None
+            ),
+            "url": url_for("workflow.view_request", request_id=selected_id),
+        })
+
+    return jsonify({
+        "results": results,
+        "page": page,
+        "has_more": has_more,
+    })
+
+
 @workflow_bp.route("/new", methods=["GET", "POST"])
 @login_required
 def new_request():
@@ -4481,6 +4600,35 @@ def new_request():
             flash("نوع الطلب يجب ألا يتجاوز 200 حرف.", "danger")
             return redirect(request.url)
 
+        parent_request = None
+        link_old_workflow = (request.form.get("link_old_workflow") or "").strip().lower() in {
+            "1", "true", "on", "yes"
+        }
+        if link_old_workflow and (request.form.get("parent_workflow_id") or "").strip():
+            try:
+                selected_parent_id = int(request.form.get("parent_workflow_id"))
+            except (TypeError, ValueError):
+                selected_parent_id = 0
+            selected_parent = (
+                db.session.get(WorkflowRequest, selected_parent_id)
+                if selected_parent_id > 0
+                else None
+            )
+            if not selected_parent or not _actor_context_can_view_request(
+                selected_parent,
+                [working_user],
+            ):
+                flash("المسار القديم المختار غير موجود أو غير متاح لك.", "danger")
+                return redirect(request.url)
+            parent_request = cycle_root(selected_parent) or selected_parent
+
+        cycle_number = (
+            next_cycle_number(int(parent_request.id))
+            if parent_request
+            else 1
+        )
+        cycle_opened_at = datetime.utcnow() if parent_request else None
+
         # Route selection is independent from the user-entered request type.
         template = None
         dynamic_path = None
@@ -4536,10 +4684,40 @@ def new_request():
             title=title,
             description=description,
             priority=priority,
-            request_type_id=request_type.id
+            request_type_id=request_type.id,
+            parent_request_id=(parent_request.id if parent_request else None),
+            cycle_number=cycle_number,
+            cycle_color=cycle_color(cycle_number),
+            cycle_opened_at=cycle_opened_at,
         )
         db.session.add(req)
         db.session.flush()
+
+        if parent_request:
+            db.session.add(AuditLog(
+                request_id=req.id,
+                user_id=working_user.id,
+                action="WORKFLOW_CYCLE_OPENED",
+                note=(
+                    f"تم إنشاء طلب جديد وفتح الدورة {cycle_number} ضمن المسار الرئيسي "
+                    f"#{parent_request.id}. الدورة السابقة محفوظة كما هي، وبدأت هذه الدورة من الخطوة الأولى."
+                ),
+                target_type="WORKFLOW_CYCLE",
+                target_id=req.id,
+                created_at=cycle_opened_at or datetime.utcnow(),
+            ))
+            db.session.add(AuditLog(
+                request_id=req.id,
+                user_id=working_user.id,
+                action="WORKFLOW_CYCLE_LINKED",
+                note=(
+                    f"تم ربط الطلب الجديد بالمسار الرئيسي #{parent_request.id} "
+                    f"كالدورة رقم {cycle_number}."
+                ),
+                target_type="WORKFLOW",
+                target_id=parent_request.id,
+                created_at=datetime.utcnow(),
+            ))
 
         # IMPORTANT: single commit per route (engine does not commit)
         start_workflow_for_request(
@@ -4550,6 +4728,55 @@ def new_request():
             runtime_steps=dynamic_path["steps"] if dynamic_path else None,
             workflow_label=workflow_label,
         )
+
+        if parent_request:
+            new_instance = WorkflowInstance.query.filter_by(request_id=req.id).first()
+            first_step_user_ids = {
+                int(step.approver_user_id)
+                for step in (
+                    WorkflowInstanceStep.query.filter_by(
+                        instance_id=new_instance.id,
+                        step_order=1,
+                    ).all()
+                    if new_instance
+                    else []
+                )
+                if getattr(step, "approver_user_id", None)
+            }
+            try:
+                cycle_followers = cycle_participant_ids(int(parent_request.id))
+            except Exception:
+                current_app.logger.exception(
+                    "Unable to collect workflow cycle followers for request %s",
+                    req.id,
+                )
+                cycle_followers = set()
+            cycle_followers.discard(int(working_user.id))
+            for follower_id in sorted(cycle_followers):
+                db.session.add(AuditLog(
+                    request_id=req.id,
+                    user_id=working_user.id,
+                    action="WORKFLOW_CYCLE_FOLLOWER",
+                    note=(
+                        f"تم منح المستخدم #{follower_id} حق متابعة الدورة الجديدة "
+                        f"{cycle_number} المرتبطة بالمسار #{parent_request.id}."
+                    ),
+                    target_type="USER",
+                    target_id=follower_id,
+                    created_at=datetime.utcnow(),
+                ))
+            cycle_recipients = cycle_followers.difference(first_step_user_ids)
+            if cycle_recipients:
+                _notify_users(
+                    sorted(cycle_recipients),
+                    (
+                        f"تم إنشاء طلب جديد وفتح الدورة {cycle_number} في المسار "
+                        f"#{parent_request.id}. الدورة السابقة محفوظة كما هي، وبدأت الدورة الجديدة من الخطوة الأولى. "
+                        f"الطلب الجديد: #{req.id}."
+                    ),
+                    ntype="WORKFLOW",
+                    req=req,
+                )
 
 
         # ✅ Attach files (multiple) with the request creation
@@ -7544,6 +7771,7 @@ def view_request(request_id):
         "WORKFLOW_REOPENED_TO_STEP": "تمت إعادة فتح المسار",
         "WORKFLOW_CYCLE_OPENED": "تم فتح دورة جديدة بسبب إيميل جديد",
         "CORR_WORKFLOW_CYCLE_LINKED": "تم ربط الإيميل الجديد بالمسار",
+        "WORKFLOW_CYCLE_LINKED": "تم ربط الطلب الجديد بالمسار",
         "CORR_WORKFLOW_START": "تم ربط البريد الإلكتروني وبدء الدورة",
         ASSISTANT_SECRETARY_STEP_REDIRECT_ACTION: "تمت إعادة التوجيه من مساعد الأمين العام",
         "STEP_APPROVED": "تم الاطلاع والمتابعة",
@@ -7748,6 +7976,7 @@ def view_request(request_id):
     cycle_story_actions = {
         "WORKFLOW_CYCLE_OPENED",
         "CORR_WORKFLOW_CYCLE_LINKED",
+        "WORKFLOW_CYCLE_LINKED",
         "WORKFLOW_STARTED",
         "WORKFLOW_COMPLETED",
         "WORKFLOW_REOPENED_TO_STEP",
@@ -7806,6 +8035,9 @@ def view_request(request_id):
                 (getattr(actor, "full_name", None) or getattr(actor, "email", None))
                 if actor else None
             ) or "النظام"
+            display_action = action_labels.get(action, ui_label(action))
+            if action == "WORKFLOW_CYCLE_OPENED" and not cycle_source:
+                display_action = "تم فتح دورة جديدة بسبب طلب جديد"
             cycle_story_events.append({
                 "id": int(getattr(log, "id", 0) or 0),
                 "cycle_request_id": cycle_id,
@@ -7814,7 +8046,7 @@ def view_request(request_id):
                 "cycle_color": cycle_tab["color"],
                 "cycle_soft_color": cycle_tab["soft_color"],
                 "cycle_border_color": cycle_tab["border_color"],
-                "action": action_labels.get(action, ui_label(action)),
+                "action": display_action,
                 "action_code": action,
                 "author": actor_name,
                 "created_at": getattr(log, "created_at", None),

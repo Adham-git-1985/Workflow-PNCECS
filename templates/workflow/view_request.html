@@ -260,7 +260,7 @@
 <div class="alert alert-primary d-flex align-items-start gap-2 shadow-sm" role="status">
   <i class="bi bi-envelope-plus fs-5"></i>
   <div>
-    <strong>تمت إضافة إيميل جديد وفتح دورة جديدة.</strong>
+    <strong>{% if req.source_corr_kind %}تمت إضافة إيميل جديد وفتح دورة جديدة.{% else %}تم إنشاء طلب جديد وفتح دورة جديدة.{% endif %}</strong>
     هذه هي <strong>الدورة {{ req.cycle_number or 1 }}</strong> ضمن المسار الرئيسي
     <a class="alert-link" href="{{ url_for('workflow.view_request', request_id=cycle_root_request.id) }}">#{{ cycle_root_request.id }}</a>.
     الدورة السابقة محفوظة كما هي، وبدأت هذه الدورة من الخطوة الأولى.

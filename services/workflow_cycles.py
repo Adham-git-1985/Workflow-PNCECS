@@ -162,3 +162,90 @@ def attach_cycle_display(row: WorkflowRequest, *, is_current: bool = False) -> d
         "created_at": getattr(row, "cycle_opened_at", None) or getattr(row, "created_at", None),
         "is_current": bool(is_current),
     }
+
+
+def cycle_participant_ids(root_id: int) -> set[int]:
+    """Collect users who took part in any workflow cycle.
+
+    Imports are intentionally local: this service is imported by the workflow
+    routes before the workflow engine is fully initialised.
+    """
+    from models import (
+        AuditLog,
+        WorkflowInstance,
+        WorkflowInstanceStep,
+        WorkflowRequestView,
+        WorkflowStepTask,
+    )
+    from workflow.engine import resolve_step_approver_user_ids
+
+    try:
+        root = db.session.get(WorkflowRequest, int(root_id))
+        rows = cycles_for(root)
+    except (TypeError, ValueError):
+        return set()
+    if not rows:
+        return set()
+
+    request_ids = [int(row.id) for row in rows if getattr(row, "id", None)]
+    participant_ids = {
+        int(row.requester_id)
+        for row in rows
+        if getattr(row, "requester_id", None)
+    }
+
+    instances = WorkflowInstance.query.filter(
+        WorkflowInstance.request_id.in_(request_ids)
+    ).all()
+    instance_ids = [int(row.id) for row in instances if getattr(row, "id", None)]
+    participant_ids.update(
+        int(row.last_step_actor_id)
+        for row in instances
+        if getattr(row, "last_step_actor_id", None)
+    )
+
+    if instance_ids:
+        steps = WorkflowInstanceStep.query.filter(
+            WorkflowInstanceStep.instance_id.in_(instance_ids)
+        ).all()
+        for step in steps:
+            for user_id in (
+                getattr(step, "approver_user_id", None),
+                getattr(step, "decided_by_id", None),
+            ):
+                if user_id:
+                    participant_ids.add(int(user_id))
+            try:
+                participant_ids.update(resolve_step_approver_user_ids(step))
+            except Exception:
+                pass
+
+        participant_ids.update(
+            int(task.assignee_user_id)
+            for task in WorkflowStepTask.query.filter(
+                WorkflowStepTask.instance_id.in_(instance_ids)
+            ).all()
+            if getattr(task, "assignee_user_id", None)
+        )
+
+    participant_ids.update(
+        int(user_id)
+        for (user_id,) in db.session.query(WorkflowRequestView.user_id)
+        .filter(WorkflowRequestView.request_id.in_(request_ids))
+        .all()
+        if user_id
+    )
+
+    # A cycle follower grant is request-scoped, so preserve access and
+    # notification delivery for people who were explicitly added before.
+    participant_ids.update(
+        int(log.target_id)
+        for log in AuditLog.query.filter(
+            AuditLog.request_id.in_(request_ids),
+            AuditLog.action == "WORKFLOW_CYCLE_FOLLOWER",
+            AuditLog.target_type == "USER",
+            AuditLog.target_id.isnot(None),
+        ).all()
+        if log.target_id
+    )
+    return participant_ids

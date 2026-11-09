@@ -333,6 +333,12 @@
         {% endif %}
       </div>
 
+      <div class="col-12">
+        {% set cycle_search_url = url_for('workflow.workflow_cycle_search') %}
+        {% set cycle_search_placeholder = 'ابحث برقم المسار أو العنوان أو الوصف أو المنشئ' %}
+        {% include 'portal/corr/_workflow_cycle_picker.html' %}
+      </div>
+
       <div class="col-md-6" id="predefinedRouteBox">
         <label class="form-label fw-bold">المسار</label>
         <select class="form-select" id="templateSelect" name="template_id" data-has-templates="{{ '1' if templates else '0' }}" {% if not templates %}disabled{% endif %}>

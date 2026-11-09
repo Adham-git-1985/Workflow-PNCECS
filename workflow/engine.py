@@ -878,6 +878,17 @@ def _notify_users(
         )
 
 
+def _new_cycle_notification(req: WorkflowRequest, action: str) -> str:
+    """Describe the first-step notification for a linked workflow cycle."""
+    if not getattr(req, "parent_request_id", None):
+        return action
+    item_label = "إيميل جديد" if getattr(req, "source_corr_kind", None) else "طلب جديد"
+    return (
+        f"تمت إضافة {item_label} وفتح الدورة {getattr(req, 'cycle_number', 1)} "
+        f"في المسار #{req.parent_request_id}. {action}"
+    )
+
+
 # =========================
 # Parallel Sync helpers
 # =========================
@@ -1148,12 +1159,13 @@ def _ensure_parallel_tasks(
         invalidate_workflow_request_views(req.id, user_ids=created_ids)
         _notify_users(
             notify_ids,
-            (
-                f"تمت إضافة إيميل جديد وفتح الدورة {getattr(req, 'cycle_number', 1)} "
-                f"في المسار #{req.parent_request_id}. الإجراء الجديد #{req.id}: "
-                "يرجى الرد (للتوثيق فقط)."
-                if getattr(req, "parent_request_id", None)
-                else f"مهمة متزامنة للطلب #{req.id}: يرجى الرد (للتوثيق فقط)."
+            _new_cycle_notification(
+                req,
+                (
+                    f"الإجراء الجديد #{req.id}: يرجى الرد (للتوثيق فقط)."
+                    if getattr(req, "parent_request_id", None)
+                    else f"مهمة متزامنة للطلب #{req.id}: يرجى الرد (للتوثيق فقط)."
+                ),
             ),
             ntype="WORKFLOW",
             req=req,
@@ -1448,12 +1460,13 @@ def start_workflow_for_request(
             approvers = _resolve_approver_users(first)
             _notify_users(
                 approvers,
-                message=(
-                    f"تمت إضافة إيميل جديد وفتح الدورة {getattr(req, 'cycle_number', 1)} "
-                    f"في المسار #{req.parent_request_id}. الإجراء الجديد #{req.id} "
-                    "يحتاج إجراء (الخطوة 1)."
-                    if getattr(req, "parent_request_id", None)
-                    else f"طلب جديد يحتاج إجراء: #{req.id} (الخطوة 1)"
+                message=_new_cycle_notification(
+                    req,
+                    (
+                        f"الإجراء الجديد #{req.id} يحتاج إجراء (الخطوة 1)."
+                        if getattr(req, "parent_request_id", None)
+                        else f"طلب جديد يحتاج إجراء: #{req.id} (الخطوة 1)"
+                    ),
                 ),
                 ntype="WORKFLOW",
                 role=first.approver_role,
