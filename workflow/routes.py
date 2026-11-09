@@ -6079,7 +6079,7 @@ _WORKFLOW_DASHBOARD_QUEUES = {
     "completed": "المكتملة",
     "returned": "المعادة / المرفوضة",
     "correspondence": "قادمة من الصادر والوارد",
-    "overdue": "متأخرة",
+    "overdue": "متأخرة عندي",
 }
 _WORKFLOW_DASHBOARD_ALL_QUEUE = "all"
 _WORKFLOW_DASHBOARD_ALL_LABEL = "جميع المسارات"
@@ -6232,6 +6232,20 @@ def work_dashboard():
         mentioned_task_user_ids = access_snapshot.pending_mentions(getattr(inst, "id", None))
         mentioned_task_for_actor = bool(actor_ids.intersection(mentioned_task_user_ids))
 
+        current_step_pending_task_users = set()
+        if current_step and inst:
+            current_step_pending_task_users = access_snapshot.pending_task_users_by_step.get(
+                (int(inst.id), int(current_step.step_order)),
+                set(),
+            )
+        current_step_needs_action = bool(
+            current_step
+            and current_step.status == "PENDING"
+            and (
+                any(access_snapshot.can_act(user, current_step) for user in actor_users)
+                or bool(actor_ids.intersection(current_step_pending_task_users))
+            )
+        )
         needs_action = bool(
             current_step
             and current_step.status == "PENDING"
@@ -6242,6 +6256,7 @@ def work_dashboard():
         overdue = bool(
             current_step
             and current_step.status == "PENDING"
+            and current_step_needs_action
             and current_step.due_at
             and current_step.due_at < now
         )

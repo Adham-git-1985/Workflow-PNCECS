@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -280,6 +281,93 @@ class WorkflowDashboardPermissionTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual([row["req"].title for row in rows], [requests[0].title])
+
+    def test_overdue_queue_only_shows_current_actor_work(self):
+        other_assignee = User(
+            email="other-overdue-assignee@example.test",
+            name="Other Overdue Assignee",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
+        db.session.add(other_assignee)
+        db.session.flush()
+
+        def add_overdue_request(title, *, approver_id, mention=False):
+            request_row = WorkflowRequest(
+                requester_id=self.employee.id,
+                title=title,
+                description="",
+                status="IN_PROGRESS",
+            )
+            db.session.add(request_row)
+            db.session.flush()
+            instance = WorkflowInstance(
+                request_id=request_row.id,
+                current_step_order=1,
+                is_completed=False,
+            )
+            db.session.add(instance)
+            db.session.flush()
+            db.session.add(WorkflowInstanceStep(
+                instance_id=instance.id,
+                step_order=1,
+                approver_kind="USER",
+                approver_user_id=approver_id,
+                status="PENDING",
+                due_at=datetime.utcnow() - timedelta(days=1),
+            ))
+            if mention:
+                db.session.add(WorkflowStepTask(
+                    instance_id=instance.id,
+                    request_id=request_row.id,
+                    step_order=1,
+                    assignee_user_id=self.employee.id,
+                    status="PENDING",
+                    response="NONE",
+                    note="MENTION_TASK",
+                ))
+                db.session.add(AuditLog(
+                    request_id=request_row.id,
+                    user_id=self.employee.id,
+                    action=MENTION_ACCESS_ACTION,
+                    target_type="USER",
+                    target_id=self.employee.id,
+                ))
+            return request_row
+
+        waiting_on_actor = add_overdue_request(
+            "Overdue path waiting on current actor",
+            approver_id=self.employee.id,
+        )
+        waiting_on_other = add_overdue_request(
+            "Overdue path waiting on another employee",
+            approver_id=other_assignee.id,
+        )
+        mentioned_actor = add_overdue_request(
+            "Overdue path waiting on current actor mention",
+            approver_id=other_assignee.id,
+            mention=True,
+        )
+        db.session.add(UserPermission(
+            user_id=self.employee.id,
+            key="WORKFLOW_DASHBOARD_READ",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client)
+            with patch("workflow.routes.render_template", return_value="ok") as render:
+                response = client.get("/workflow/work?queue=overdue")
+                context = render.call_args.kwargs
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(context["queue_labels"]["overdue"], "متأخرة عندي")
+        self.assertEqual(context["counts"]["overdue"], 2)
+        overdue_ids = {row["req"].id for row in context["rows"]}
+        self.assertIn(waiting_on_actor.id, overdue_ids)
+        self.assertIn(mentioned_actor.id, overdue_ids)
+        self.assertNotIn(waiting_on_other.id, overdue_ids)
 
     def test_dashboard_all_queue_is_available_in_the_search_toolbar(self):
         db.session.add(UserPermission(
