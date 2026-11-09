@@ -25,6 +25,14 @@
   .workflow-cycle-dot { display: inline-block; width: .65rem; height: .65rem; border-radius: 50%; background: var(--cycle-color); flex: 0 0 auto; }
   .workflow-cycle-story-item { border-right: .28rem solid var(--cycle-color); background: linear-gradient(90deg, var(--cycle-soft), #fff); }
   .workflow-cycle-story-item .workflow-cycle-story-marker { width: .8rem; height: .8rem; border-radius: 50%; background: var(--cycle-color); box-shadow: 0 0 0 .25rem var(--cycle-soft); flex: 0 0 auto; }
+  .workflow-story-cycle-filters { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .workflow-story-cycle-filter { border: 1px solid var(--cycle-border, #ced4da); background: var(--cycle-soft, #f8f9fa); color: inherit; border-radius: 999px; padding: .4rem .75rem; transition: box-shadow .15s ease, transform .15s ease; }
+  .workflow-story-cycle-filter:hover, .workflow-story-cycle-filter.active { transform: translateY(-1px); box-shadow: 0 .2rem .6rem rgba(33, 37, 41, .12); }
+  .workflow-story-cycle-filter.active { outline: 2px solid var(--cycle-color, #0d6efd); outline-offset: 1px; }
+  .workflow-cycle-story-source { display: none !important; }
+  .workflow-story-stage .workflow-cycle-story-step { border-right: .28rem solid var(--cycle-color); background: linear-gradient(90deg, var(--cycle-soft), #fff); }
+  .workflow-story-cycle-badge { display: none; }
+  .workflow-story-stage .workflow-story-cycle-badge { display: inline-block; }
   @media (max-width: 575.98px) { .workflow-story-modal .modal-dialog { margin: .35rem; } }
 </style>
 {% endblock %}
@@ -298,39 +306,6 @@
     </div>
   </div>
 </div>
-
-{% if cycle_story_events %}
-<div class="card shadow-sm mb-3 border-0">
-  <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
-    <div><strong><i class="bi bi-journal-text"></i> قصة المسار كاملة</strong></div>
-    <span class="small text-muted">الأحداث المهمة مرتبة من الأقدم إلى الأحدث</span>
-  </div>
-  <div class="card-body">
-    <div class="d-grid gap-2">
-      {% for event in cycle_story_events %}
-      <div class="workflow-cycle-story-item rounded-3 border p-3"
-           style="--cycle-color: {{ event.cycle_color }}; --cycle-soft: {{ event.cycle_soft_color }};">
-        <div class="d-flex align-items-start gap-3">
-          <span class="workflow-cycle-story-marker mt-1" aria-hidden="true"></span>
-          <div class="flex-grow-1">
-            <div class="d-flex flex-wrap align-items-center gap-2">
-              <span class="badge" style="background: {{ event.cycle_color }}; color: #fff;">{{ event.cycle_label }}</span>
-              <strong>{{ event.action }}</strong>
-              {% if event.created_at %}<span class="small text-muted">{{ event.created_at|local_datetime }}</span>{% endif %}
-            </div>
-            <div class="small text-muted mt-1">بواسطة: {{ event.author }}</div>
-            {% if event.action_code in ['WORKFLOW_CYCLE_OPENED', 'CORR_WORKFLOW_CYCLE_LINKED', 'WORKFLOW_STARTED'] and (event.email_subject or event.email_ref) %}
-            <div class="small mt-2"><i class="bi bi-envelope"></i> {% if event.email_ref %}{{ event.email_ref }}{% endif %}{% if event.email_ref and event.email_subject %} — {% endif %}{{ event.email_subject }}</div>
-            {% endif %}
-            {% if event.note %}<div class="small mt-2" style="white-space: pre-wrap;">{{ event.note }}</div>{% endif %}
-          </div>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-</div>
-{% endif %}
 {% endif %}
 
 {% if corr_source %}
@@ -698,12 +673,20 @@
             <hr class="my-2">
           {% endif %}
 
-          <div class="list-group mb-0" id="workflowRouteSteps" data-current-step="{{ inst.current_step_order if inst else '' }}">
+          {% set current_cycle_tab = (cycle_tabs|selectattr('is_current')|list|first) if cycle_tabs else none %}
+          <div class="list-group mb-0" id="workflowRouteSteps"
+               data-current-step="{{ inst.current_step_order if inst else '' }}"
+               data-current-cycle="{{ req.cycle_number or 1 }}">
             {% for s in steps %}
-              <div class="list-group-item border rounded-3 mb-2 ps-3 workflow-step-card" data-step-order="{{ s.step_order }}">
+              <div class="list-group-item border rounded-3 mb-2 ps-3 workflow-step-card"
+                   data-step-order="{{ s.step_order }}"
+                   data-cycle-number="{{ req.cycle_number or 1 }}"
+                   data-story-sequence="{{ s.step_order }}"
+                   data-cycle-label="الدورة {{ req.cycle_number or 1 }}">
                 <div class="d-flex justify-content-between">
                   <div>
                     <strong>الخطوة {{ s.step_order }}</strong>
+                    <span class="badge workflow-story-cycle-badge" style="background: {{ current_cycle_tab.color if current_cycle_tab else '#2563eb' }}; color: #fff;">الدورة {{ req.cycle_number or 1 }}</span>
                     {% if (s.mode or '')|upper == 'PARALLEL_SYNC' %}
                       <span class="badge bg-info text-dark ms-2">متزامن</span>
                     {% endif %}
@@ -939,10 +922,14 @@
             {% endfor %}
             {% for event in story_events or [] %}
               <div class="list-group-item border rounded-3 mb-2 ps-3 workflow-story-only workflow-step-card workflow-story-event-card"
-                   data-story-kind="event" data-event-action="{{ event.action }}">
+                   data-story-kind="event"
+                   data-event-action="{{ event.action }}"
+                   data-cycle-number="{{ req.cycle_number or 1 }}"
+                   data-story-sequence="{{ 100000 + loop.index }}"
+                   data-cycle-label="الدورة {{ req.cycle_number or 1 }}">
                 <div class="d-flex justify-content-between align-items-start gap-3">
                   <div>
-                    <div class="fw-semibold text-primary"><i class="bi bi-clock-history"></i> {{ event.action }}</div>
+                    <div class="fw-semibold text-primary"><i class="bi bi-clock-history"></i> {{ event.action }} <span class="badge workflow-story-cycle-badge" style="background: {{ current_cycle_tab.color if current_cycle_tab else '#2563eb' }}; color: #fff;">الدورة {{ req.cycle_number or 1 }}</span></div>
                     <div class="small text-muted mt-1">
                       <i class="bi bi-person-circle"></i> {{ event.author }}
                       {% if event.created_at %} · {{ event.created_at|local_datetime }}{% endif %}
@@ -1800,11 +1787,33 @@
       <div class="modal-header">
         <div>
           <h5 class="modal-title" id="workflowStoryModalLabel"><i class="bi bi-signpost-split"></i> قصة المسار</h5>
-          <div class="small text-muted">استعرض كل خطوة، ثم الأحداث اللاحقة مثل التعليقات والمنشن والمرفقات وإعادة فتح المسار.</div>
+          <div class="small text-muted">استعرض خطوات كل دورة وأحداثها بترتيب واضح، مع تمييز الدورة المختارة.</div>
         </div>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
       </div>
       <div class="modal-body">
+        {% if cycle_count > 1 %}
+        <div class="border rounded-3 bg-body-tertiary p-3 mb-3">
+          <div class="small fw-semibold mb-2"><i class="bi bi-filter-circle"></i> عرض قصة:</div>
+          <div class="workflow-story-cycle-filters" role="group" aria-label="اختيار دورة قصة المسار">
+            <button type="button" class="workflow-story-cycle-filter active"
+                    data-workflow-story-cycle="all"
+                    style="--cycle-color: #0d6efd; --cycle-soft: #eff6ff; --cycle-border: #93c5fd;"
+                    aria-pressed="true">كل الدورات</button>
+            {% for cycle in cycle_tabs %}
+            <button type="button" class="workflow-story-cycle-filter"
+                    data-workflow-story-cycle="{{ cycle.number }}"
+                    style="--cycle-color: {{ cycle.color }}; --cycle-soft: {{ cycle.soft_color }}; --cycle-border: {{ cycle.border_color }};"
+                    aria-pressed="false">
+              <span class="workflow-cycle-dot" aria-hidden="true"></span>
+              {{ cycle.label }}
+              <span class="small">({{ cycle.status_label }})</span>
+            </button>
+            {% endfor %}
+          </div>
+          <div id="workflowStoryCycleHint" class="small text-muted mt-2">تظهر الآن خطوات وأحداث جميع الدورات.</div>
+        </div>
+        {% endif %}
         <div class="d-flex align-items-center justify-content-between gap-3 mb-2">
           <span id="workflowStoryCounter" class="small fw-semibold"></span>
           <span id="workflowStoryStepLabel" class="badge text-bg-primary"></span>
@@ -1819,18 +1828,102 @@
     </div>
   </div>
 </div>
+
+{# بطاقات الدورات الأقدم مصدر مخفي لقارئ القصة؛ لا تظهر في الصفحة إلا بعد اختيار «قصة المسار». #}
+<div id="workflowCycleStorySource" class="workflow-cycle-story-source" aria-hidden="true">
+  {% for cycle_story in cycle_story_cycles or [] %}
+  {% if not cycle_story.is_current %}
+    {% for s in cycle_story.steps or [] %}
+      {% set route_user = users_map.get(s.approver_user_id) if s.approver_user_id else None %}
+      {% set cycle_kind = (s.approver_kind or '')|upper %}
+      <article class="list-group-item border rounded-3 mb-2 ps-3 workflow-step-card workflow-cycle-story-step"
+               style="--cycle-color: {{ cycle_story.color }}; --cycle-soft: {{ cycle_story.soft_color }};"
+               data-story-kind="step"
+               data-step-order="{{ s.step_order }}"
+               data-story-sequence="{{ s.step_order }}"
+               data-cycle-number="{{ cycle_story.number }}"
+               data-cycle-label="{{ cycle_story.label }}">
+        <div class="d-flex justify-content-between align-items-start gap-3">
+          <div>
+            <div class="d-flex flex-wrap align-items-center gap-2">
+              <span class="badge" style="background: {{ cycle_story.color }}; color: #fff;">{{ cycle_story.label }}</span>
+              <strong>الخطوة {{ s.step_order }}</strong>
+            </div>
+            <div class="small text-muted mt-2">
+              الجهة:
+              {% if s.routing_label %}
+                {{ s.routing_label }}
+              {% elif cycle_kind == 'USER' %}
+                {{ route_user.full_name if route_user and route_user.full_name else (route_user.email if route_user else ('#' ~ s.approver_user_id)) }}
+              {% elif cycle_kind == 'ROLE' %}
+                {{ s.approver_role|ui_label or s.approver_role or 'دور وظيفي' }}
+              {% elif cycle_kind == 'DIRECTORATE' %}
+                {{ dirs_map.get(s.approver_directorate_id).name_ar if s.approver_directorate_id and dirs_map.get(s.approver_directorate_id) else ('إدارة #' ~ s.approver_directorate_id) }}
+              {% elif cycle_kind == 'UNIT' %}
+                {{ units_map.get(s.approver_unit_id).name_ar if s.approver_unit_id and units_map.get(s.approver_unit_id) else ('وحدة #' ~ s.approver_unit_id) }}
+              {% elif cycle_kind == 'SECTION' %}
+                {{ sections_map.get(s.approver_section_id).name_ar if s.approver_section_id and sections_map.get(s.approver_section_id) else ('قسم #' ~ s.approver_section_id) }}
+              {% elif cycle_kind == 'DIVISION' %}
+                {{ divisions_map.get(s.approver_division_id).name_ar if s.approver_division_id and divisions_map.get(s.approver_division_id) else ('شعبة #' ~ s.approver_division_id) }}
+              {% elif cycle_kind == 'ORG_NODE' %}
+                {{ org_nodes_map.get(s.approver_org_node_id).name_ar if s.approver_org_node_id and org_nodes_map.get(s.approver_org_node_id) else (s.approver_kind|ui_label or 'عنصر هيكلي') }}
+              {% elif cycle_kind == 'COMMITTEE' %}
+                {{ committees_map.get(s.approver_committee_id).name_ar if s.approver_committee_id and committees_map.get(s.approver_committee_id) else ('لجنة #' ~ s.approver_committee_id) }}
+              {% else %}
+                {{ depts_map.get(s.approver_department_id).name_ar if s.approver_department_id and depts_map.get(s.approver_department_id) else 'الجهة المسؤولة' }}
+              {% endif %}
+            </div>
+          </div>
+          <span class="badge {% if s.status == 'APPROVED' %}bg-success{% elif s.status == 'REJECTED' %}bg-danger{% elif s.status == 'PENDING' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ s.status|workflow_status_label }}</span>
+        </div>
+        {% if s.decided_at %}
+          {% set decision_user = users_map.get(s.decided_by_id) if s.decided_by_id else None %}
+          <div class="small mt-2"><i class="bi bi-person-check"></i> نُفذت بواسطة <strong>{{ decision_user.full_name if decision_user else ('#' ~ s.decided_by_id) }}</strong> · {{ s.decided_at|local_datetime }}</div>
+        {% endif %}
+        {% if s.note %}<div class="workflow-note-card p-3 mt-3 mb-1" style="white-space: pre-wrap"><strong><i class="bi bi-chat-right-text"></i> التعليق:</strong><div class="mt-2">{{ s.note }}</div></div>{% endif %}
+      </article>
+    {% endfor %}
+    {% for event in cycle_story.events or [] %}
+      <article class="list-group-item border rounded-3 mb-2 ps-3 workflow-step-card workflow-cycle-story-step"
+               style="--cycle-color: {{ cycle_story.color }}; --cycle-soft: {{ cycle_story.soft_color }};"
+               data-story-kind="event"
+               data-event-action="{{ event.action }}"
+               data-story-sequence="{{ 100000 + loop.index }}"
+               data-cycle-number="{{ cycle_story.number }}"
+               data-cycle-label="{{ cycle_story.label }}">
+        <div class="d-flex justify-content-between align-items-start gap-3">
+          <div>
+            <div class="fw-semibold" style="color: {{ cycle_story.color }};"><i class="bi bi-clock-history"></i> {{ event.action }}</div>
+            <div class="small text-muted mt-1"><i class="bi bi-person-circle"></i> {{ event.author }}{% if event.created_at %} · {{ event.created_at|local_datetime }}{% endif %}</div>
+          </div>
+          <span class="badge" style="background: {{ cycle_story.color }}; color: #fff;">{{ cycle_story.label }}</span>
+        </div>
+        {% if event.email_subject or event.email_ref %}
+          <div class="small mt-2"><i class="bi bi-envelope"></i> {% if event.email_ref %}{{ event.email_ref }}{% endif %}{% if event.email_ref and event.email_subject %} — {% endif %}{{ event.email_subject }}</div>
+        {% endif %}
+        {% if event.note %}<div class="workflow-note-card p-3 mt-3 mb-1" style="white-space: pre-wrap">{{ event.note }}</div>{% endif %}
+      </article>
+    {% endfor %}
+  {% endif %}
+  {% endfor %}
+</div>
 <script>
 (() => {
   const modal = document.getElementById('workflowStoryModal');
   const source = document.getElementById('workflowRouteSteps');
   if (!modal || !source) return;
+  const cycleSource = document.getElementById('workflowCycleStorySource');
   const stage = document.getElementById('workflowStoryStage');
   const counter = document.getElementById('workflowStoryCounter');
   const label = document.getElementById('workflowStoryStepLabel');
   const progress = document.getElementById('workflowStoryProgress');
   const next = document.getElementById('workflowStoryNext');
   const prev = document.getElementById('workflowStoryPrev');
+  const cycleHint = document.getElementById('workflowStoryCycleHint');
+  const cycleFilterButtons = [...modal.querySelectorAll('[data-workflow-story-cycle]')];
   let active = 0;
+  let activeCycle = 'all';
+  let allCards = [];
   let cards = [];
 
   function cleanClone(card) {
@@ -1840,37 +1933,104 @@
     clone.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
     return clone;
   }
+
+  function cycleNumber(card) {
+    return String(card.dataset.cycleNumber || source.dataset.currentCycle || '1');
+  }
+
+  function cycleLabel(card) {
+    return card.dataset.cycleLabel || `الدورة ${cycleNumber(card)}`;
+  }
+
+  function storySequence(card) {
+    const sequence = Number(card.dataset.storySequence || card.dataset.stepOrder || 0);
+    return Number.isFinite(sequence) ? sequence : 0;
+  }
+
+  function syncCycleFilters() {
+    cycleFilterButtons.forEach(button => {
+      const selected = button.dataset.workflowStoryCycle === activeCycle;
+      button.classList.toggle('active', selected);
+      button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    });
+    if (cycleHint) {
+      cycleHint.textContent = activeCycle === 'all'
+        ? 'تظهر الآن خطوات وأحداث جميع الدورات.'
+        : `تظهر الآن خطوات وأحداث ${cycleLabel(cards[0] || { dataset: { cycleNumber: activeCycle } })}.`;
+    }
+  }
+
   function show(index) {
-    if (!cards.length) return;
+    allCards.forEach(card => card.classList.remove('workflow-story-active'));
+    if (!cards.length) {
+      counter.textContent = 'لا توجد تفاصيل لهذه الدورة';
+      label.textContent = '';
+      progress.style.width = '0%';
+      next.disabled = true;
+      prev.disabled = true;
+      return;
+    }
     active = Math.max(0, Math.min(index, cards.length - 1));
     cards.forEach((card, i) => card.classList.toggle('workflow-story-active', i === active));
     const kind = cards[active].dataset.storyKind || 'step';
+    const currentCycleLabel = cycleLabel(cards[active]);
     const stepCount = cards.filter(card => card.dataset.storyKind !== 'event').length;
     const eventCount = cards.length - stepCount;
     if (kind === 'event') {
       const eventIndex = cards.slice(0, active + 1).filter(card => card.dataset.storyKind === 'event').length;
-      counter.textContent = `حدث ${eventIndex} من ${eventCount}`;
-      label.textContent = cards[active].dataset.eventAction || 'حدث في المسار';
+      counter.textContent = `${currentCycleLabel} · حدث ${eventIndex} من ${eventCount}`;
+      label.textContent = `${currentCycleLabel} · ${cards[active].dataset.eventAction || 'حدث في المسار'}`;
     } else {
       const order = cards[active].dataset.stepOrder || active + 1;
       const stepIndex = cards.slice(0, active + 1).filter(card => card.dataset.storyKind !== 'event').length;
-      counter.textContent = `خطوة ${stepIndex} من ${stepCount}`;
-      label.textContent = `الخطوة ${order}`;
+      counter.textContent = `${currentCycleLabel} · خطوة ${stepIndex} من ${stepCount}`;
+      label.textContent = `${currentCycleLabel} · الخطوة ${order}`;
     }
     progress.style.width = `${((active + 1) / cards.length) * 100}%`;
     next.disabled = active === 0;
     prev.disabled = active === cards.length - 1;
   }
+
+  function setCycleFilter(filter, requestedStepOrder) {
+    activeCycle = filter || 'all';
+    cards = allCards.filter(card => activeCycle === 'all' || cycleNumber(card) === activeCycle);
+    syncCycleFilters();
+    const requested = Number(requestedStepOrder || 0);
+    const matching = requested
+      ? cards.findIndex(card => (
+          card.dataset.storyKind !== 'event'
+          && Number(card.dataset.stepOrder) === requested
+        ))
+      : -1;
+    show(matching >= 0 ? matching : 0);
+  }
+
   modal.addEventListener('show.bs.modal', event => {
     if (event.relatedTarget && event.relatedTarget.classList.contains('workflow-story-launcher')) {
       modal.dataset.stepOrder = '';
+      modal.dataset.stepCycle = '';
     }
     stage.replaceChildren();
-    cards = [...source.querySelectorAll('.workflow-step-card')].map(cleanClone);
-    cards.forEach(card => stage.appendChild(card));
-    const requested = Number(modal.dataset.stepOrder || source.dataset.currentStep || 0);
-    const matching = cards.findIndex(card => Number(card.dataset.stepOrder) === requested);
-    show(matching >= 0 ? matching : 0);
+    const currentCards = [...source.querySelectorAll('.workflow-step-card')].map(cleanClone);
+    const historicalCards = cycleSource
+      ? [...cycleSource.querySelectorAll('.workflow-step-card')].map(cleanClone)
+      : [];
+    allCards = [...currentCards, ...historicalCards].sort((left, right) => {
+      const cycleDiff = Number(cycleNumber(left)) - Number(cycleNumber(right));
+      if (cycleDiff) return cycleDiff;
+      return storySequence(left) - storySequence(right);
+    });
+    allCards.forEach(card => stage.appendChild(card));
+    const requestedCycle = modal.dataset.stepCycle || 'all';
+    const requestedStepOrder = modal.dataset.stepOrder || '';
+    setCycleFilter(requestedCycle, requestedStepOrder);
+  });
+  cycleFilterButtons.forEach(button => {
+    button.addEventListener('click', () => {
+      modal.dataset.stepOrder = '';
+      modal.dataset.stepCycle = button.dataset.workflowStoryCycle || 'all';
+      setCycleFilter(modal.dataset.stepCycle, '');
+    });
   });
   next.addEventListener('click', () => show(active - 1));
   prev.addEventListener('click', () => show(active + 1));
@@ -1894,6 +2054,7 @@
     if (!reader) return;
     const card = reader.closest('.workflow-step-card');
     modal.dataset.stepOrder = card ? card.dataset.stepOrder : '';
+    modal.dataset.stepCycle = card ? cycleNumber(card) : source.dataset.currentCycle || '1';
     bootstrap.Modal.getOrCreateInstance(modal).show();
   });
 })();

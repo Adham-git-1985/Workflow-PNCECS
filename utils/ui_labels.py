@@ -186,6 +186,7 @@ UI_LABELS_AR = {
     "WORKFLOW_REPORTS_READ": "تقارير مسار",
     "WORKFLOW_REPORTS_EMAIL_MANAGE": "إدارة إرسال تقارير مسار",
     "WORKFLOW_STARTED": "بدء المسار",
+    "WORKFLOW_CYCLE_FOLLOWER": "إضافة متابع للدورة",
     "WORKFLOW_REPLY": "رد على المسار",
     "WORKFLOW_MENTION_ACCESS": "إضافة مستخدم إلى المسار بالمنشن",
     "WORKFLOW_MENTION_TASK_COMPLETED": "اكتمال متابعة المنشن",

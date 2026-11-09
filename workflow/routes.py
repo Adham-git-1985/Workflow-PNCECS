@@ -7852,6 +7852,7 @@ def view_request(request_id):
         "WORKFLOW_CYCLE_OPENED": "تم فتح دورة جديدة بسبب إيميل جديد",
         "CORR_WORKFLOW_CYCLE_LINKED": "تم ربط الإيميل الجديد بالمسار",
         "WORKFLOW_CYCLE_LINKED": "تم ربط الطلب الجديد بالمسار",
+        WORKFLOW_CYCLE_FOLLOWER_ACTION: "تمت إضافة متابع للدورة",
         "CORR_WORKFLOW_START": "تم ربط البريد الإلكتروني وبدء الدورة",
         ASSISTANT_SECRETARY_STEP_REDIRECT_ACTION: "تمت إعادة التوجيه من مساعد الأمين العام",
         "STEP_APPROVED": "تم الاطلاع والمتابعة",
@@ -8048,6 +8049,66 @@ def view_request(request_id):
         except Exception:
             cycle_context_by_id[int(cycle_row.id)] = None
 
+    # Load the runtime steps for every visible cycle once.  The main page
+    # still renders the current cycle with its full controls, while the story
+    # reader uses these frozen step snapshots to explain older cycles without
+    # reopening them or issuing one query per step.
+    cycle_request_ids = [
+        int(cycle_row.id)
+        for cycle_row in visible_cycle_rows
+        if getattr(cycle_row, "id", None)
+    ]
+    cycle_steps_by_request_id = {}
+    if cycle_request_ids:
+        if inst and int(req.id) in cycle_request_ids:
+            cycle_steps_by_request_id[int(req.id)] = list(steps or [])
+
+        other_cycle_request_ids = [
+            cycle_id for cycle_id in cycle_request_ids
+            if cycle_id != int(req.id)
+        ]
+        cycle_instance_rows = []
+        if other_cycle_request_ids:
+            cycle_instance_rows = (
+                WorkflowInstance.query
+                .filter(WorkflowInstance.request_id.in_(other_cycle_request_ids))
+                .all()
+            )
+        cycle_request_id_by_instance_id = {
+            int(instance.id): int(instance.request_id)
+            for instance in cycle_instance_rows
+            if getattr(instance, "id", None) and getattr(instance, "request_id", None)
+        }
+        if inst and getattr(inst, "id", None):
+            cycle_request_id_by_instance_id[int(inst.id)] = int(req.id)
+        cycle_instance_ids = [
+            int(instance.id)
+            for instance in cycle_instance_rows
+            if getattr(instance, "id", None)
+        ]
+        if cycle_instance_ids:
+            cycle_step_rows = (
+                WorkflowInstanceStep.query
+                .filter(WorkflowInstanceStep.instance_id.in_(cycle_instance_ids))
+                .order_by(
+                    WorkflowInstanceStep.instance_id.asc(),
+                    WorkflowInstanceStep.step_order.asc(),
+                )
+                .all()
+            )
+            for cycle_step in cycle_step_rows:
+                cycle_request_id = cycle_request_id_by_instance_id.get(
+                    int(getattr(cycle_step, "instance_id", 0) or 0)
+                )
+                if cycle_request_id is not None:
+                    cycle_steps_by_request_id.setdefault(cycle_request_id, []).append(cycle_step)
+
+    all_cycle_story_steps = [
+        step
+        for cycle_steps in cycle_steps_by_request_id.values()
+        for step in cycle_steps
+    ]
+
     # The grouped story contains the milestones that matter to a reader:
     # email/cycle creation, route start and completion, decisions, comments,
     # mentions, attachments, and explicit reopen actions.  Page-view and
@@ -8204,6 +8265,10 @@ def view_request(request_id):
         for user_id in (step.approver_user_id, step.decided_by_id):
             if user_id:
                 user_ids.add(int(user_id))
+    for step in all_cycle_story_steps:
+        for user_id in (step.approver_user_id, step.decided_by_id):
+            if user_id:
+                user_ids.add(int(user_id))
     user_ids.update(
         int(file_item.owner_id)
         for file_item in files_map.values()
@@ -8234,30 +8299,65 @@ def view_request(request_id):
         int(step.approver_department_id)
         for step in steps if step.approver_department_id
     }
+    department_ids.update(
+        int(step.approver_department_id)
+        for step in all_cycle_story_steps
+        if step.approver_department_id
+    )
     directorate_ids = {
         int(step.approver_directorate_id)
         for step in steps if step.approver_directorate_id
     }
+    directorate_ids.update(
+        int(step.approver_directorate_id)
+        for step in all_cycle_story_steps
+        if step.approver_directorate_id
+    )
     unit_ids = {
         int(step.approver_unit_id)
         for step in steps if step.approver_unit_id
     }
+    unit_ids.update(
+        int(step.approver_unit_id)
+        for step in all_cycle_story_steps
+        if step.approver_unit_id
+    )
     section_ids = {
         int(step.approver_section_id)
         for step in steps if step.approver_section_id
     }
+    section_ids.update(
+        int(step.approver_section_id)
+        for step in all_cycle_story_steps
+        if step.approver_section_id
+    )
     division_ids = {
         int(step.approver_division_id)
         for step in steps if step.approver_division_id
     }
+    division_ids.update(
+        int(step.approver_division_id)
+        for step in all_cycle_story_steps
+        if step.approver_division_id
+    )
     org_node_ids = {
         int(step.approver_org_node_id)
         for step in steps if step.approver_org_node_id
     }
+    org_node_ids.update(
+        int(step.approver_org_node_id)
+        for step in all_cycle_story_steps
+        if step.approver_org_node_id
+    )
     committee_ids = {
         int(step.approver_committee_id)
         for step in steps if step.approver_committee_id
     }
+    committee_ids.update(
+        int(step.approver_committee_id)
+        for step in all_cycle_story_steps
+        if step.approver_committee_id
+    )
     depts_map = {
         int(row.id): row for row in (
             Department.query.filter(Department.id.in_(department_ids)).all()
@@ -8326,6 +8426,27 @@ def view_request(request_id):
             and step.approver_committee_id
         )
     )
+    cycle_story_events_by_request_id = {}
+    for event in cycle_story_events:
+        cycle_story_events_by_request_id.setdefault(
+            int(event.get("cycle_request_id") or 0),
+            [],
+        ).append(event)
+    cycle_story_cycles = [
+        {
+            "id": cycle_tab["id"],
+            "number": cycle_tab["number"],
+            "label": cycle_tab["label"],
+            "status_label": cycle_tab["status_label"],
+            "color": cycle_tab["color"],
+            "soft_color": cycle_tab["soft_color"],
+            "border_color": cycle_tab["border_color"],
+            "is_current": cycle_tab["is_current"],
+            "steps": cycle_steps_by_request_id.get(cycle_tab["id"], []),
+            "events": cycle_story_events_by_request_id.get(cycle_tab["id"], []),
+        }
+        for cycle_tab in cycle_tabs
+    ]
     mentioned_users = []
     mentioned_task_statuses = {}
     mention_removable_user_ids = set()
@@ -8698,6 +8819,7 @@ def view_request(request_id):
         cycle_root_request=cycle_root_request,
         cycle_tabs=cycle_tabs,
         cycle_story_events=cycle_story_events,
+        cycle_story_cycles=cycle_story_cycles,
         cycle_count=len(cycle_tabs),
         corr_status_labels=CORR_STATUS_LABELS,
         corr_action_labels=CORR_ACTION_LABELS,
