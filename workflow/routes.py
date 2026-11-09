@@ -30,7 +30,7 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-from sqlalchemy import and_, case, func, update, or_
+from sqlalchemy import and_, case, func, update, or_, exists
 from sqlalchemy.orm import joinedload
 
 from . import workflow_bp
@@ -4418,6 +4418,7 @@ def workflow_cycle_search():
     query = WorkflowRequest.query
     if term:
         like = f"%{term}%"
+        term_key = term.casefold()
         conditions = [
             WorkflowRequest.title.ilike(like),
             WorkflowRequest.description.ilike(like),
@@ -4425,9 +4426,55 @@ def workflow_cycle_search():
                 User.name.ilike(like),
                 User.email.ilike(like),
             )),
+            WorkflowRequest.request_type.has(or_(
+                RequestType.name_ar.ilike(like),
+                RequestType.name_en.ilike(like),
+                RequestType.code.ilike(like),
+            )),
+            exists().where(and_(
+                InboundMail.id == WorkflowRequest.source_corr_id,
+                WorkflowRequest.source_corr_kind.in_(["IN", "INBOUND"]),
+                or_(
+                    InboundMail.ref_no.ilike(like),
+                    InboundMail.subject.ilike(like),
+                    InboundMail.sender.ilike(like),
+                    InboundMail.competence_label.ilike(like),
+                ),
+            )),
+            exists().where(and_(
+                OutboundMail.id == WorkflowRequest.source_corr_id,
+                WorkflowRequest.source_corr_kind.in_(["OUT", "OUTBOUND"]),
+                or_(
+                    OutboundMail.ref_no.ilike(like),
+                    OutboundMail.subject.ilike(like),
+                    OutboundMail.recipient.ilike(like),
+                    OutboundMail.competence_label.ilike(like),
+                ),
+            )),
+            exists().where(and_(
+                WorkflowInstance.request_id == WorkflowRequest.id,
+                WorkflowInstance.template_id == WorkflowTemplate.id,
+                WorkflowTemplate.name.ilike(like),
+            )),
         ]
         if term.isdigit():
             conditions.append(WorkflowRequest.id == int(term))
+        if "وارد" in term_key or term_key in {"in", "inbound"}:
+            conditions.append(WorkflowRequest.source_corr_kind.in_(["IN", "INBOUND"]))
+        if "صادر" in term_key or term_key in {"out", "outbound"}:
+            conditions.append(WorkflowRequest.source_corr_kind.in_(["OUT", "OUTBOUND"]))
+        if "غير مرتبط" in term_key or "مسار عام" in term_key:
+            conditions.append(WorkflowRequest.source_corr_kind.is_(None))
+        if "دينام" in term_key:
+            conditions.append(~exists().where(and_(
+                WorkflowInstance.request_id == WorkflowRequest.id,
+                WorkflowInstance.template_id.isnot(None),
+            )))
+        if "محفوظ" in term_key or "قالب" in term_key or term_key in {"template", "predefined"}:
+            conditions.append(exists().where(and_(
+                WorkflowInstance.request_id == WorkflowRequest.id,
+                WorkflowInstance.template_id.isnot(None),
+            )))
         query = query.filter(or_(*conditions))
 
     group_root = func.coalesce(
@@ -4484,9 +4531,29 @@ def workflow_cycle_search():
         latest_instance = WorkflowInstance.query.filter_by(
             request_id=latest.id
         ).first()
+        source_kind = (getattr(latest, "source_corr_kind", None) or "").strip().upper()
+        source_id = getattr(latest, "source_corr_id", None)
+        source_model = (
+            InboundMail
+            if source_kind in {"IN", "INBOUND"}
+            else OutboundMail
+            if source_kind in {"OUT", "OUTBOUND"}
+            else None
+        )
+        source = (
+            db.session.get(source_model, int(source_id))
+            if source_model and source_id
+            else None
+        )
         requester = getattr(latest, "requester", None) or getattr(root, "requester", None)
         status = (getattr(latest, "status", None) or "").strip().upper()
         selected_id = int(latest.id)
+        source_kind_label = {
+            "IN": "وارد",
+            "INBOUND": "وارد",
+            "OUT": "صادر",
+            "OUTBOUND": "صادر",
+        }.get(source_kind, "مسار عام")
         results.append({
             "id": selected_id,
             "title": (getattr(latest, "title", None) or getattr(root, "title", None) or f"المسار #{selected_id}").strip(),
@@ -4504,13 +4571,26 @@ def workflow_cycle_search():
                 if latest_instance and latest_instance.template_id
                 else "مسار ديناميكي"
             ),
-            "kind": "WORKFLOW",
-            "ref_no": None,
-            "subject": None,
+            "kind": source_kind or "WORKFLOW",
+            "source_kind_label": source_kind_label,
+            "ref_no": getattr(source, "ref_no", None) if source else None,
+            "subject": getattr(source, "subject", None) if source else None,
             "party": (
-                getattr(requester, "full_name", None)
-                or getattr(requester, "email", None)
-                if requester else None
+                (
+                    getattr(source, "sender", None)
+                    if source_kind in {"IN", "INBOUND"}
+                    else getattr(source, "recipient", None)
+                )
+                if source
+                else (
+                    getattr(requester, "full_name", None)
+                    or getattr(requester, "email", None)
+                    if requester else None
+                )
+            ),
+            "request_type": (
+                getattr(getattr(latest, "request_type", None), "label", None)
+                or getattr(getattr(latest, "request_type", None), "name_ar", None)
             ),
             "url": url_for("workflow.view_request", request_id=selected_id),
         })

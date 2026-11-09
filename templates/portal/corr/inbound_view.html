@@ -146,6 +146,7 @@
               <option value="{{ t.id }}" {% if item.workflow_template_id == t.id %}selected{% endif %}>{{ t.name }}</option>
             {% endfor %}
           </select>
+          {% set cycle_picker_id = 'InboundWorkflow' %}
           {% include 'portal/corr/_workflow_cycle_picker.html' %}
           <div>
             <label class="form-label small mb-1" for="inboundWorkflowTarget">الإدارة العامة المعنية بالمسار</label>

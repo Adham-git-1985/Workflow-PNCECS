@@ -1,38 +1,78 @@
 {% set cycle_search_endpoint = cycle_search_url|default(url_for('portal.correspondence_workflow_search'), true) %}
-{% set cycle_search_placeholder = cycle_search_placeholder|default('ابحث برقم المسار أو المرجع أو الموضوع أو الجهة', true) %}
+{% set cycle_search_placeholder = cycle_search_placeholder|default('ابحث برقم المسار أو العنوان أو الوصف أو المرجع أو الموضوع أو الجهة', true) %}
+{% set cycle_picker_key = cycle_picker_id|default('Form', true) %}
+{% set cycle_modal_id = 'oldWorkflowSearchModal' ~ cycle_picker_key %}
 {% set cycle_is_linked = request.form.get('link_old_workflow') in ['1', 'true', 'on', 'yes'] or request.form.get('parent_workflow_id') %}
+
 <div class="border rounded-3 bg-white p-3" data-workflow-cycle-picker
-     data-search-url="{{ cycle_search_endpoint }}" data-page-size="20">
+     data-search-url="{{ cycle_search_endpoint }}" data-page-size="20" data-modal-id="{{ cycle_modal_id }}">
   <div class="form-check form-switch mb-2">
     <input class="form-check-input" type="checkbox" role="switch"
-           id="linkOldWorkflow{{ loop.index0 if loop is defined else 'Form' }}"
+           id="linkOldWorkflow{{ cycle_picker_key }}"
            name="link_old_workflow" value="1" data-cycle-toggle
            {% if cycle_is_linked %}checked{% endif %}>
-    <label class="form-check-label small fw-semibold" for="linkOldWorkflow{{ loop.index0 if loop is defined else 'Form' }}">
+    <label class="form-check-label small fw-semibold" for="linkOldWorkflow{{ cycle_picker_key }}">
       <i class="bi bi-link-45deg"></i> ربط الطلب بمسار قديم <span class="text-muted fw-normal">(اختياري)</span>
     </label>
   </div>
 
   <div class="d-none" data-cycle-panel>
-    <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
-      <span class="small text-muted">اختر مسارًا مفتوحًا أو مغلقًا لبدء دورة جديدة داخله.</span>
-      <span class="badge text-bg-light border">مفتوحة أو مغلقة</span>
-    </div>
-    <div class="input-group input-group-sm">
-      <input class="form-control" type="search" autocomplete="off"
-             data-cycle-search
-             placeholder="{{ cycle_search_placeholder }}">
-      <button class="btn btn-outline-secondary" type="button" data-cycle-clear>إلغاء الربط</button>
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+      <div>
+        <div class="fw-semibold"><i class="bi bi-search"></i> البحث عن المسار القديم</div>
+        <div class="small text-muted">ابحث في كل المسارات التي تملك صلاحية الاطلاع عليها، سواء كانت واردة أو صادرة أو ديناميكية أو غير مرتبطة بمراسلة.</div>
+      </div>
+      <button class="btn btn-primary btn-sm" type="button" data-cycle-open-search>
+        <i class="bi bi-search"></i> فتح بحث المسارات القديمة
+      </button>
     </div>
     <input type="hidden" name="parent_workflow_id" data-cycle-value
            value="{{ request.form.get('parent_workflow_id', '') }}">
-    <div class="small mt-2 d-none" data-cycle-selected role="status"></div>
-    <div class="list-group mt-2 d-none" data-cycle-results></div>
-    <button class="btn btn-sm btn-outline-primary mt-2 d-none" type="button" data-cycle-more>
-      عرض نتائج إضافية
-    </button>
+    <div class="small mt-2 d-none" data-cycle-selected role="status" aria-live="polite"></div>
+    <div class="d-flex justify-content-between align-items-center gap-2 mt-2">
+      <span class="small text-muted">يمكنك تغيير الاختيار أو إلغاء الربط في أي وقت.</span>
+      <button class="btn btn-outline-secondary btn-sm" type="button" data-cycle-clear>إلغاء الربط</button>
+    </div>
     <div class="form-text">
       عند اختيار مسار قديم سيُفتح تبويب/دورة جديدة من الخطوة الأولى، مع إبقاء الدورات السابقة كما هي.
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="{{ cycle_modal_id }}" tabindex="-1" aria-labelledby="{{ cycle_modal_id }}Label" aria-hidden="true" data-cycle-modal>
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title" id="{{ cycle_modal_id }}Label"><i class="bi bi-diagram-3"></i> اختيار مسار قديم</h5>
+          <div class="small text-muted mt-1">تظهر هنا جميع المسارات القديمة المتاحة لك: الواردة، الصادرة، الديناميكية، والمسارات العامة.</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info py-2 px-3 small mb-3">
+          <i class="bi bi-info-circle"></i>
+          البحث يشمل رقم المسار، العنوان، الوصف، نوع الطلب، اسم المنشئ، رقم/موضوع المراسلة والجهة، ولا يعرض إلا المسارات التي تملك صلاحية رؤيتها.
+        </div>
+        <label class="form-label fw-semibold" for="{{ cycle_modal_id }}Search">ابحث في المسارات القديمة</label>
+        <div class="input-group input-group-lg">
+          <span class="input-group-text"><i class="bi bi-search"></i></span>
+          <input class="form-control" id="{{ cycle_modal_id }}Search" type="search" autocomplete="off"
+                 data-cycle-search placeholder="{{ cycle_search_placeholder }}">
+          <button class="btn btn-outline-secondary" type="button" data-cycle-search-reset>مسح البحث</button>
+        </div>
+        <div class="small text-muted mt-2" data-cycle-status role="status" aria-live="polite"></div>
+        <div class="list-group mt-3" data-cycle-results aria-live="polite"></div>
+        <div class="d-flex justify-content-center mt-3">
+          <button class="btn btn-outline-primary d-none" type="button" data-cycle-more>
+            عرض نتائج إضافية
+          </button>
+        </div>
+      </div>
+      <div class="modal-footer justify-content-between">
+        <span class="small text-muted">اختر مسارًا مفتوحًا أو مغلقًا لبدء دورة جديدة داخله.</span>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-cycle-close>إغلاق</button>
+      </div>
     </div>
   </div>
 </div>
@@ -46,12 +86,17 @@
 
   var toggle = picker.querySelector("[data-cycle-toggle]");
   var panel = picker.querySelector("[data-cycle-panel]");
-  var search = picker.querySelector("[data-cycle-search]");
   var value = picker.querySelector("[data-cycle-value]");
   var selected = picker.querySelector("[data-cycle-selected]");
-  var results = picker.querySelector("[data-cycle-results]");
+  var openButton = picker.querySelector("[data-cycle-open-search]");
   var clearButton = picker.querySelector("[data-cycle-clear]");
-  var moreButton = picker.querySelector("[data-cycle-more]");
+  var modal = document.getElementById(picker.dataset.modalId || "");
+  var search = modal && modal.querySelector("[data-cycle-search]");
+  var results = modal && modal.querySelector("[data-cycle-results]");
+  var moreButton = modal && modal.querySelector("[data-cycle-more]");
+  var status = modal && modal.querySelector("[data-cycle-status]");
+  var searchReset = modal && modal.querySelector("[data-cycle-search-reset]");
+  var closeButton = modal && modal.querySelector("[data-cycle-close]");
   var templateSelect = picker.closest("form") && picker.closest("form").querySelector(
     '[name="template_id"], [name="workflow_template_id"]'
   );
@@ -63,13 +108,55 @@
   var loading = false;
   var controller = null;
 
-  function statusClass(status) {
-    status = String(status || "").toUpperCase();
-    if (status === "IN_PROGRESS" || status === "DRAFT") return "text-bg-primary";
-    if (status === "APPROVED") return "text-bg-success";
-    if (status === "REJECTED") return "text-bg-danger";
-    if (status === "CLOSED") return "text-bg-secondary";
+  if (!toggle || !panel || !value || !selected || !openButton || !clearButton ||
+      !modal || !search || !results || !moreButton) return;
+
+  function modalInstance() {
+    if (window.bootstrap && window.bootstrap.Modal) {
+      return window.bootstrap.Modal.getOrCreateInstance(modal);
+    }
+    return null;
+  }
+
+  function openModal() {
+    var instance = modalInstance();
+    if (instance) {
+      instance.show();
+    } else {
+      modal.classList.add("show");
+      modal.style.display = "block";
+      modal.removeAttribute("aria-hidden");
+      document.body.classList.add("modal-open");
+    }
+    if (loadedQuery === null) loadRows(true);
+    window.setTimeout(function () { search.focus(); }, 120);
+  }
+
+  function closeModal() {
+    var instance = modalInstance();
+    if (instance) {
+      instance.hide();
+      return;
+    }
+    modal.classList.remove("show");
+    modal.style.display = "none";
+    modal.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("modal-open");
+  }
+
+  function statusClass(statusValue) {
+    statusValue = String(statusValue || "").toUpperCase();
+    if (statusValue === "IN_PROGRESS" || statusValue === "DRAFT") return "text-bg-primary";
+    if (statusValue === "APPROVED") return "text-bg-success";
+    if (statusValue === "REJECTED") return "text-bg-danger";
+    if (statusValue === "CLOSED") return "text-bg-secondary";
     return "text-bg-light border";
+  }
+
+  function showStoredSelection() {
+    if (!value.value) return;
+    selected.className = "small mt-2 alert alert-primary py-2 px-3 mb-0";
+    selected.textContent = "تم اختيار المسار #" + value.value + " — يمكنك فتح البحث لتغييره.";
   }
 
   function showSelected(row) {
@@ -81,13 +168,15 @@
     }
     value.value = String(row.id || "");
     selected.className = "small mt-2 alert alert-primary py-2 px-3 mb-0";
-    selected.textContent = "تم اختيار المسار #" + row.id + " — الدورة " +
+    selected.textContent = "تم اختيار المسار #" + row.id + " — " +
+      (row.title || "بدون عنوان") + " — " +
+      (row.source_kind_label || "مسار عام") + " — الدورة " +
       (row.latest_cycle || 1) + " — " + (row.latest_status_label || "");
     if (templateSelect && row.template_id) {
       templateSelect.value = String(row.template_id);
       templateSelect.dispatchEvent(new Event("change", { bubbles: true }));
     }
-    results.classList.add("d-none");
+    closeModal();
   }
 
   function renderRows(rows, append) {
@@ -99,16 +188,15 @@
         return;
       }
       var empty = document.createElement("div");
-      empty.className = "list-group-item small text-muted";
+      empty.className = "list-group-item small text-muted py-4 text-center";
       empty.textContent = "لا توجد مسارات مطابقة للبحث.";
       results.appendChild(empty);
-      results.classList.remove("d-none");
       return;
     }
     rows.forEach(function (row) {
       var button = document.createElement("button");
       button.type = "button";
-      button.className = "list-group-item list-group-item-action text-start";
+      button.className = "list-group-item list-group-item-action text-start py-3";
 
       var heading = document.createElement("div");
       heading.className = "d-flex justify-content-between align-items-center gap-2";
@@ -123,33 +211,36 @@
 
       var details = document.createElement("div");
       details.className = "small text-muted mt-1";
-      details.textContent = "الدورات: " + (row.cycle_count || 1) +
+      details.textContent = (row.source_kind_label || "مسار عام") +
+        " · الدورات: " + (row.cycle_count || 1) +
         " · آخر دورة: " + (row.latest_cycle || 1) +
         (row.route_label ? " · " + row.route_label : "") +
         (row.ref_no ? " · المرجع: " + row.ref_no : "") +
         (row.subject ? " · " + row.subject : "") +
-        (row.party ? " · " + row.party : "");
+        (row.party ? " · " + row.party : "") +
+        (row.request_type ? " · نوع الطلب: " + row.request_type : "");
 
       button.appendChild(heading);
       button.appendChild(details);
       button.addEventListener("click", function () { showSelected(row); });
       results.appendChild(button);
     });
-    results.classList.remove("d-none");
   }
 
   function updateMoreButton() {
     moreButton.classList.toggle("d-none", !hasMore || loading);
+    if (status) {
+      status.textContent = loading ? "جارٍ البحث في المسارات القديمة…" :
+        (hasMore ? "يمكنك عرض نتائج إضافية." : "");
+    }
   }
 
   function loadRows(reset) {
-    if (!search || !results) return;
     var query = (search.value || "").trim();
     if (reset) {
       currentPage = 0;
       loadedQuery = query;
       results.textContent = "";
-      results.classList.add("d-none");
       hasMore = false;
       updateMoreButton();
     }
@@ -181,10 +272,9 @@
         if (token !== requestToken || (controller && controller.signal.aborted)) return;
         results.textContent = "";
         var error = document.createElement("div");
-        error.className = "list-group-item small text-danger";
+        error.className = "list-group-item small text-danger py-4 text-center";
         error.textContent = "تعذر تحميل المسارات القديمة الآن.";
         results.appendChild(error);
-        results.classList.remove("d-none");
         loadedQuery = null;
         hasMore = false;
         updateMoreButton();
@@ -206,29 +296,37 @@
       showSelected(null);
       search.value = "";
       results.textContent = "";
-      results.classList.add("d-none");
       loadedQuery = null;
       hasMore = false;
       updateMoreButton();
       return;
     }
-    if (loadedQuery === null) loadRows(true);
+    showStoredSelection();
   }
 
-  search.addEventListener("focus", function () {
-    if (loadedQuery === null) loadRows(true);
-  });
   search.addEventListener("input", function () {
     if (value.value) showSelected(null);
     window.clearTimeout(timer);
     timer = window.setTimeout(function () { loadRows(true); }, 250);
   });
   clearButton.addEventListener("click", function () {
-    showSelected(null);
-    search.value = "";
-    loadRows(true);
-    search.focus();
+    toggle.checked = false;
+    setPanelVisible(false);
+    toggle.focus();
   });
+  openButton.addEventListener("click", openModal);
+  modal.addEventListener("shown.bs.modal", function () {
+    if (loadedQuery === null) loadRows(true);
+    window.setTimeout(function () { search.focus(); }, 50);
+  });
+  if (searchReset) {
+    searchReset.addEventListener("click", function () {
+      search.value = "";
+      loadRows(true);
+      search.focus();
+    });
+  }
+  if (closeButton) closeButton.addEventListener("click", closeModal);
   moreButton.addEventListener("click", function () {
     if (loading || !hasMore) return;
     currentPage += 1;
@@ -236,6 +334,7 @@
   });
   toggle.addEventListener("change", function () {
     setPanelVisible(toggle.checked);
+    if (toggle.checked) openModal();
   });
   setPanelVisible(toggle.checked);
 })();

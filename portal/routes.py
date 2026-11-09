@@ -247,6 +247,7 @@ from models import (
     WorkflowStepTask,
     WorkflowTemplate,
     WorkflowTemplateStep,
+    RequestType,
     Committee,
     AttendanceImportBatch,
     AttendanceEvent,
@@ -2346,20 +2347,28 @@ def _corr_cycle_parent_request(parent_request_id, *, item=None):
     source_kind = (getattr(selected, "source_corr_kind", None) or "").strip().upper()
     source_id = getattr(selected, "source_corr_id", None)
     source = None
-    if source_kind == "IN" and source_id:
+    if source_kind in {"IN", "INBOUND"} and source_id:
         source = db.session.get(InboundMail, int(source_id))
-    elif source_kind == "OUT" and source_id:
+    elif source_kind in {"OUT", "OUTBOUND"} and source_id:
         source = db.session.get(OutboundMail, int(source_id))
-    if source is None:
-        return None
-
-    # Do not allow a search result to become a side channel around the
-    # correspondence confidentiality rules.
-    try:
-        if not _corr_can_access(source):
+    if source is not None:
+        # Do not allow a search result to become a side channel around the
+        # correspondence confidentiality rules.
+        try:
+            if not _corr_can_access(source):
+                return None
+        except Exception:
             return None
-    except Exception:
-        return None
+    else:
+        # General workflow paths do not have a correspondence ACL. Reuse the
+        # workflow visibility rules for dynamic and otherwise unlinked paths.
+        try:
+            from workflow.routes import _actor_context_can_view_request, _workflow_actor
+
+            if not _actor_context_can_view_request(selected, [_workflow_actor()]):
+                return None
+        except Exception:
+            return None
 
     return cycle_root(selected) or selected
 
@@ -43818,24 +43827,30 @@ def inbound_analyze_attachment():
 @login_required
 @_perm(CORR_CREATE)
 def correspondence_workflow_search():
-    """Search old correspondence workflows for the new-cycle picker."""
-    term = (request.args.get("q") or "").strip().casefold()
+    """Search every visible workflow path for the new-cycle picker."""
+    term = (request.args.get("q") or "").strip()
     page = max(request.args.get("page", type=int, default=0), 0)
     page_size = min(max(request.args.get("limit", type=int, default=20), 1), 20)
 
-    filters = [WorkflowRequest.source_corr_kind.in_(["IN", "OUT"])]
+    query = WorkflowRequest.query
     if term:
         like = f"%{term}%"
+        term_key = term.casefold()
         search_conditions = [
             WorkflowRequest.title.ilike(like),
             WorkflowRequest.description.ilike(like),
-        ]
-        if term.isdigit():
-            search_conditions.append(WorkflowRequest.id == int(term))
-        search_conditions.extend([
+            WorkflowRequest.requester.has(or_(
+                User.name.ilike(like),
+                User.email.ilike(like),
+            )),
+            WorkflowRequest.request_type.has(or_(
+                RequestType.name_ar.ilike(like),
+                RequestType.name_en.ilike(like),
+                RequestType.code.ilike(like),
+            )),
             exists().where(and_(
                 InboundMail.id == WorkflowRequest.source_corr_id,
-                WorkflowRequest.source_corr_kind == "IN",
+                WorkflowRequest.source_corr_kind.in_(["IN", "INBOUND"]),
                 or_(
                     InboundMail.ref_no.ilike(like),
                     InboundMail.subject.ilike(like),
@@ -43845,7 +43860,7 @@ def correspondence_workflow_search():
             )),
             exists().where(and_(
                 OutboundMail.id == WorkflowRequest.source_corr_id,
-                WorkflowRequest.source_corr_kind == "OUT",
+                WorkflowRequest.source_corr_kind.in_(["OUT", "OUTBOUND"]),
                 or_(
                     OutboundMail.ref_no.ilike(like),
                     OutboundMail.subject.ilike(like),
@@ -43853,19 +43868,42 @@ def correspondence_workflow_search():
                     OutboundMail.competence_label.ilike(like),
                 ),
             )),
-        ])
-        filters.append(or_(*search_conditions))
+            exists().where(and_(
+                WorkflowInstance.request_id == WorkflowRequest.id,
+                WorkflowInstance.template_id == WorkflowTemplate.id,
+                WorkflowTemplate.name.ilike(like),
+            )),
+        ]
+        if term.isdigit():
+            search_conditions.append(WorkflowRequest.id == int(term))
+        if "وارد" in term_key or term_key in {"in", "inbound"}:
+            search_conditions.append(WorkflowRequest.source_corr_kind.in_(["IN", "INBOUND"]))
+        if "صادر" in term_key or term_key in {"out", "outbound"}:
+            search_conditions.append(WorkflowRequest.source_corr_kind.in_(["OUT", "OUTBOUND"]))
+        if "غير مرتبط" in term_key or "مسار عام" in term_key:
+            search_conditions.append(WorkflowRequest.source_corr_kind.is_(None))
+        if "دينام" in term_key:
+            search_conditions.append(~exists().where(and_(
+                WorkflowInstance.request_id == WorkflowRequest.id,
+                WorkflowInstance.template_id.isnot(None),
+            )))
+        if "محفوظ" in term_key or "قالب" in term_key or term_key in {"template", "predefined"}:
+            search_conditions.append(exists().where(and_(
+                WorkflowInstance.request_id == WorkflowRequest.id,
+                WorkflowInstance.template_id.isnot(None),
+            )))
+        query = query.filter(or_(*search_conditions))
 
     # Page over path groups in SQL.  The previous implementation loaded a
-    # large arbitrary window and then searched it in Python, which made old
-    # paths invisible and caused avoidable N+1 work on every keystroke.
+    # large arbitrary window and then searched it in Python. There is no source
+    # filter here: correspondence and general workflow paths are intentionally
+    # searched together.
     group_root = func.coalesce(
         WorkflowRequest.parent_request_id,
         WorkflowRequest.id,
     )
     grouped_rows = (
-        WorkflowRequest.query
-        .filter(*filters)
+        query
         .with_entities(
             group_root.label("root_id"),
             func.max(WorkflowRequest.id).label("candidate_id"),
@@ -43901,52 +43939,66 @@ def correspondence_workflow_search():
         latest = cycles[-1]
         source_kind = (getattr(latest, "source_corr_kind", None) or "").strip().upper()
         source_id = getattr(latest, "source_corr_id", None)
-        source = (
-            db.session.get(InboundMail if source_kind == "IN" else OutboundMail, int(source_id))
-            if source_kind in {"IN", "OUT"} and source_id
+        source_model = (
+            InboundMail
+            if source_kind in {"IN", "INBOUND"}
+            else OutboundMail
+            if source_kind in {"OUT", "OUTBOUND"}
             else None
         )
-        if not source:
-            continue
-
-        latest_source_kind = (getattr(latest, "source_corr_kind", None) or "").strip().upper()
-        latest_source_id = getattr(latest, "source_corr_id", None)
-        latest_source = (
-            db.session.get(
-                InboundMail if latest_source_kind == "IN" else OutboundMail,
-                int(latest_source_id),
-            )
-            if latest_source_kind in {"IN", "OUT"} and latest_source_id
+        source = (
+            db.session.get(source_model, int(source_id))
+            if source_model and source_id
             else None
         )
         template_id = None
         latest_instance = WorkflowInstance.query.filter_by(request_id=latest.id).first()
         if latest_instance and latest_instance.template_id:
             template_id = int(latest_instance.template_id)
-        elif latest_source and getattr(latest_source, "workflow_template_id", None):
-            template_id = int(latest_source.workflow_template_id)
+        elif source and getattr(source, "workflow_template_id", None):
+            template_id = int(source.workflow_template_id)
+
+        requester = getattr(latest, "requester", None) or getattr(root, "requester", None)
+        source_kind_label = {
+            "IN": "وارد",
+            "INBOUND": "وارد",
+            "OUT": "صادر",
+            "OUTBOUND": "صادر",
+        }.get(source_kind, "مسار عام")
+        latest_status = (getattr(latest, "status", None) or "").strip().upper()
 
         results.append({
-            "id": int(root.id),
-            "title": (root.title or f"المسار #{root.id}").strip(),
+            "id": int(latest.id),
+            "title": (latest.title or root.title or f"المسار #{latest.id}").strip(),
             "cycle_count": len(cycles),
             "latest_cycle": int(getattr(latest, "cycle_number", None) or len(cycles)),
-            "latest_status": (getattr(latest, "status", None) or "").strip().upper(),
+            "latest_status": latest_status,
             "latest_status_label": status_labels.get(
-                (getattr(latest, "status", None) or "").strip().upper(),
+                latest_status,
                 getattr(latest, "status", None) or "غير محددة",
             ),
             "template_id": template_id,
             "route_label": "مسار محفوظ" if template_id else "مسار ديناميكي",
-            "kind": latest_source_kind,
-            "ref_no": getattr(latest_source, "ref_no", None) if latest_source else None,
-            "subject": getattr(latest_source, "subject", None) if latest_source else None,
+            "kind": source_kind or "WORKFLOW",
+            "source_kind_label": source_kind_label,
+            "ref_no": getattr(source, "ref_no", None) if source else None,
+            "subject": getattr(source, "subject", None) if source else None,
             "party": (
-                getattr(latest_source, "sender", None)
-                if latest_source_kind == "IN"
-                else getattr(latest_source, "recipient", None)
-            ) if latest_source else None,
-            "url": url_for("workflow.view_request", request_id=root.id),
+                getattr(source, "sender", None)
+                if source_kind in {"IN", "INBOUND"}
+                else getattr(source, "recipient", None)
+                if source
+                else (
+                    getattr(requester, "full_name", None)
+                    or getattr(requester, "email", None)
+                    if requester else None
+                )
+            ),
+            "request_type": (
+                getattr(getattr(latest, "request_type", None), "label", None)
+                or getattr(getattr(latest, "request_type", None), "name_ar", None)
+            ),
+            "url": url_for("workflow.view_request", request_id=latest.id),
         })
 
     return jsonify({
