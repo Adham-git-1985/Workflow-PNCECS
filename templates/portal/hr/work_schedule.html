@@ -22,6 +22,20 @@
     .ws-tabs .nav-link { color:#667085; font-weight:700; white-space:nowrap; border-radius:11px; }
     .ws-tabs .nav-link.active { color:#fff; background:linear-gradient(120deg,var(--ws-primary),var(--ws-blue)); }
     .ws-alert { border-radius:16px; }
+    .ws-change-scope { display:flex; align-items:center; gap:.85rem; padding:.85rem 1rem; margin-bottom:1rem; border:1px solid var(--ws-border); border-inline-start:5px solid; border-radius:16px; }
+    .ws-change-scope--permanent { border-color:#cfd4ff; border-inline-start-color:#5547d8; background:linear-gradient(110deg,#f7f6ff,#fff); }
+    .ws-change-scope--weekly { border-color:#bfe8ff; border-inline-start-color:#1687e8; background:linear-gradient(110deg,#f1fbff,#fff); }
+    .ws-change-scope-icon { display:grid; flex:0 0 auto; place-items:center; width:46px; height:46px; border-radius:14px; font-size:1.35rem; }
+    .ws-change-scope--permanent .ws-change-scope-icon { color:#5547d8; background:#eae8ff; }
+    .ws-change-scope--weekly .ws-change-scope-icon { color:#0872ba; background:#dff4ff; }
+    .ws-change-scope-content { min-width:0; flex:1 1 auto; }
+    .ws-change-scope-heading { display:flex; align-items:center; flex-wrap:wrap; gap:.45rem .65rem; }
+    .ws-change-scope-kicker { color:var(--ws-muted); font-size:.75rem; font-weight:800; }
+    .ws-change-scope-label { color:var(--ws-ink); font-size:1.08rem; font-weight:900; }
+    .ws-change-scope-description { margin-top:.15rem; color:#475467; font-size:.82rem; }
+    .ws-change-scope-badge { flex:0 0 auto; padding:.4rem .7rem; border-radius:999px; font-size:.82rem; font-weight:900; white-space:nowrap; }
+    .ws-change-scope--permanent .ws-change-scope-badge { color:#4435b6; background:#e5e2ff; }
+    .ws-change-scope--weekly .ws-change-scope-badge { color:#08639f; background:#d7f0ff; }
     .ws-flow { display:grid; grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); gap:.45rem; }
     .ws-flow-step { padding:.65rem; border:1px solid var(--ws-border); border-radius:14px; background:#fafbfe; text-align:center; font-size:.76rem; }
     .ws-flow-step strong { display:block; color:var(--ws-ink); }
@@ -57,7 +71,7 @@
     .ws-cell strong { display:block; direction:ltr; }
     .ws-cell small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     @media (max-width: 991.98px) { .ws-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); } .ws-flow { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-    @media (max-width: 575.98px) { .ws-kpis { grid-template-columns:1fr 1fr; } .ws-action-bar { align-items:stretch; flex-direction:column; } .ws-action-bar > * { width:100%; } .ws-action-bar .btn { width:100%; } }
+    @media (max-width: 575.98px) { .ws-kpis { grid-template-columns:1fr 1fr; } .ws-action-bar { align-items:stretch; flex-direction:column; } .ws-action-bar > * { width:100%; } .ws-action-bar .btn { width:100%; } .ws-change-scope { align-items:flex-start; } .ws-change-scope-badge { margin-inline-start:auto; } }
   </style>
 {% endblock %}
 
@@ -67,7 +81,18 @@
 {% set plan_is_change_request = plan and (plan.request_type or '') == 'CHANGE_REQUEST' %}
 {% set is_change_request = plan_is_change_request and plan.status in ['DRAFT','SUBMITTED','MANAGER_APPROVED','GENERAL_DIRECTOR_APPROVED'] %}
 {% set plan_change_scope = ((plan.change_scope if plan else '') or 'PERMANENT')|upper %}
+{% if plan_change_scope not in ['WEEKLY', 'PERMANENT'] %}{% set plan_change_scope = 'PERMANENT' %}{% endif %}
 {% set plan_change_scope_meta = change_scope_meta.get(plan_change_scope, change_scope_meta.PERMANENT) %}
+{% macro change_scope_card(scope, meta, card_id='') %}
+<div class="ws-change-scope ws-change-scope--{{ scope|lower }}"{% if card_id %} id="{{ card_id }}"{% endif %} role="status" aria-live="polite">
+  <div class="ws-change-scope-icon" aria-hidden="true"><i class="bi {{ 'bi-infinity' if scope == 'PERMANENT' else 'bi-calendar2-week' }}" data-change-scope-icon></i></div>
+  <div class="ws-change-scope-content">
+    <div class="ws-change-scope-heading"><span class="ws-change-scope-kicker">طبيعة التغيير</span><strong class="ws-change-scope-label" data-change-scope-label>{{ meta.label }}</strong></div>
+    <div class="ws-change-scope-description" data-change-scope-description>{{ meta.description }}</div>
+  </div>
+  <span class="ws-change-scope-badge" data-change-scope-kind>{{ 'دائم' if scope == 'PERMANENT' else 'مؤقت' }}</span>
+</div>
+{% endmacro %}
 <div class="container-fluid py-3">
   <section class="ws-hero mb-3">
     <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3">
@@ -97,7 +122,7 @@
   {% if editor_mode == 'SUPER_ADMIN' %}
   <div class="alert alert-dark ws-alert"><i class="bi bi-shield-fill-check me-1"></i> أي جدول تنشره يصبح فعّالًا فورًا وباعتمادك النهائي، ولا يمر بمسار اعتماد إضافي.</div>
   {% elif editor_mode == 'EMPLOYEE' %}
-  <div class="alert {% if is_change_request %}alert-warning{% else %}alert-info{% endif %} ws-alert"><i class="bi {% if is_change_request %}bi-exclamation-triangle{% else %}bi-info-circle{% endif %} me-1"></i>{% if is_change_request %}<strong>تنبيه: طلب تغيير الدوام غير نافذ حاليًا.</strong> يبقى آخر جدول معتمد ساريًا إلى أن يعتمد الأمين العام الطلب اعتمادًا نهائيًا. طبيعة الطلب: <strong>{{ plan_change_scope_meta.label }}</strong>.{% if employee_can_cancel %} يمكنك إلغاء الطلب ما دام قيد الاعتماد.{% endif %}{% elif employee_can_request %}عدّل الأيام أو الأوقات المقترحة داخل الطلب؛ سيبقى جدولك الفعّال دون تغيير إلى أن يُعتمد الطلب نهائيًا من الأمين العام.{% else %}الجدول المعروض هو جدولك الفعّال. أي طلب تغيير جديد لا يصبح نافذًا قبل اعتماد الأمين العام.{% endif %}</div>
+  <div class="alert {% if is_change_request %}alert-warning{% else %}alert-info{% endif %} ws-alert"><i class="bi {% if is_change_request %}bi-exclamation-triangle{% else %}bi-info-circle{% endif %} me-1"></i>{% if is_change_request %}<strong>تنبيه: طلب تغيير الدوام غير نافذ حاليًا.</strong> يبقى آخر جدول معتمد ساريًا إلى أن يعتمد الأمين العام الطلب اعتمادًا نهائيًا.{% if employee_can_cancel %} يمكنك إلغاء الطلب ما دام قيد الاعتماد.{% endif %}{% elif employee_can_request %}عدّل الأيام أو الأوقات المقترحة داخل الطلب؛ سيبقى جدولك الفعّال دون تغيير إلى أن يُعتمد الطلب نهائيًا من الأمين العام.{% else %}الجدول المعروض هو جدولك الفعّال. أي طلب تغيير جديد لا يصبح نافذًا قبل اعتماد الأمين العام.{% endif %}</div>
   {% elif editor_mode == 'HR' %}
   <div class="alert alert-success ws-alert"><i class="bi bi-shield-check me-1"></i> أنت تعمل بصلاحية الشؤون البشرية؛ أدخل نمط الدوام من تاريخ البدء المختار. بعد نشره يصبح نافذًا ويبقى كذلك حتى تغيير معتمد أحدث.</div>
   {% endif %}
@@ -147,10 +172,11 @@
           {% endfor %}
         </select>
         <div id="changeScopeHelp" class="form-text">{{ plan_change_scope_meta.description }}</div>
+        {{ change_scope_card(plan_change_scope, plan_change_scope_meta, 'changeScopePreview') }}
         <div class="small text-danger mt-2"><i class="bi bi-shield-exclamation me-1"></i>لن يصبح أي تغيير نافذًا قبل اعتماد الأمين العام اعتمادًا نهائيًا.</div>
       </div>
       {% elif plan_is_change_request %}
-      <div class="alert alert-light border small mb-3"><i class="bi bi-arrow-repeat me-1"></i><strong>طبيعة التغيير:</strong> {{ plan_change_scope_meta.label }} — {{ plan_change_scope_meta.description }}</div>
+      {{ change_scope_card(plan_change_scope, plan_change_scope_meta) }}
       {% endif %}
 
       <div class="ws-day-grid">
@@ -340,8 +366,29 @@
           WEEKLY: 'ينتهي التغيير بانتهاء الفترة المحددة، ثم يعود جدول الدوام السابق.',
           PERMANENT: 'يبقى التغيير نافذًا بعد الفترة المحددة حتى اعتماد تغيير آخر.'
         };
+        var scopeLabels = {
+          WEEKLY: 'لهذا الأسبوع فقط',
+          PERMANENT: 'تغيير دائم'
+        };
+        var scopeKinds = {
+          WEEKLY: 'مؤقت',
+          PERMANENT: 'دائم'
+        };
+        var scopePreview = document.getElementById('changeScopePreview');
         scopeSelect.addEventListener('change', function () {
-          scopeHelp.textContent = scopeDescriptions[scopeSelect.value] || '';
+          var scope = scopeSelect.value === 'WEEKLY' ? 'WEEKLY' : 'PERMANENT';
+          scopeHelp.textContent = scopeDescriptions[scope] || '';
+          if (!scopePreview) return;
+          scopePreview.classList.toggle('ws-change-scope--weekly', scope === 'WEEKLY');
+          scopePreview.classList.toggle('ws-change-scope--permanent', scope === 'PERMANENT');
+          var label = scopePreview.querySelector('[data-change-scope-label]');
+          var description = scopePreview.querySelector('[data-change-scope-description]');
+          var kind = scopePreview.querySelector('[data-change-scope-kind]');
+          var icon = scopePreview.querySelector('[data-change-scope-icon]');
+          if (label) label.textContent = scopeLabels[scope];
+          if (description) description.textContent = scopeDescriptions[scope];
+          if (kind) kind.textContent = scopeKinds[scope];
+          if (icon) icon.className = 'bi ' + (scope === 'WEEKLY' ? 'bi-calendar2-week' : 'bi-infinity');
         });
       }
     });
