@@ -234,6 +234,19 @@ class FollowupFlowTests(unittest.TestCase):
             report = db.session.get(EmployeeFollowupReport, report_id)
             self.assertEqual(report.status, "REVIEWED")
             self.assertEqual(report.manager_comment, "Reviewed")
+            self.assertIsNotNone(report.reviewed_at)
+            review_notification = Notification.query.filter_by(
+                user_id=self.employee_id,
+                type="FOLLOWUP_REVIEWED",
+                target_type="EMPLOYEE_FOLLOWUP_REPORT",
+                target_id=report_id,
+            ).one()
+            self.assertEqual(review_notification.created_at, report.reviewed_at)
+            self.assertIn("مراجعة تقرير الإنجاز", review_notification.message)
+
+        employee_view = self.employee_client.get(f"/portal/followups/{report_id}")
+        self.assertEqual(employee_view.status_code, 200)
+        self.assertIn("تمت مراجعة التقرير بتاريخ".encode("utf-8"), employee_view.data)
 
     def test_manager_approval_notifies_secretary_and_secretary_sees_approved_reports(self):
         with self.app.app_context():

@@ -1210,6 +1210,35 @@ def _followup_attachment_links(
     return links
 
 
+def _followup_item_open_url(item: EmployeeFollowupItem) -> str | None:
+    """Return the originating system link for an imported follow-up item.
+
+    The report tests register the portal blueprint without the workflow
+    blueprint, so URL building is intentionally best-effort.  The detail
+    page still renders normally when the originating module is unavailable.
+    """
+    source_type = (getattr(item, "source_type", None) or "").upper()
+    try:
+        source_id = int(getattr(item, "source_id", 0) or 0)
+    except (TypeError, ValueError):
+        source_id = 0
+    if source_id <= 0:
+        return None
+    try:
+        if source_type == "WORKFLOW_AUDIT":
+            return url_for("workflow.view_request", request_id=source_id)
+        if source_type == "MEETING":
+            return url_for("portal.meeting_view", meeting_id=source_id)
+        if source_type == "MEETING_TASK":
+            task = db.session.get(PortalMeetingTask, source_id)
+            meeting_id = getattr(task, "meeting_id", None) if task else None
+            if meeting_id:
+                return url_for("portal.meeting_view", meeting_id=int(meeting_id))
+    except Exception:
+        return None
+    return None
+
+
 def _followup_org_unit_label(unit) -> str:
     if not unit:
         return ""
@@ -1852,6 +1881,11 @@ def followups_view(report_id: int):
         access_level == "super_admin"
         or (access_level == "manager" and report.status == "SUBMITTED")
     )
+    item_open_urls = {
+        int(item.id): _followup_item_open_url(item)
+        for item in (report.items or [])
+        if getattr(item, "id", None) is not None
+    }
     return render_template(
         "portal/followups/view.html",
         report=report,
@@ -1871,6 +1905,7 @@ def followups_view(report_id: int):
         operational_options=get_followup_operational_options(report),
         operational_visibility=get_followup_operational_visibility(report),
         attachment_links=_followup_attachment_links(report),
+        item_open_urls=item_open_urls,
     )
 
 
@@ -2350,19 +2385,33 @@ def followups_review(report_id: int):
     old_status = report.status
     now = datetime.utcnow()
     report.reviewed_at = now
+    review_date_label = now.strftime("%Y-%m-%d %H:%M")
+    reviewer_name = _display_user(current_user)
     if action == "return":
         report.status = "NEEDS_REVISION"
         actor_label = COMPETENT_AUTHORITY_LABEL if is_super_admin_review else "المدير"
-        message = f"تمت إعادة تقرير الإنجاز للتعديل مع ملاحظات {actor_label}."
+        message = (
+            f"قام {reviewer_name} ({actor_label}) بمراجعة تقرير الإنجاز وإعادته للتعديل "
+            f"بتاريخ {review_date_label}."
+        )
         flash_message = "تمت إعادة التقرير للموظف للتعديل."
         notification_type = "FOLLOWUP_REVISION"
     else:
         report.status = "REVIEWED"
         actor_label = COMPETENT_AUTHORITY_LABEL if is_super_admin_review else "المدير"
-        message = f"تمت مراجعة تقرير الإنجاز واعتماده إلكترونياً من {actor_label}."
+        message = (
+            f"قام {reviewer_name} ({actor_label}) بمراجعة تقرير الإنجاز واعتماده إلكترونياً "
+            f"بتاريخ {review_date_label}."
+        )
         flash_message = "تمت مراجعة التقرير واعتماده إلكترونياً."
         notification_type = "FOLLOWUP_REVIEWED"
-    _notify([report.employee_user_id], message, notification_type, report)
+    _notify(
+        [report.employee_user_id],
+        message,
+        notification_type,
+        report,
+        created_at=now,
+    )
     if action != "return":
         _notify_approved_report_observers(report, actor_label)
     db.session.add(AuditLog(

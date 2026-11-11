@@ -28,13 +28,14 @@
     </div>
     <div class="table-responsive">
       <table class="table table-hover mb-0 align-middle">
-        <thead><tr><th>الفترة</th><th>المدير</th><th>الحالة</th><th>آخر تحديث</th><th></th></tr></thead>
+        <thead><tr><th>الفترة</th><th>المدير</th><th>الحالة</th><th>تاريخ المراجعة</th><th>آخر تحديث</th><th></th></tr></thead>
         <tbody>
           {% for report in own_reports %}
           <tr>
             <td>{{ report.period_start }} <span class="text-muted">إلى</span> {{ report.period_end }}</td>
             <td>{{ report.manager.full_name if report.manager else 'غير محدد' }}</td>
             <td><span class="badge text-bg-{% if report.status == 'REVIEWED' %}success{% elif report.status == 'NEEDS_REVISION' %}warning{% elif report.status == 'SUBMITTED' %}primary{% else %}secondary{% endif %}">{{ report_status_labels[report.status] }}</span></td>
+            <td>{{ report.reviewed_at|local_datetime if report.reviewed_at else '-' }}</td>
             <td>{{ report.updated_at|local_datetime if report.updated_at else '-' }}</td>
             <td class="text-nowrap">
               <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.followups_view', report_id=report.id) }}">فتح</a>
@@ -47,7 +48,7 @@
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="5" class="text-center text-muted py-4">لا توجد تقارير بعد.</td></tr>
+          <tr><td colspan="6" class="text-center text-muted py-4">لا توجد تقارير بعد.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -68,7 +69,7 @@
     </div>
     <div class="table-responsive">
       <table class="table table-hover mb-0 align-middle">
-        <thead><tr><th>الموظف</th><th>الفترة</th><th>الحالة</th><th>تاريخ الإرسال</th><th></th></tr></thead>
+        <thead><tr><th>الموظف</th><th>الفترة</th><th>الحالة</th><th>تاريخ الإرسال</th><th>تاريخ المراجعة</th><th></th></tr></thead>
         <tbody>
           {% for report in review_reports %}
           <tr>
@@ -76,6 +77,7 @@
             <td>{{ report.period_start }} إلى {{ report.period_end }}</td>
             <td><span class="badge text-bg-{% if report.status == 'REVIEWED' %}success{% elif report.status == 'NEEDS_REVISION' %}warning{% elif report.status == 'SUBMITTED' %}primary{% else %}secondary{% endif %}">{{ report_status_labels[report.status] }}</span></td>
             <td>{{ report.submitted_at|local_datetime if report.submitted_at else '-' }}</td>
+            <td>{{ report.reviewed_at|local_datetime if report.reviewed_at else '-' }}</td>
             <td class="text-nowrap">
               <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.followups_view', report_id=report.id) }}">فتح</a>
               {% if can_delete_followup_reports %}
@@ -87,7 +89,7 @@
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="5" class="text-center text-muted py-4">لا توجد تقارير موجهة إليك.</td></tr>
+          <tr><td colspan="6" class="text-center text-muted py-4">لا توجد تقارير موجهة إليك.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -112,13 +114,14 @@
     </div>
     <div class="table-responsive">
       <table class="table table-hover mb-0 align-middle">
-        <thead><tr><th>الموظف</th><th>الفترة</th><th>الحالة</th><th>آخر تحديث</th><th></th></tr></thead>
+        <thead><tr><th>الموظف</th><th>الفترة</th><th>الحالة</th><th>تاريخ المراجعة</th><th>آخر تحديث</th><th></th></tr></thead>
         <tbody>
           {% for report in admin_reports %}
           <tr>
             <td>{{ report.employee_name or report.employee_email or '-' }}</td>
             <td>{{ report.period_start }} إلى {{ report.period_end }}</td>
             <td><span class="badge text-bg-{% if report.status == 'REVIEWED' %}success{% elif report.status == 'NEEDS_REVISION' %}warning{% elif report.status == 'SUBMITTED' %}primary{% else %}secondary{% endif %}">{{ report_status_labels.get(report.status, report.status) }}</span></td>
+            <td>{{ report.reviewed_at|local_datetime if report.reviewed_at else '-' }}</td>
             <td>{{ report.updated_at|local_datetime if report.updated_at else '-' }}</td>
             <td class="text-nowrap">
               <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.followups_view', report_id=report.report_id) }}">فتح</a>
@@ -131,7 +134,7 @@
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="5" class="text-center text-muted py-4">لا توجد تقارير حالياً.</td></tr>
+          <tr><td colspan="6" class="text-center text-muted py-4">لا توجد تقارير حالياً.</td></tr>
           {% endfor %}
         </tbody>
       </table>

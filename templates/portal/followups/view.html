@@ -45,6 +45,45 @@
     flex: 1 1 auto;
   }
 
+  .followup-section-title {
+    border-right: 4px solid #0d6efd;
+    padding-right: .65rem;
+  }
+
+  .followup-report .manual-achievement-card,
+  .followup-report .followup-items-card {
+    border: 0;
+    border-radius: 1rem;
+    box-shadow: 0 .35rem 1.1rem rgba(15, 23, 42, .08);
+    overflow: hidden;
+  }
+
+  .followup-report .manual-achievement-card .card-header,
+  .followup-report .followup-items-card .card-header {
+    background: #fff;
+    border-bottom: 1px solid rgba(15, 23, 42, .08);
+  }
+
+  .followup-report .manual-item-editor textarea {
+    min-height: 78px;
+  }
+
+  .followup-report .followup-filter-bar {
+    background: #f8fafc;
+    border-bottom: 1px solid rgba(15, 23, 42, .08);
+  }
+
+  .followup-report .status-pill {
+    min-width: 88px;
+    display: inline-block;
+    text-align: center;
+  }
+
+  .followup-report .review-date {
+    color: #64748b;
+    font-size: .875rem;
+  }
+
   @media print {
     .followup-report .btn,
     .followup-report form,
@@ -64,6 +103,7 @@
       <a class="btn btn-sm btn-outline-secondary mb-2" href="{{ url_for('portal.followups_dashboard') }}"><i class="bi bi-arrow-right"></i> متابعاتي</a>
       <h1 class="h4 mb-1">تقرير إنجاز: {{ report.employee.full_name }}</h1>
       <div class="text-muted">{{ report.period_start }} إلى {{ report.period_end }} · المدير المباشر: {{ report.manager.full_name if report.manager else 'غير محدد' }}</div>
+      {% if report.reviewed_at %}<div class="review-date mt-1"><i class="bi bi-calendar-check"></i> تمت مراجعة التقرير بتاريخ {{ report.reviewed_at|local_datetime }}</div>{% endif %}
     </div>
     <div class="d-flex align-items-center gap-2">
       <span class="badge text-bg-{% if report.status == 'REVIEWED' %}success{% elif report.status == 'NEEDS_REVISION' %}warning{% elif report.status == 'SUBMITTED' %}primary{% else %}secondary{% endif %}">{{ report_status_labels[report.status] }}</span>
@@ -76,6 +116,9 @@
       {% endif %}
     </div>
   </div>
+
+  {% set manual_items = report.items|selectattr('source_type', 'equalto', 'MANUAL')|list %}
+  {% set path_items = report.items|rejectattr('source_type', 'equalto', 'MANUAL')|list %}
 
   {% if operational_sections %}
   <section class="followup-operational mb-4" aria-label="التقارير التشغيلية المرتبطة بالصلاحيات">
@@ -132,18 +175,17 @@
   {% endif %}
 
   {% if can_edit %}
-  <div class="card border-0 shadow-sm mb-4">
+  <div class="card manual-achievement-card mb-4">
     <div class="card-body">
-      <h2 class="h6 mb-3">إضافة إنجاز يدوي</h2>
+      <h2 class="h6 followup-section-title mb-3">إضافة إنجاز يدوي</h2>
       <form method="post" action="{{ url_for('portal.followups_add_item', report_id=report.id) }}" class="row g-2">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="col-12">
+        <div class="col-lg-7">
           <label class="form-label" for="newAchievementTitle">الإنجاز</label>
           <textarea class="form-control" id="newAchievementTitle" name="title" required rows="5" placeholder="اكتب الإنجاز بالتفصيل"></textarea>
         </div>
-        <div class="col-md-5"><input class="form-control" name="completed_on" type="date"></div>
-        <div class="col-md-5"><select class="form-select" name="status">{% for key, label in item_status_labels.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
-        <div class="col-md-2"><button class="btn btn-outline-primary w-100">إضافة</button></div>
+        <div class="col-lg-3"><label class="form-label" for="newAchievementDate">التاريخ</label><input class="form-control" id="newAchievementDate" name="completed_on" type="date"></div>
+        <div class="col-lg-2 d-flex align-items-end"><button class="btn btn-warning w-100" type="submit"><i class="bi bi-plus-lg"></i> إضافة</button></div>
       </form>
     </div>
   </div>
@@ -152,13 +194,70 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="operational_visibility_form" value="1">
     <div class="row g-4">
-      <div class="col-xl-8">
-        <div class="card border-0 shadow-sm mb-4">
-          <div class="card-header bg-white d-flex align-items-center justify-content-between flex-wrap gap-2">
-            <h2 class="h6 mb-0">مهمات على مسار</h2>
+      <div class="col-12">
+        <div class="card manual-achievement-card mb-4">
+          <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <h2 class="h6 followup-section-title mb-0">المهمات المضافة يدوياً</h2>
+            <span class="small text-muted">{{ manual_items|length }} إنجاز</span>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+              <thead class="table-light"><tr><th>المهمة</th><th style="width: 170px">التاريخ</th><th style="width: 155px">الحالة</th><th style="width: 125px">إجراءات</th></tr></thead>
+              <tbody>
+              {% for item in manual_items %}
+                <tr class="manual-achievement-row">
+                  <td>
+                    <div class="manual-item-view" data-item-view="{{ item.id }}"><strong>{{ item.title }}</strong></div>
+                    <div class="manual-item-editor d-none" data-item-editor="{{ item.id }}">
+                      <label class="visually-hidden" for="title_{{ item.id }}">الإنجاز</label>
+                      <textarea id="title_{{ item.id }}" class="form-control" name="title_{{ item.id }}" rows="2">{{ item.title }}</textarea>
+                    </div>
+                    {% if item.ai_suggestion %}
+                    <div class="alert alert-info py-2 mt-2 mb-0">
+                      <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+                        <label class="small fw-bold mb-0" for="ai_suggestion_{{ item.id }}"><i class="bi bi-stars"></i> إعادة الصياغة المختصرة المقترحة</label>
+                        <span class="badge text-bg-light border">قابلة للتعديل</span>
+                      </div>
+                      <textarea id="ai_suggestion_{{ item.id }}" class="form-control form-control-sm" name="ai_suggestion_{{ item.id }}" rows="2" maxlength="240" aria-describedby="ai_suggestion_help_{{ item.id }}">{{ item.ai_suggestion }}</textarea>
+                      <div class="form-text" id="ai_suggestion_help_{{ item.id }}">صياغة مختصرة في سطر أو سطرين؛ عدّلها كما تريد قبل اعتمادها على الإنجاز.</div>
+                    </div>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <span class="manual-item-view text-nowrap" data-item-view="{{ item.id }}">{{ item.completed_on or '-' }}</span>
+                    <span class="manual-item-editor d-none" data-item-editor="{{ item.id }}"><input class="form-control" name="completed_on_{{ item.id }}" type="date" value="{{ item.completed_on.isoformat() if item.completed_on else '' }}"></span>
+                  </td>
+                  <td>
+                    <span class="manual-item-view badge status-pill {% if item.status == 'COMPLETED' %}text-bg-success{% elif item.status == 'IN_PROGRESS' %}text-bg-primary{% else %}text-bg-warning{% endif %}" data-item-view="{{ item.id }}">{{ item_status_labels[item.status] }}</span>
+                    <span class="manual-item-editor d-none" data-item-editor="{{ item.id }}"><select class="form-select" name="status_{{ item.id }}">{% for key, label in item_status_labels.items() %}<option value="{{ key }}" {% if item.status == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></span>
+                  </td>
+                  <td class="text-nowrap">
+                    <input class="form-check-input me-1" id="included-manual-{{ item.id }}" type="checkbox" name="included_{{ item.id }}" value="1" {% if item.is_included %}checked{% endif %} title="إدراج الإنجاز في التقرير">
+                    <button class="btn btn-sm btn-outline-primary manual-item-edit-toggle" type="button" data-item-id="{{ item.id }}" aria-label="تعديل الإنجاز" title="تعديل"><i class="bi bi-pencil"></i></button>
+                    <button class="btn btn-sm btn-outline-danger" type="submit" form="delete-item-{{ item.id }}" aria-label="حذف الإنجاز" title="حذف"><i class="bi bi-trash"></i></button>
+                  </td>
+                </tr>
+              {% else %}
+                <tr><td colspan="4" class="text-center text-muted py-4">لا توجد إنجازات مضافة يدوياً بعد.</td></tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card followup-items-card mb-4">
+          <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <h2 class="h6 followup-section-title mb-0">مهام على مسار</h2>
             <div class="form-check mb-0">
               <input class="form-check-input" id="include-all-items-{{ report.id }}" type="checkbox">
               <label class="form-check-label" for="include-all-items-{{ report.id }}">تحديد/إلغاء تحديد الكل</label>
+            </div>
+          </div>
+          <div class="followup-filter-bar p-3">
+            <div class="row g-2 align-items-end">
+              <div class="col-lg-6"><label class="form-label small mb-1" for="path-item-search-{{ report.id }}">البحث في المهام</label><input class="form-control" id="path-item-search-{{ report.id }}" type="search" placeholder="البحث في المهام..."></div>
+              <div class="col-lg-3"><label class="form-label small mb-1" for="path-item-status-{{ report.id }}">الحالة</label><select class="form-select" id="path-item-status-{{ report.id }}"><option value="">الكل</option>{% for key, label in item_status_labels.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
+              <div class="col-lg-3"><button class="btn btn-primary w-100" type="button" id="path-item-filter-{{ report.id }}"><i class="bi bi-search"></i> بحث</button></div>
             </div>
           </div>
           <div class="table-responsive">
@@ -169,15 +268,15 @@
                   <th style="width: 170px">التاريخ</th>
                   <th style="width: 180px">الحالة</th>
                   <th style="width: 90px">إدراج</th>
-                  <th style="width: 80px">إجراءات</th>
+                  <th style="width: 100px">فتح المهمة</th>
                 </tr>
               </thead>
               <tbody>
-            {% for item in report.items %}
-                <tr>
+            {% for item in path_items %}
+                <tr class="followup-path-row" data-search="{{ (item.title ~ ' ' ~ (item.description or ''))|lower }}" data-status="{{ item.status }}">
                   <td>
                     <label class="visually-hidden" for="title_{{ item.id }}">المهمة</label>
-                    <textarea id="title_{{ item.id }}" class="form-control" name="title_{{ item.id }}" rows="5" placeholder="اكتب المهمة بالتفصيل">{{ item.title }}</textarea>
+                    <textarea id="title_{{ item.id }}" class="form-control" name="title_{{ item.id }}" rows="3" placeholder="اكتب المهمة بالتفصيل">{{ item.title }}</textarea>
                     {% if item.source_type == 'MEETING_TASK' and item.status != 'COMPLETED' %}<div class="small text-warning-emphasis mt-1"><i class="bi bi-calendar-x"></i> اجتماع/مهمة متأخرة عن موعدها</div>{% endif %}
                     {% if item.ai_suggestion %}
                     <div class="alert alert-info py-2 mt-2 mb-0">
@@ -196,16 +295,17 @@
                   <td><input class="form-control" name="completed_on_{{ item.id }}" type="date" value="{{ item.completed_on.isoformat() if item.completed_on else '' }}"></td>
                   <td><select class="form-select" name="status_{{ item.id }}">{% for key, label in item_status_labels.items() %}<option value="{{ key }}" {% if item.status == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></td>
                   <td><div class="form-check"><input class="form-check-input" id="included_{{ item.id }}" type="checkbox" name="included_{{ item.id }}" value="1" {% if item.is_included %}checked{% endif %}><label class="form-check-label" for="included_{{ item.id }}">إدراج</label></div></td>
-                  <td><button class="btn btn-sm btn-outline-danger" type="submit" form="delete-item-{{ item.id }}" title="{% if item.source_type in ['MEETING_TASK', 'MEETING'] %}إزالة الاجتماع من التقرير{% else %}حذف الإنجاز{% endif %}"><i class="bi bi-trash"></i><span class="visually-hidden">{% if item.source_type in ['MEETING_TASK', 'MEETING'] %}إزالة من التقرير{% else %}حذف{% endif %}</span></button></td>
+                  <td>{% if item_open_urls.get(item.id) %}<a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener" href="{{ item_open_urls[item.id] }}" title="فتح المهمة"><i class="bi bi-box-arrow-up-left"></i><span class="visually-hidden">فتح المهمة</span></a>{% else %}<span class="text-muted">-</span>{% endif %}<button class="btn btn-sm btn-outline-danger ms-1" type="submit" form="delete-item-{{ item.id }}" title="{% if item.source_type in ['MEETING_TASK', 'MEETING'] %}إزالة الاجتماع من التقرير{% else %}حذف الإنجاز{% endif %}"><i class="bi bi-trash"></i><span class="visually-hidden">{% if item.source_type in ['MEETING_TASK', 'MEETING'] %}إزالة من التقرير{% else %}حذف{% endif %}</span></button></td>
                 </tr>
-            {% else %}<tr><td colspan="5" class="p-4 text-muted">لا توجد بنود بعد. أضف إنجازاً يدوياً أعلاه.</td></tr>{% endfor %}
+            {% else %}<tr><td colspan="5" class="p-4 text-center text-muted">لا توجد مهام مرتبطة بمسار ضمن فترة التقرير.</td></tr>{% endfor %}
+                <tr id="path-item-empty-filtered-{{ report.id }}" class="d-none"><td colspan="5" class="p-4 text-center text-muted">لا توجد نتائج مطابقة للبحث.</td></tr>
               </tbody>
             </table>
           </div>
         </div>
 
         <div class="card border-0 shadow-sm mb-4"><div class="card-body">
-          <h2 class="h6 mb-3">ملخص وتفاصيل التقرير</h2>
+          <h2 class="h6 followup-section-title mb-3">ملخص وتفاصيل التقرير</h2>
           {% set summary_value = report.ai_summary or report.employee_summary or '' %}
           <div class="mb-3"><label class="form-label">ملخص الإنجازات (سطر أو سطران)</label><textarea class="form-control" name="employee_summary" rows="2" maxlength="240">{{ summary_value }}</textarea>{% if report.ai_summary %}<div class="form-text"><i class="bi bi-stars"></i> هذه إعادة صياغة مختصرة مقترحة لما حدث في الفترة؛ راجعها ثم احفظ التقرير.</div>{% endif %}</div>
           {% if report.ai_notes %}<div class="alert alert-info" style="white-space: pre-line"><i class="bi bi-stars"></i> <strong>ملاحظات المساعد المحلي:</strong><br>{{ report.ai_notes }}</div>{% endif %}
@@ -234,7 +334,7 @@
           </div>
         </div>
         {% endif %}
-        <div class="card border-0 shadow-sm"><div class="card-body"><h2 class="h6">ملفات التقرير</h2><div class="small text-muted">الملفات الداعمة تظهر كرابط فتح مباشر ويمكن إدراج روابطها في Word المولّد.</div>{% for attachment in attachment_links %}<div class="d-flex justify-content-between gap-2 align-items-center border-bottom py-2"><span class="text-truncate"><i class="bi bi-paperclip"></i> {{ attachment.name }}</span><span class="d-flex gap-1"><a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener" href="{{ attachment.url }}">فتح</a><a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.followups_download_attachment', report_id=report.id, attachment_id=attachment.id) }}">تنزيل</a></span></div>{% else %}<div class="small text-muted mt-2">لا توجد مرفقات.</div>{% endfor %}</div></div>
+        <div class="card border-0 shadow-sm"><div class="card-body"><h2 class="h6 followup-section-title">ملفات التقرير</h2><div class="small text-muted">الملفات الداعمة تظهر كرابط فتح مباشر ويمكن إدراج روابطها في Word المولّد.</div>{% for attachment in attachment_links %}<div class="d-flex justify-content-between gap-2 align-items-center border-bottom py-2"><span class="text-truncate"><i class="bi bi-paperclip"></i> {{ attachment.name }}</span><span class="d-flex gap-1"><a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener" href="{{ attachment.url }}">فتح</a><a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.followups_download_attachment', report_id=report.id, attachment_id=attachment.id) }}">تنزيل</a></span></div>{% else %}<div class="small text-muted mt-2">لا توجد مرفقات.</div>{% endfor %}</div></div>
       </div>
     </div>
   </form>
@@ -263,19 +363,56 @@
   <script>
     document.addEventListener('DOMContentLoaded', function () {
       const toggle = document.getElementById('include-all-items-{{ report.id }}');
-      if (!toggle) return;
       const inputs = Array.from(document.querySelectorAll('input[name^="included_"]'));
       const syncToggle = function () {
+        if (!toggle) return;
         const checkedCount = inputs.filter((input) => input.checked).length;
         toggle.checked = inputs.length > 0 && checkedCount === inputs.length;
         toggle.indeterminate = checkedCount > 0 && checkedCount < inputs.length;
       };
-      toggle.addEventListener('change', function () {
-        inputs.forEach((input) => { input.checked = toggle.checked; });
-        toggle.indeterminate = false;
-      });
+      if (toggle) {
+        toggle.addEventListener('change', function () {
+          inputs.forEach((input) => { input.checked = toggle.checked; });
+          toggle.indeterminate = false;
+        });
+      }
       inputs.forEach((input) => input.addEventListener('change', syncToggle));
       syncToggle();
+
+      document.querySelectorAll('.manual-item-edit-toggle').forEach((button) => {
+        button.addEventListener('click', function () {
+          const itemId = button.dataset.itemId;
+          const viewing = document.querySelectorAll(`[data-item-view="${itemId}"]`);
+          const editing = document.querySelectorAll(`[data-item-editor="${itemId}"]`);
+          const isEditing = editing.length > 0 && !editing[0].classList.contains('d-none');
+          viewing.forEach((element) => element.classList.toggle('d-none', !isEditing));
+          editing.forEach((element) => element.classList.toggle('d-none', isEditing));
+          button.classList.toggle('active', !isEditing);
+          button.setAttribute('aria-pressed', String(!isEditing));
+        });
+      });
+
+      const search = document.getElementById('path-item-search-{{ report.id }}');
+      const status = document.getElementById('path-item-status-{{ report.id }}');
+      const filterButton = document.getElementById('path-item-filter-{{ report.id }}');
+      const rows = Array.from(document.querySelectorAll('.followup-path-row'));
+      const emptyFiltered = document.getElementById('path-item-empty-filtered-{{ report.id }}');
+      const applyFilter = function () {
+        const query = (search?.value || '').trim().toLocaleLowerCase();
+        const selectedStatus = status?.value || '';
+        let visibleCount = 0;
+        rows.forEach((row) => {
+          const matchesText = !query || (row.dataset.search || '').toLocaleLowerCase().includes(query);
+          const matchesStatus = !selectedStatus || row.dataset.status === selectedStatus;
+          const visible = matchesText && matchesStatus;
+          row.classList.toggle('d-none', !visible);
+          if (visible) visibleCount += 1;
+        });
+        if (emptyFiltered) emptyFiltered.classList.toggle('d-none', rows.length === 0 || visibleCount > 0);
+      };
+      filterButton?.addEventListener('click', applyFilter);
+      search?.addEventListener('input', applyFilter);
+      status?.addEventListener('change', applyFilter);
     });
   </script>
   {% elif can_review %}
