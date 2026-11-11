@@ -192,7 +192,11 @@ from workflow.read_models import (
     load_dashboard_correspondence_contexts,
     load_workflow_access_snapshot,
 )
-from workflow.temporary_delete import can_delete_workflow_request, is_super_admin
+from workflow.temporary_delete import (
+    can_delete_workflow_request,
+    can_permanently_delete_workflow,
+    is_super_admin,
+)
 
 from workflow.engine import (
     _notify_users,
@@ -7716,7 +7720,7 @@ def view_request(request_id):
          ))
         and (req.status or "").strip().upper() in {"APPROVED", "REJECTED"}
     )
-    can_delete_request = can_delete_workflow_request(current_user, req)
+    can_delete_request = can_delete_workflow_request(_workflow_actor(), req)
     can_reopen_workflow = bool(inst and steps)
     if can_reopen_workflow:
         if execution.get("execution_context") == "SELF":
@@ -9383,7 +9387,7 @@ def request_escalations(request_id):
 
 
 # =========================
-# Delete Request (SUPER_ADMIN or temporary owner revoke)
+# Delete Request (permanent permission or temporary owner revoke)
 # =========================
 @workflow_bp.route("/request/<int:request_id>/delete", methods=["POST"])
 @login_required
@@ -9398,7 +9402,12 @@ def delete_request(request_id):
 
     rid = req.id
     requester_id = req.requester_id
-    deletion_mode = "SUPER_ADMIN" if is_super_admin(working_user) else "TEMPORARY_REVOKE"
+    if is_super_admin(working_user):
+        deletion_mode = "SUPER_ADMIN"
+    elif can_permanently_delete_workflow(working_user):
+        deletion_mode = "PERMANENT_PERMISSION"
+    else:
+        deletion_mode = "TEMPORARY_REVOKE"
 
     # Collect recipients who have received/handled the request so far (steps + commenters)
     recipients_user_ids = set()

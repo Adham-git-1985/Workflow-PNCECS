@@ -3,7 +3,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from io import BytesIO
 from datetime import datetime
 
-from flask_login import login_required
+from flask_login import current_user, login_required
 from sqlalchemy import func, or_
 from sqlalchemy.orm import selectinload
 from extensions import db
@@ -13,6 +13,7 @@ from utils.importer import read_excel_rows, pick, to_str, to_int, to_bool, upser
 from utils.org_dynamic import ensure_dynamic_org_seed
 from utils.approved_org_structure import apply_approved_org_structure
 from utils.role_codes import role_storage_variants
+from workflow.temporary_delete import PERMANENT_DELETE_PERMISSION, is_admin_or_super_admin
 
 from models import Organization, Directorate, Unit, Department, Section, Division, Role, RolePermission, User, UserPermission, RequestType, WorkflowRoutingRule, WorkflowRequest, Committee, CommitteeAssignee, WorkflowTemplateStep, WorkflowTemplateParallelAssignee, WorkflowInstanceStep, OrgNodeType, OrgNode, SystemSetting
 
@@ -29,6 +30,7 @@ PERM_MODULES = [
 PERM_EXTRA_KEYS = [
     ("WORKFLOW_REOPEN_TO_STEP", "إعادة فتح المسار وإرجاعه إلى خطوة حالية أو سابقة"),
     ("WORKFLOW_TEMPORARY_DELETE", "حذف المسارات والطلبات لمدة ساعة من إنشائها"),
+    (PERMANENT_DELETE_PERMISSION, "حذف المسارات بشكل دائم"),
     ("INVENTORY_FIXED_ASSET_DELETE", "حذف الأصول الثابتة"),
     ("WORKFLOW_REPORTS_READ", "تقارير مسار"),
     ("WORKFLOW_REPORTS_EMAIL_MANAGE", "إدارة إرسال تقارير مسار"),
@@ -1474,6 +1476,16 @@ def permissions_manage():
     if not _current_is_super_admin():
         users = [u for u in users if not _is_super_admin_user(u)]
 
+    # Permanent workflow deletion is deliberately available in the grant UI
+    # only to built-in administrators.  Keep the key out of the editable set
+    # for other permission managers, including forged POST requests.
+    can_manage_permanent_delete = is_admin_or_super_admin(current_user)
+    editable_extra_keys = [
+        item
+        for item in PERM_EXTRA_KEYS
+        if item[0] != PERMANENT_DELETE_PERMISSION or can_manage_permanent_delete
+    ]
+
     selected_user_id = request.args.get("user_id")
 
     action_codes = [a for a, _ in PERM_ACTIONS]  # e.g. ["CREATE","READ","UPDATE","DELETE"]
@@ -1485,7 +1497,7 @@ def permissions_manage():
             managed_keys.add(f"{prefix}_{act}")
         if legacy:
             managed_keys.add(legacy)
-    for k, _lbl in PERM_EXTRA_KEYS:
+    for k, _lbl in editable_extra_keys:
         managed_keys.add(k)
 
     if request.method == "POST":
@@ -1519,7 +1531,7 @@ def permissions_manage():
                     db.session.add(UserPermission(user_id=uid, key=k, is_allowed=True))
 
         # Add selected EXTRA perms
-        for k, _lbl in PERM_EXTRA_KEYS:
+        for k, _lbl in editable_extra_keys:
             if request.form.get(f"perm_extra_{k}") == "1":
                 db.session.add(UserPermission(user_id=uid, key=k, is_allowed=True))
 
@@ -1570,7 +1582,7 @@ def permissions_manage():
         checked_keys=checked_keys,
         current_keys=current_keys,
         role_checked_keys=role_checked_keys,
-        extra_keys=PERM_EXTRA_KEYS,
+        extra_keys=editable_extra_keys,
     )
 @masterdata_bp.route("/roles")
 @login_required

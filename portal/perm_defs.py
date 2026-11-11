@@ -74,6 +74,13 @@ PERMS: Dict[str, List[PermDef]] = {
             module="WORKFLOW",
             user_only=True,
         ),
+        PermDef(
+            "WORKFLOW_PERMANENT_DELETE",
+            "حذف المسارات بشكل دائم",
+            "يسمح للمستخدم المحدد بحذف المسار أو الطلب نهائيًا. تُمنح هذه الصلاحية لمستخدم بعينه ولا تنتقل عبر الدور.",
+            module="WORKFLOW",
+            user_only=True,
+        ),
     ],
     "التعميمات": [
         PermDef("PORTAL_CIRCULARS_MANAGE", "إدارة التعميمات", "إصدار تعميمات وإرسال تنبيهات مستعجلة للمستخدمين.", module="PORTAL_CIRCULARS"),

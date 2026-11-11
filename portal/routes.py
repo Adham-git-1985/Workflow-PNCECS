@@ -841,6 +841,22 @@ def _is_admin_or_super_admin() -> bool:
         return False
 
 
+def _portal_permission_groups_for_actor(groups, user=None):
+    """Hide administrator-only destructive permissions from other managers."""
+    from workflow.temporary_delete import PERMANENT_DELETE_PERMISSION, is_admin_or_super_admin
+
+    actor = current_user if user is None else user
+    can_manage_permanent_delete = is_admin_or_super_admin(actor)
+    return {
+        group_name: [
+            permission
+            for permission in permissions
+            if permission.key != PERMANENT_DELETE_PERMISSION or can_manage_permanent_delete
+        ]
+        for group_name, permissions in (groups or {}).items()
+    }
+
+
 def _can_delete_corr() -> bool:
     if _is_super_admin():
         return True
@@ -9703,9 +9719,16 @@ def admin_access_requests():
 def _grant_user_permissions(user_id: int, keys: list[str]) -> int:
     """Grant requested permission keys to a user (UserPermission). Returns count."""
     from portal.perm_defs import ALL_KEYS as ALLOWED
+    from workflow.temporary_delete import PERMANENT_DELETE_PERMISSION, is_admin_or_super_admin
 
     allowed = { (k or "").strip().upper() for k in (ALLOWED or []) }
-    keys_norm = [k for k in _normalize_keys(keys or []) if k in allowed]
+    can_manage_permanent_delete = is_admin_or_super_admin(current_user)
+    keys_norm = [
+        key
+        for key in _normalize_keys(keys or [])
+        if key in allowed
+        and (key != PERMANENT_DELETE_PERMISSION or can_manage_permanent_delete)
+    ]
 
     applied = 0
     for key in keys_norm:
@@ -10091,6 +10114,7 @@ def _import_employee_timeclock(stream, *, mode: str, user):
 
 def _import_permissions(stream, *, mode: str, user):
     from models import RolePermission, UserPermission, User
+    from workflow.temporary_delete import PERMANENT_DELETE_PERMISSION, is_admin_or_super_admin
     header_map = {
         _normalize_header('role'): 'role',
         _normalize_header('permission'): 'permission',
@@ -10104,6 +10128,7 @@ def _import_permissions(stream, *, mode: str, user):
         _normalize_header('نعم'): 'is_allowed',
     }
     inserted = updated = 0
+    can_manage_permanent_delete = is_admin_or_super_admin(user)
 
     def _apply_role_rows(rows: list[dict]) -> tuple[int, int]:
         ins = upd = 0
@@ -10111,6 +10136,10 @@ def _import_permissions(stream, *, mode: str, user):
             role = str(r.get('role') or '').strip()
             perm = str(r.get('permission') or '').strip().upper()
             if not role or not perm:
+                continue
+            # The permanent workflow delete right is never role-based and
+            # cannot be granted by a non-administrator through Excel.
+            if perm == PERMANENT_DELETE_PERMISSION:
                 continue
             obj = RolePermission.query.filter_by(role=role, permission=perm).first()
             if obj is None:
@@ -10126,6 +10155,8 @@ def _import_permissions(stream, *, mode: str, user):
             email = str(r.get('user_email') or '').strip().lower()
             perm = str(r.get('permission') or '').strip().upper()
             if not email or not perm:
+                continue
+            if perm == PERMANENT_DELETE_PERMISSION and not can_manage_permanent_delete:
                 continue
             u = User.query.filter(db.func.lower(User.email) == email).first()
             if not u:
@@ -47627,6 +47658,13 @@ def _portal_perm_presets_load() -> tuple[dict, dict]:
 @_perm(PORTAL_ADMIN_PERMISSIONS_MANAGE)
 def portal_admin_permission_presets():
     """Manage the shortcuts (presets) shown on the portal permissions page."""
+    permission_groups = _portal_permission_groups_for_actor(PORTAL_PERMS)
+    editable_permission_keys = {
+        permission.key
+        for permissions in permission_groups.values()
+        for permission in permissions
+    }
+
     if request.method == "POST":
         action = (request.form.get("action") or "save").strip().lower()
 
@@ -47659,7 +47697,7 @@ def portal_admin_permission_presets():
             selected_keys = _normalize_keys([
                 (key or "").strip().upper()
                 for key in request.form.getlist("permissions")
-                if (key or "").strip().upper() in PORTAL_ALL_KEYS
+                if (key or "").strip().upper() in editable_permission_keys
             ])
 
             row = PortalPermissionPreset.query.filter_by(code=code).first()
@@ -47704,6 +47742,16 @@ def portal_admin_permission_presets():
                 main = {k: v for k, v in flat.items() if k in main_codes}
                 extra = {k: v for k, v in flat.items() if k not in main_codes}
 
+            # Do not let a non-administrator smuggle the administrator-only
+            # deletion key into a preset through the advanced JSON editor.
+            if len(editable_permission_keys) < len(PORTAL_ALL_KEYS):
+                for preset_map in (main, extra):
+                    for preset in preset_map.values():
+                        preset["keys"] = [
+                            key for key in (preset.get("keys") or [])
+                            if key in editable_permission_keys
+                        ]
+
             # Replace all presets in the table (simple + deterministic)
             try:
                 PortalPermissionPreset.query.delete()
@@ -47747,6 +47795,13 @@ def portal_admin_permission_presets():
 
     # GET (show effective config: overrides + defaults)
     p_main, p_extra = _portal_perm_presets_load()
+    if len(editable_permission_keys) < len(PORTAL_ALL_KEYS):
+        for preset_map in (p_main, p_extra):
+            for preset in preset_map.values():
+                preset["keys"] = [
+                    key for key in (preset.get("keys") or [])
+                    if key in editable_permission_keys
+                ]
     raw = json.dumps({"main": p_main, "extra": p_extra}, ensure_ascii=False, indent=2)
 
     all_presets = {**p_main, **p_extra}
@@ -47769,8 +47824,9 @@ def portal_admin_permission_presets():
     # Human-friendly labels for preview
     try:
         from portal.perm_defs import PERMS as PORTAL_PERMS
-        perm_labels = {p.key: p.label for group in PORTAL_PERMS.values() for p in group}
-        perm_descs = {p.key: p.desc for group in PORTAL_PERMS.values() for p in group}
+        permission_groups = _portal_permission_groups_for_actor(PORTAL_PERMS)
+        perm_labels = {p.key: p.label for group in permission_groups.values() for p in group}
+        perm_descs = {p.key: p.desc for group in permission_groups.values() for p in group}
     except Exception:
         perm_labels = {}
         perm_descs = {}
@@ -47782,7 +47838,7 @@ def portal_admin_permission_presets():
         presets_extra=p_extra,
         perm_labels=perm_labels,
         perm_descs=perm_descs,
-        permission_groups=PORTAL_PERMS,
+        permission_groups=permission_groups,
         editing_preset=editing_preset,
         editing_keys=editing_keys,
         new_mode=new_mode,
@@ -47878,15 +47934,22 @@ def portal_admin_permissions_catalog():
     except Exception:
         PORTAL_PERMS = {}
 
+    PORTAL_PERMS = _portal_permission_groups_for_actor(PORTAL_PERMS)
+
     perm_labels = {p.key: p.label for group in PORTAL_PERMS.values() for p in group}
     perm_descs = {p.key: p.desc for group in PORTAL_PERMS.values() for p in group}
     perm_modules = {p.key: p.module for group in PORTAL_PERMS.values() for p in group}
 
     portal_keys = set(perm_labels.keys())
+    hidden_portal_keys = set(PORTAL_ALL_KEYS) - portal_keys
 
     # System / legacy
     system_refs = _portal_discover_system_permission_refs()
-    system_keys: dict[str, set[str]] = {k: set(v) for k, v in (system_refs or {}).items() if k and k not in portal_keys}
+    system_keys: dict[str, set[str]] = {
+        k: set(v)
+        for k, v in (system_refs or {}).items()
+        if k and k not in portal_keys and k not in hidden_portal_keys
+    }
 
     # Also include any keys already saved in DB (RolePermission/UserPermission), even if not found in scan
     try:
@@ -47894,11 +47957,11 @@ def portal_admin_permissions_catalog():
         from extensions import db as _db
         for (p,) in (_db.session.query(RolePermission.permission).distinct().all() or []):
             kk = (str(p) if p is not None else "").strip().upper()
-            if kk and kk not in portal_keys:
+            if kk and kk not in portal_keys and kk not in hidden_portal_keys:
                 system_keys.setdefault(kk, set()).add("database:RolePermission")
         for (p,) in (_db.session.query(UserPermission.key).distinct().all() or []):
             kk = (str(p) if p is not None else "").strip().upper()
-            if kk and kk not in portal_keys:
+            if kk and kk not in portal_keys and kk not in hidden_portal_keys:
                 system_keys.setdefault(kk, set()).add("database:UserPermission")
     except Exception:
         pass
@@ -47932,6 +47995,31 @@ def portal_admin_permissions():
     from models import Role, RolePermission, User, UserPermission, EmployeeFile
     from sqlalchemy import func
     from extensions import db
+    from workflow.temporary_delete import PERMANENT_DELETE_PERMISSION, is_admin_or_super_admin
+
+    # The destructive workflow permission is user-scoped and may be managed
+    # only by the built-in Admin/Super Admin accounts.  Keep it out of the
+    # editable key set for other permission managers as a server-side guard.
+    can_manage_permanent_delete = is_admin_or_super_admin(current_user)
+    portal_permission_groups = {
+        group_name: [
+            permission
+            for permission in permissions
+            if permission.key != PERMANENT_DELETE_PERMISSION or can_manage_permanent_delete
+        ]
+        for group_name, permissions in PORTAL_PERMS.items()
+    }
+    editable_portal_keys = tuple(
+        permission.key
+        for permissions in portal_permission_groups.values()
+        for permission in permissions
+    )
+    user_only_portal_keys = {
+        permission.key
+        for permissions in portal_permission_groups.values()
+        for permission in permissions
+        if permission.user_only
+    }
 
     scope = (request.args.get("scope") or request.form.get("scope") or "role").strip().lower()
     if scope not in ("role", "user"):
@@ -48061,7 +48149,7 @@ def portal_admin_permissions():
 
         # Role permissions (Portal only)
         rperms = (RolePermission.query
-                 .filter(RolePermission.permission.in_(PORTAL_ALL_KEYS))
+                 .filter(RolePermission.permission.in_(editable_portal_keys))
                  .order_by(RolePermission.role.asc(), RolePermission.permission.asc())
                  .all())
         role_rows = [[rp.role, rp.permission] for rp in rperms]
@@ -48069,7 +48157,7 @@ def portal_admin_permissions():
         # User permissions (Portal only)
         q2 = (db.session.query(UserPermission, User.email)
               .join(User, User.id == UserPermission.user_id)
-              .filter(UserPermission.key.in_(PORTAL_ALL_KEYS))
+              .filter(UserPermission.key.in_(editable_portal_keys))
               .order_by(func.lower(User.email).asc(), UserPermission.key.asc()))
         user_rows = []
         for up, email in q2.all():
@@ -48117,6 +48205,12 @@ def portal_admin_permissions():
         else:
             perms = [(p or "").strip().upper() for p in request.form.getlist("permissions") if (p or "").strip()]
 
+        # Accept only known keys.  User-only rights can never be assigned to
+        # a role, even if a forged request bypasses the disabled checkbox.
+        perms = [p for p in perms if p in editable_portal_keys]
+        if scope == "role":
+            perms = [p for p in perms if p not in user_only_portal_keys]
+
         if scope == "role":
             selected_role = (request.form.get("role") or "").strip()
             if not selected_role:
@@ -48128,11 +48222,11 @@ def portal_admin_permissions():
             # Delete only portal permissions (leave other permissions intact)
             RolePermission.query \
                 .filter(func.lower(RolePermission.role).in_(sorted(selected_role_variants))) \
-                .filter(RolePermission.permission.in_(PORTAL_ALL_KEYS)) \
+                .filter(RolePermission.permission.in_(editable_portal_keys)) \
                 .delete(synchronize_session=False)
 
             for p in perms:
-                if p in PORTAL_ALL_KEYS:
+                if p in editable_portal_keys:
                     db.session.add(RolePermission(role=selected_role, permission=p))
 
             db.session.commit()
@@ -48142,7 +48236,7 @@ def portal_admin_permissions():
                 saved_count = (
                     RolePermission.query
                     .filter(func.lower(RolePermission.role).in_(sorted(selected_role_variants)))
-                    .filter(RolePermission.permission.in_(PORTAL_ALL_KEYS))
+                    .filter(RolePermission.permission.in_(editable_portal_keys))
                     .count()
                 )
             except Exception:
@@ -48190,11 +48284,11 @@ def portal_admin_permissions():
         # Delete only portal permissions (leave other user permissions intact)
         UserPermission.query \
             .filter(UserPermission.user_id == uid) \
-            .filter(UserPermission.key.in_(PORTAL_ALL_KEYS)) \
+            .filter(UserPermission.key.in_(editable_portal_keys)) \
             .delete(synchronize_session=False)
 
         for p in perms:
-            if p in PORTAL_ALL_KEYS:
+            if p in editable_portal_keys:
                 db.session.add(UserPermission(user_id=uid, key=p, is_allowed=True))
 
         db.session.commit()
@@ -48204,7 +48298,7 @@ def portal_admin_permissions():
             saved_count = (
                 UserPermission.query
                 .filter(UserPermission.user_id == uid)
-                .filter(UserPermission.key.in_(PORTAL_ALL_KEYS))
+                .filter(UserPermission.key.in_(editable_portal_keys))
                 .filter(UserPermission.is_allowed == True)  # noqa: E712
                 .count()
             )
@@ -48235,7 +48329,7 @@ def portal_admin_permissions():
         rows = (
             RolePermission.query
             .filter(func.lower(RolePermission.role).in_(sorted(selected_role_variants)))
-            .filter(RolePermission.permission.in_(PORTAL_ALL_KEYS))
+            .filter(RolePermission.permission.in_(editable_portal_keys))
             .all()
         )
         checked = { (r.permission or "").strip().upper() for r in rows if r.permission }
@@ -48245,7 +48339,7 @@ def portal_admin_permissions():
         urows = (
             UserPermission.query
             .filter(UserPermission.user_id == selected_user.id)
-            .filter(UserPermission.key.in_(PORTAL_ALL_KEYS))
+            .filter(UserPermission.key.in_(editable_portal_keys))
             .filter(UserPermission.is_allowed == True)  # noqa: E712
             .all()
         )
@@ -48257,7 +48351,7 @@ def portal_admin_permissions():
             rrows = (
                 RolePermission.query
                 .filter(func.lower(RolePermission.role).in_(sorted(role_variants)))
-                .filter(RolePermission.permission.in_(PORTAL_ALL_KEYS))
+                .filter(RolePermission.permission.in_(editable_portal_keys))
                 .all()
             )
             role_checked_for_user = { (r.permission or "").strip().upper() for r in rrows if r.permission }
@@ -48275,7 +48369,7 @@ def portal_admin_permissions():
         q=q,
         selected_role=selected_role,
         selected_user=selected_user,
-        perm_groups=PORTAL_PERMS,
+        perm_groups=portal_permission_groups,
         checked=checked,
         role_checked_for_user=role_checked_for_user,
         presets=presets,

@@ -1,9 +1,10 @@
-"""Authorization rules for the short workflow revoke window."""
+"""Authorization rules for temporary and permanent workflow deletion."""
 
 from datetime import datetime, timedelta
 
 
 TEMPORARY_DELETE_PERMISSION = "WORKFLOW_TEMPORARY_DELETE"
+PERMANENT_DELETE_PERMISSION = "WORKFLOW_PERMANENT_DELETE"
 TEMPORARY_DELETE_WINDOW = timedelta(hours=1)
 
 
@@ -15,6 +16,21 @@ def is_super_admin(user) -> bool:
         return bool(_user_is_super_admin(user))
     except Exception:
         return False
+
+
+def is_admin_or_super_admin(user) -> bool:
+    """Whether ``user`` is a built-in administrator account."""
+    if is_super_admin(user):
+        return True
+
+    try:
+        if user and user.has_role("ADMIN"):
+            return True
+    except Exception:
+        pass
+
+    role = (getattr(user, "role", "") or "").strip().upper().replace("-", "_").replace(" ", "_")
+    return role == "ADMIN"
 
 
 def has_direct_temporary_delete_permission(user) -> bool:
@@ -38,6 +54,35 @@ def has_direct_temporary_delete_permission(user) -> bool:
         )
     except Exception:
         return False
+
+
+def has_direct_permanent_delete_permission(user) -> bool:
+    """Check the explicit per-user right to permanently delete workflows.
+
+    This intentionally reads ``UserPermission`` directly instead of relying on
+    ``User.has_perm`` so a role or delegated identity cannot accidentally turn
+    this destructive, user-scoped permission into a broad grant.
+    """
+    try:
+        from models import UserPermission
+
+        return (
+            UserPermission.query
+            .filter_by(
+                user_id=int(user.id),
+                key=PERMANENT_DELETE_PERMISSION,
+                is_allowed=True,
+            )
+            .first()
+            is not None
+        )
+    except Exception:
+        return False
+
+
+def can_permanently_delete_workflow(user) -> bool:
+    """Whether ``user`` has permanent workflow deletion authority."""
+    return is_admin_or_super_admin(user) or has_direct_permanent_delete_permission(user)
 
 
 def can_revoke_within_window(user, *, owner_id, created_at, now=None) -> bool:
@@ -64,7 +109,10 @@ def can_revoke_within_window(user, *, owner_id, created_at, now=None) -> bool:
 
 
 def can_delete_workflow_template(user, template, *, now=None) -> bool:
-    """Allow normal template deletion, or the owner's temporary revoke right."""
+    """Allow normal, permanent, or owner's temporary template deletion."""
+    if can_permanently_delete_workflow(user):
+        return True
+
     try:
         if user and user.has_perm("WORKFLOW_TEMPLATES_DELETE"):
             return True
@@ -80,8 +128,8 @@ def can_delete_workflow_template(user, template, *, now=None) -> bool:
 
 
 def can_delete_workflow_request(user, workflow_request, *, now=None) -> bool:
-    """Allow super admins, or the requester's temporary revoke right."""
-    if is_super_admin(user):
+    """Allow permanent deletion authority or the requester's temporary revoke."""
+    if can_permanently_delete_workflow(user):
         return True
 
     return can_revoke_within_window(

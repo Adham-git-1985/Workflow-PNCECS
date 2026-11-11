@@ -52,6 +52,7 @@ from utils.excel import make_xlsx_bytes, make_xlsx_bytes_multi
 from utils.importer import read_excel_rows, pick, to_str, to_int, to_bool, replace_all
 from utils.org_dynamic import build_org_node_picker_tree
 from portal.perm_defs import ALL_KEYS as PORTAL_ALL_KEYS
+from workflow.temporary_delete import PERMANENT_DELETE_PERMISSION
 
 # =========================
 # Blueprint
@@ -424,7 +425,13 @@ def manage_permissions():
     selected_role = (request.args.get("role") or "").strip()
     if request.method == "POST":
         selected_role = (request.form.get("role") or "").strip()
-        perms = request.form.getlist("permissions")
+        perms = []
+        for permission in request.form.getlist("permissions"):
+            normalized_permission = (permission or "").strip()
+            if normalized_permission.upper() == PERMANENT_DELETE_PERMISSION:
+                continue
+            if normalized_permission:
+                perms.append(normalized_permission)
 
         if not selected_role:
             flash("اختر دوراً وظيفياً.", "danger")

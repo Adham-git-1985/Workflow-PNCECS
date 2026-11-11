@@ -4,10 +4,13 @@ from datetime import datetime, timedelta
 from flask import Flask
 
 from extensions import db
-from models import User, UserPermission, WorkflowRequest, WorkflowTemplate
+from models import RolePermission, User, UserPermission, WorkflowRequest, WorkflowTemplate
 from portal.perm_defs import PERMS
+from admin.masterdata import PERM_EXTRA_KEYS
 from workflow.temporary_delete import (
+    PERMANENT_DELETE_PERMISSION,
     TEMPORARY_DELETE_PERMISSION,
+    can_permanently_delete_workflow,
     can_delete_workflow_request,
     can_delete_workflow_template,
 )
@@ -38,8 +41,10 @@ class WorkflowTemporaryDeleteTests(unittest.TestCase):
         db.create_all()
         # User id 1 is treated as the bootstrap super-admin by legacy rules.
         self.super_admin = self._user("bootstrap@example.test", role="SUPER_ADMIN")
+        self.admin = self._user("admin@example.test", role="ADMIN")
         self.owner = self._user("owner@example.test")
         self.other_user = self._user("other@example.test")
+        self.permanent_user = self._user("permanent@example.test")
         db.session.add(UserPermission(
             user_id=self.owner.id,
             key=TEMPORARY_DELETE_PERMISSION,
@@ -48,6 +53,11 @@ class WorkflowTemporaryDeleteTests(unittest.TestCase):
         db.session.add(UserPermission(
             user_id=self.other_user.id,
             key=TEMPORARY_DELETE_PERMISSION,
+            is_allowed=True,
+        ))
+        db.session.add(UserPermission(
+            user_id=self.permanent_user.id,
+            key=PERMANENT_DELETE_PERMISSION,
             is_allowed=True,
         ))
         db.session.commit()
@@ -103,6 +113,44 @@ class WorkflowTemporaryDeleteTests(unittest.TestCase):
 
         self.assertTrue(can_delete_workflow_request(self.super_admin, request_row, now=now))
 
+    def test_permanent_permission_deletes_an_old_request_for_a_selected_user(self):
+        now = datetime.utcnow()
+        request_row = WorkflowRequest(
+            requester_id=self.owner.id,
+            title="طلب قديم قابل للحذف النهائي",
+            status="DRAFT",
+            created_at=now - timedelta(days=2),
+        )
+
+        self.assertTrue(can_permanently_delete_workflow(self.permanent_user))
+        self.assertTrue(can_delete_workflow_request(self.permanent_user, request_row, now=now))
+
+    def test_permanent_permission_deletes_a_template_for_a_selected_user(self):
+        now = datetime.utcnow()
+        template = WorkflowTemplate(
+            name="مسار قديم قابل للحذف النهائي",
+            created_by_id=self.owner.id,
+            created_at=now - timedelta(days=2),
+        )
+
+        self.assertTrue(can_delete_workflow_template(self.permanent_user, template, now=now))
+
+    def test_admin_and_super_admin_have_permanent_delete_access(self):
+        self.assertTrue(can_permanently_delete_workflow(self.admin))
+        self.assertTrue(can_permanently_delete_workflow(self.super_admin))
+
+    def test_unselected_user_does_not_have_permanent_delete_access(self):
+        self.assertFalse(can_permanently_delete_workflow(self.other_user))
+
+    def test_permanent_delete_permission_is_not_inherited_from_a_role(self):
+        db.session.add(RolePermission(
+            role=self.other_user.role,
+            permission=PERMANENT_DELETE_PERMISSION,
+        ))
+        db.session.commit()
+
+        self.assertFalse(can_permanently_delete_workflow(self.other_user))
+
     def test_explicit_normal_role_overrides_legacy_id_one_fallback(self):
         user = type(
             "LegacyIdOneUser",
@@ -145,6 +193,15 @@ class WorkflowTemporaryDeleteTests(unittest.TestCase):
         )
 
         self.assertTrue(definition.user_only)
+
+        self.assertIn(PERMANENT_DELETE_PERMISSION, dict(PERM_EXTRA_KEYS))
+        permanent_definition = next(
+            item
+            for group in PERMS.values()
+            for item in group
+            if item.key == PERMANENT_DELETE_PERMISSION
+        )
+        self.assertTrue(permanent_definition.user_only)
 
 
 if __name__ == "__main__":
