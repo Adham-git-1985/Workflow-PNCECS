@@ -183,7 +183,10 @@ def asset_documents():
     return render_template("portal/inventory/fixed_assets/documents.html",
         documents=query.order_by(InvAssetDocument.id.desc()).paginate(per_page=30),
         assets=assets, kinds=KINDS, statuses=STATUSES, manager=manager,
-        committee_cycle_ids=committee_cycle_ids, selected_status=status)
+        committee_cycle_ids=committee_cycle_ids, selected_status=status,
+        can_read_committee_report=manager or bool(committee_cycle_ids) or _is_secretary_general(),
+        report_statuses=COMMITTEE_REPORT_STATUSES,
+        employee_response_labels=EMPLOYEE_RESPONSE_LABELS)
 
 
 def _assignment_cycles_for_current_user():
@@ -336,8 +339,10 @@ def asset_document(document_id):
         committee_report=doc.cycle.committee_report if doc.cycle else None,
         manager=manager,
         committee_actor=committee_actor,
+        can_read_committee_report=manager or committee_actor or _is_secretary_general(),
         kinds=KINDS,
         statuses=STATUSES,
+        report_statuses=COMMITTEE_REPORT_STATUSES,
         can_review=doc.employee_id == current_user.id and doc.status == "PENDING",
         can_revise=(
             committee_actor

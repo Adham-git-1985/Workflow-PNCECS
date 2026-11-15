@@ -165,6 +165,7 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         self.assertIn("تقرير لجنة الجرد الثابت", page.get_data(as_text=True))
         self.assertIn("وافق الموظف", page.get_data(as_text=True))
         self.assertIn("الأمين العام", page.get_data(as_text=True))
+        self.assertIn("لم يتم إرساله للأمين العام بعد", page.get_data(as_text=True))
         preview = self.client.get(f"{report_url}/print")
         self.assertEqual(preview.status_code, 200)
         self.assertIn("تقرير الفروقات", preview.get_data(as_text=True))
@@ -172,6 +173,14 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         self.assertIn("فلتر الفروقات", preview.get_data(as_text=True))
         response = self.client.post(report_url, data={"action": "submit", "summary": "ملخص اللجنة"})
         self.assertEqual(response.status_code, 302)
+        documents_page = self.client.get(f"/portal/inventory/fixed-assets/documents?cycle_id={cycle.id}")
+        self.assertEqual(documents_page.status_code, 200)
+        self.assertIn("مرفوع للأمين العام", documents_page.get_data(as_text=True))
+        self.assertIn("قراءة التقرير", documents_page.get_data(as_text=True))
+        self.login(self.employee)
+        custody_page = self.client.get(f"/portal/inventory/fixed-assets/documents/{doc.id}")
+        self.assertEqual(custody_page.status_code, 200)
+        self.assertIn("تم إرساله للأمين العام", custody_page.get_data(as_text=True))
 
         self.login(self.secretary)
         page = self.client.get(report_url)
@@ -257,6 +266,12 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         self.assertIn("حاسوب محمول", document_text)
         self.assertIn("غرفة الاجتماعات", document_text)
         self.assertIn("جهاز محمول مع حقيبة وملحقات", document_text)
+        documents_page = self.client.get("/portal/inventory/fixed-assets/documents")
+        documents_text = documents_page.get_data(as_text=True)
+        self.assertEqual(documents_page.status_code, 200)
+        self.assertIn("SN-REPORT-2026", documents_text)
+        self.assertIn("حاسوب محمول", documents_text)
+        self.assertIn("صنف المستودع", documents_text)
         self.assertEqual(
             self.client.get(f"/portal/inventory/fixed-assets/assets/{asset.id}/image").status_code,
             200,
@@ -270,6 +285,15 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         self.assertEqual(preview.status_code, 200)
         for value in ("SN-REPORT-2026", "حاسوب محمول", "أجهزة مكتبية", "غرفة الاجتماعات", "جهاز محمول مع حقيبة وملحقات"):
             self.assertIn(value, preview_text)
+        self.login(self.secretary)
+        self.assertEqual(
+            self.client.get(f"/portal/inventory/fixed-assets/assets/{asset.id}/image").status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.get(f"/portal/inventory/fixed-assets/cycles/{cycle.id}/committee-report/print").status_code,
+            200,
+        )
         workbook = load_workbook(
             io.BytesIO(self.client.get(f"/portal/inventory/fixed-assets/cycles/{cycle.id}/committee-report.xlsx").data),
             read_only=True,

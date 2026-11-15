@@ -600,9 +600,23 @@ def _find_asset_by_system_qr(raw_value: str | None) -> InvFixedAsset | None:
     return InvFixedAsset.query.filter(InvFixedAsset.qr_token == identifier).first()
 
 
+def _can_read_fixed_asset_report():
+    if not current_user.is_authenticated:
+        return False
+    role = str(getattr(current_user, "role", "") or "").upper().replace("-", "_").replace(" ", "_")
+    return bool(
+        current_user.has_perm("INVENTORY_FIXED_ASSET_REPORT_APPROVE")
+        or current_user.has_perm("INVENTORY_SECRETARY_GENERAL_APPROVE")
+        or "SECRETARY_GENERAL" in role
+        or role in {"SECRETARY", "GENERAL_SECRETARY"}
+    )
+
+
 def _require_asset_access(asset):
     if current_user.has_perm(STORE_READ) or current_user.has_perm(STORE_MANAGE) or asset.custodian_user_id == current_user.id:
         return
+    if _can_read_fixed_asset_report():
+        return  # The Secretary General can read the images embedded in committee reports.
     member = InvFixedAssetCycleMember.query.join(InvFixedAssetCycle).filter(InvFixedAssetCycleMember.user_id == current_user.id, InvFixedAssetCycle.status == "ACTIVE").first()
     if member:
         return  # Committee members can identify unexpected assets during field scans.
@@ -618,6 +632,22 @@ def _require_asset_access(asset):
     )
     if assigned_line:
         return  # Employees may see the photo included in their own custody document.
+    committee_report_line = (
+        InvAssetDocumentLine.query
+        .join(InvAssetDocument)
+        .join(
+            InvFixedAssetCycleMember,
+            InvFixedAssetCycleMember.cycle_id == InvAssetDocument.cycle_id,
+        )
+        .filter(
+            InvAssetDocumentLine.asset_id == asset.id,
+            InvFixedAssetCycleMember.user_id == current_user.id,
+            InvAssetDocument.status != "CANCELLED",
+        )
+        .first()
+    )
+    if committee_report_line:
+        return  # Committee members may read photos in their reports, including closed cycles.
     abort(403)
 
 

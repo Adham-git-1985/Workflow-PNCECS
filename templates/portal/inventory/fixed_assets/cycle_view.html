@@ -21,9 +21,18 @@
   <div class="col-md-3"><div class="text-muted small">اللجنة/الدورة السابقة</div><div class="fw-bold">{{ cycle.previous_cycle.committee_name if cycle.previous_cycle else '-' }}</div>{% if cycle.previous_cycle %}<a class="small" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.previous_cycle.id) }}">{{ cycle.previous_cycle.code }}</a>{% endif %}</div>
   <div class="col-md-3"><div class="text-muted small">بدأها</div><div class="fw-bold">{{ cycle.created_by.full_name if cycle.created_by else '-' }}</div><div class="small text-muted">{{ cycle.started_at|local_datetime }}</div></div>
   <div class="col-md-3"><div class="text-muted small">الإغلاق</div><div class="fw-bold">{{ cycle.closed_by.full_name if cycle.closed_by else '-' }}</div><div class="small text-muted">{{ cycle.closed_at|local_datetime if cycle.closed_at else 'ما زالت جارية' }}</div>{% if cycle.finalized_at %}<div class="small text-success mt-1">إغلاق نهائي بواسطة اللجنة بعد اعتماد الأمين العام: {{ cycle.finalized_at|local_datetime }}</div>{% endif %}</div>
-  {% if cycle.successor_cycle %}<div class="col-12"><div class="alert alert-success mb-0">تم اعتماد التقرير وفتح دورة الجرد التالية: <a class="alert-link" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.successor_cycle.id) }}">{{ cycle.successor_cycle.code }} · {{ cycle.successor_cycle.name }}</a></div></div>{% endif %}
+{% if cycle.successor_cycle %}<div class="col-12"><div class="alert alert-success mb-0">تم اعتماد التقرير وفتح دورة الجرد التالية: <a class="alert-link" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.successor_cycle.id) }}">{{ cycle.successor_cycle.code }} · {{ cycle.successor_cycle.name }}</a></div></div>{% endif %}
   {% if cycle.note %}<div class="col-12"><div class="text-muted small">ملاحظات</div><div>{{ cycle.note }}</div></div>{% endif %}
 </div></div></div>
+
+{% if committee_report %}
+<div class="alert {% if committee_report.status == 'SUBMITTED' %}alert-primary{% elif committee_report.status == 'RETURNED' %}alert-warning{% elif committee_report.status in ['READY_TO_CLOSE','APPROVED','CLOSED'] %}alert-success{% else %}alert-secondary{% endif %} d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div><strong>تقرير لجنة الجرد:</strong> {% if committee_report.status == 'DRAFT' %}مسودة ولم يُرسل للأمين العام بعد.{% elif committee_report.status == 'SUBMITTED' %}تم إرساله للأمين العام — بانتظار قراره.{% elif committee_report.status == 'RETURNED' %}أُعيد للجنة للتعديل.{% elif committee_report.status == 'READY_TO_CLOSE' %}اعتمده الأمين العام وأعاده للجنة للإغلاق.{% elif committee_report.status in ['APPROVED','CLOSED'] %}معتمد من الأمين العام{% if committee_report.status == 'CLOSED' %} ومغلق نهائيًا{% endif %}.{% else %}{{ committee_report.status }}{% endif %}</div>
+  <div class="d-flex flex-wrap gap-2"><a class="btn btn-sm btn-outline-dark" href="{{ url_for('portal.asset_committee_report', cycle_id=cycle.id) }}">فتح تقرير اللجنة</a><a class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener" href="{{ url_for('portal.asset_committee_report_print', cycle_id=cycle.id) }}">قراءة التقرير الكامل</a></div>
+</div>
+{% else %}
+<div class="alert alert-light border d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3"><span><strong>تقرير لجنة الجرد:</strong> لم يتم إنشاء التقرير بعد.</span><a class="btn btn-sm btn-outline-dark" href="{{ url_for('portal.asset_committee_report', cycle_id=cycle.id) }}">فتح تقرير اللجنة</a></div>
+{% endif %}
 
 <div class="row g-2 mb-3">
   <div class="col-6 col-xl-2"><a class="card card-body text-decoration-none text-reset h-100" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.id) }}"><div class="text-muted small">الإجمالي</div><div class="fs-3 fw-bold">{{ total }}</div></a></div>

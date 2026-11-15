@@ -35,6 +35,10 @@
       <div class="col-6 col-lg-3"><div class="border rounded p-2"><div class="small text-muted">مستندات مرسلة سابقًا</div><strong>{{ row.document_count }}</strong></div></div>
     </div>
 
+    {% if row.cycle.committee_report %}
+    <div class="alert {% if row.cycle.committee_report.status == 'SUBMITTED' %}alert-primary{% elif row.cycle.committee_report.status == 'RETURNED' %}alert-warning{% elif row.cycle.committee_report.status in ['READY_TO_CLOSE','APPROVED','CLOSED'] %}alert-success{% else %}alert-secondary{% endif %} py-2 mb-3"><strong>حالة تقرير اللجنة:</strong> {{ {'DRAFT':'مسودة — لم يُرسل للأمين العام بعد','SUBMITTED':'تم إرساله للأمين العام — بانتظار القرار','RETURNED':'أُعيد للجنة للتعديل','READY_TO_CLOSE':'اعتمده الأمين العام — جاهز لإغلاق الدورة','APPROVED':'معتمد من الأمين العام','CLOSED':'مغلق نهائيًا'}.get(row.cycle.committee_report.status, row.cycle.committee_report.status) }} <a class="alert-link ms-2" href="{{ url_for('portal.asset_committee_report', cycle_id=row.cycle.id) }}">فتح التقرير وقراءته</a></div>
+    {% else %}<div class="alert alert-light border py-2 mb-3"><strong>حالة تقرير اللجنة:</strong> لم يُنشأ بعد.</div>{% endif %}
+
     <div class="d-flex flex-wrap gap-2">
       {% if row.new_asset_count %}
       <form method="post" action="{{ url_for('portal.asset_send_reports', cycle_id=row.cycle.id) }}" onsubmit="return confirm('هل تريد إسناد العهدة لكل الموظفين في هذه الدورة الآن؟');">

@@ -21,7 +21,15 @@
   <div class="col-md-3"><div class="text-muted small">الجهة الموجه إليها</div><strong>الأمين العام</strong></div>
   <div class="col-md-3"><div class="text-muted small">حالة التقرير</div><span class="badge text-bg-{{ 'success' if report.status in ['CLOSED','APPROVED'] else ('info' if report.status == 'READY_TO_CLOSE' else ('warning' if report.status == 'RETURNED' else ('primary' if report.status == 'SUBMITTED' else 'secondary'))) }} report-status">{{ report_statuses.get(report.status, report.status) }}</span></div>
   <div class="col-md-3"><div class="text-muted small">عدد العهد</div><strong>{{ documents|length }}</strong></div>
-</div></div></div>
+ </div></div></div>
+<div class="alert {% if report.status == 'SUBMITTED' %}alert-primary{% elif report.status == 'RETURNED' %}alert-warning{% elif report.status in ['READY_TO_CLOSE','APPROVED','CLOSED'] %}alert-success{% else %}alert-secondary{% endif %} d-flex flex-wrap align-items-center justify-content-between gap-3">
+  <div>
+    <strong>حالة إرسال تقرير اللجنة للأمين العام:</strong>
+    {% if report.status == 'DRAFT' %}مسودة لدى اللجنة — لم يتم إرساله للأمين العام بعد.{% elif report.status == 'SUBMITTED' %}تم إرسال التقرير للأمين العام، وهو بانتظار المراجعة والقرار.{% elif report.status == 'RETURNED' %}أعاد الأمين العام التقرير للجنة للتعديل.{% elif report.status == 'READY_TO_CLOSE' %}اعتمد الأمين العام التقرير وأعاده للجنة لإغلاق الدورة.{% elif report.status in ['APPROVED','CLOSED'] %}تم اعتماد التقرير من الأمين العام{% if report.status == 'CLOSED' %} وإغلاق الدورة نهائيًا{% endif %}.{% else %}{{ report_statuses.get(report.status, report.status) }}{% endif %}
+    {% if report.secretary_note %}<div class="small mt-1"><strong>ملاحظة الأمين العام:</strong> {{ report.secretary_note }}</div>{% endif %}
+  </div>
+  <div class="d-flex flex-wrap gap-2"><a class="btn btn-sm btn-outline-dark" target="_blank" rel="noopener" href="{{ url_for('portal.asset_committee_report_print', cycle_id=cycle.id) }}">قراءة التقرير الكامل{% if report.status in ['SUBMITTED','READY_TO_CLOSE','APPROVED','CLOSED'] %} المرسل{% endif %}</a>{% if report.status in ['SUBMITTED','READY_TO_CLOSE','APPROVED','CLOSED'] %}<a class="btn btn-sm btn-outline-success" href="{{ url_for('portal.asset_committee_report_pdf', cycle_id=cycle.id) }}">تنزيل النسخة PDF</a>{% endif %}</div>
+</div>
 {% if cycle.successor_cycle %}<div class="alert alert-success">اعتمد الأمين العام التقرير وأُغلقت دورة {{ cycle.code }} نهائيًا. دورة الجرد الجديدة مفتوحة: <a class="alert-link" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.successor_cycle.id) }}">{{ cycle.successor_cycle.code }} · {{ cycle.successor_cycle.name }}</a></div>{% endif %}
 
 {% if committee_actor and report.status in ['DRAFT','RETURNED','SUBMITTED','READY_TO_CLOSE'] %}
