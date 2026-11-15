@@ -13,12 +13,14 @@ from models import (
     InvAssetDocumentLine,
     InvAssetDocumentReservation,
     InvFixedAsset,
+    InvFixedAssetEntry,
     InvFixedAssetCommitteeReport,
     InvFixedAssetPreviousLine,
     Notification,
     User,
 )
-from services.fixed_asset_inventory import open_followup_inventory_cycle
+from services.fixed_asset_inventory import close_inventory_cycle, open_followup_inventory_cycle
+from services.notification_email import PORTAL_APPROVAL_EMAIL_MODE, enqueue_notification_email
 
 KINDS = {"INVENTORY": "تقرير جرد", "ASSIGN": "إسناد عهدة", "TRANSFER": "نقل عهدة",
          "RETURN": "إرجاع عهدة", "DISPOSE": "إسقاط عهدة"}
@@ -36,7 +38,9 @@ COMMITTEE_REPORT_STATUSES = {
     "DRAFT": "مسودة لدى اللجنة",
     "SUBMITTED": "مرفوع للأمين العام",
     "RETURNED": "معاد للجنة للتعديل",
+    "READY_TO_CLOSE": "معتمد ومعاد للجنة للإغلاق",
     "APPROVED": "معتمد من الأمين العام",
+    "CLOSED": "مغلق نهائياً",
 }
 EMPLOYEE_RESPONSE_LABELS = {
     "ACCEPT": "وافق الموظف",
@@ -51,9 +55,19 @@ def asset_state(asset):
 
 
 def notify_document(doc, user_id, message, *, link_url=None):
-    db.session.add(Notification(user_id=user_id, message=f"{message} — رقم {doc.id}", source="portal",
-                                link_url=link_url or f"/portal/inventory/fixed-assets/documents/{doc.id}",
-                                event_key=f"asset-doc-{doc.id}-{doc.status}", actor_id=doc.created_by_id))
+    notification = Notification(
+        user_id=user_id,
+        message=f"{message} — رقم {doc.id}",
+        source="portal",
+        link_url=link_url or f"/portal/inventory/fixed-assets/documents/{doc.id}",
+        event_key=f"asset-doc-{doc.id}-{doc.status}",
+        actor_id=doc.created_by_id,
+        target_type="INV_ASSET_DOCUMENT",
+        target_id=doc.id,
+        email_delivery_mode=PORTAL_APPROVAL_EMAIL_MODE,
+    )
+    db.session.add(notification)
+    enqueue_notification_email(notification)
 
 
 def record_document_event(doc, action, actor_id=None, note=None, metadata=None):
@@ -77,9 +91,49 @@ def _transition(doc, before, after):
 
 
 def pending_for_asset(asset_id):
-    return (InvAssetDocumentLine.query.join(InvAssetDocument)
+    """Return an active custody document for an included asset, if any.
+
+    A committee removal is deliberately represented by keeping the old line
+    with ``included=False``.  Such a line is history, not an active
+    reservation, so the asset may be assigned to a new employee afterwards.
+    """
+    rows = (InvAssetDocumentLine.query.join(InvAssetDocument)
             .filter(InvAssetDocumentLine.asset_id == asset_id,
-                    InvAssetDocument.status.in_(["PENDING", "APPROVED", "CHANGE_REQUESTED"])).first())
+                    InvAssetDocument.status.in_(["PENDING", "APPROVED", "CHANGE_REQUESTED"])).all())
+    for line in rows:
+        if (line.snapshot or {}).get("included", True) is not False:
+            return line.document
+    return None
+
+
+def _inventory_entry_for_asset(cycle_id, asset_id):
+    if not cycle_id:
+        return None
+    return InvFixedAssetEntry.query.filter_by(cycle_id=cycle_id, asset_id=asset_id).first()
+
+
+def _inventory_snapshot(asset, employee, entry=None):
+    scanned = bool(entry and entry.scanned_at)
+    eligible = bool(
+        asset.is_active
+        and asset.lifecycle_status != "DISPOSED"
+        and (not entry or (scanned and entry.observed_lifecycle_status not in ("DISPOSED", "LOST")))
+    )
+    return {
+        "tag": asset.asset_tag,
+        "name": asset.name,
+        "serial": asset.serial_number,
+        "state": asset_state(asset),
+        "location": (entry.observed_location_label if scanned else entry.expected_location_label)
+        if entry else asset.location_label,
+        "custodian": employee.full_name if employee else "",
+        "condition": entry.observed_condition if scanned else (entry.expected_condition if entry else asset.asset_condition),
+        "result": entry.result_status if entry else None,
+        "inventory_note": entry.note if entry else None,
+        "eligible": eligible,
+        "target_lifecycle": entry.observed_lifecycle_status if scanned else (entry.expected_lifecycle_status if entry else asset.lifecycle_status),
+        "included": True,
+    }
 
 
 def _new_document(kind, employee_id, actor_id, assets, *, cycle=None, reason=None, entries=None):
@@ -95,17 +149,8 @@ def _new_document(kind, employee_id, actor_id, assets, *, cycle=None, reason=Non
     employee = db.session.get(User, employee_id)
     for asset in assets:
         entry = entries.get(asset.id) if entries else None
-        eligible = asset.is_active and asset.lifecycle_status != "DISPOSED" and (not entry or (entry.scanned_at is not None and entry.observed_lifecycle_status not in ("DISPOSED", "LOST")))
         db.session.add(InvAssetDocumentReservation(asset_id=asset.id, document_id=doc.id))
-        doc.lines.append(InvAssetDocumentLine(asset_id=asset.id, snapshot={
-            "tag": asset.asset_tag, "name": asset.name, "serial": asset.serial_number,
-            "state": asset_state(asset), "location": asset.location_label,
-            "custodian": employee.full_name if employee else "",
-            "condition": entry.observed_condition if entry and entry.scanned_at else asset.asset_condition,
-            "result": entry.result_status if entry else None, "inventory_note": entry.note if entry else None,
-            "eligible": bool(eligible),
-            "target_lifecycle": entry.observed_lifecycle_status if entry and entry.scanned_at else asset.lifecycle_status,
-        }))
+        doc.lines.append(InvAssetDocumentLine(asset_id=asset.id, snapshot=_inventory_snapshot(asset, employee, entry)))
     db.session.flush()
     record_document_event(doc, "CREATED", actor_id, reason)
     if kind not in {"RETURN", "DISPOSE"}:
@@ -114,8 +159,8 @@ def _new_document(kind, employee_id, actor_id, assets, *, cycle=None, reason=Non
 
 
 def send_cycle_reports(cycle, actor_id):
-    if cycle.status != "CLOSED":
-        raise ValueError("أغلق دورة الجرد أولاً لتثبيت نتائج التقرير.")
+    if cycle.status not in {"ACTIVE", "CLOSED"}:
+        raise ValueError("دورة الجرد غير متاحة لإسناد العهد.")
     if cycle.finalized_at is not None:
         raise ValueError("اعتمد الأمين العام تقرير هذه الدورة؛ استخدم دورة الجرد الجديدة.")
     sent_employee_ids = {row.employee_id for row in InvAssetDocument.query.filter(
@@ -248,18 +293,30 @@ def review_inventory_document(doc, employee_id, action, note=None):
 
 def revise_inventory_document(doc, actor_id, line_updates, note=None):
     """Let the committee revise a requested custody and send it again."""
-    if doc.kind != "INVENTORY" or doc.status not in {"CHANGE_REQUESTED", "RETURNED"}:
+    if doc.kind != "INVENTORY" or doc.status not in {
+        "PENDING", "CHANGE_REQUESTED", "REJECTED", "REJECTED_ESCALATED", "APPROVED"
+    }:
         raise ValueError("لا يمكن تعديل هذه العهدة في حالتها الحالية.")
+    if doc.cycle and doc.cycle.finalized_at is not None:
+        raise ValueError("أُغلقت دورة الجرد نهائياً؛ لا يمكن تعديل العهدة.")
     note = (note or "").strip()
     if len(note) > 4000:
         raise ValueError("ملاحظة اللجنة يجب ألا تتجاوز 4000 حرف.")
     updates = line_updates or {}
+    new_asset_ids = [int(value) for value in (updates.pop("__new_asset_ids", []) or []) if str(value).isdigit()]
     if not doc.lines:
         raise ValueError("لا توجد بنود لتعديلها.")
 
+    report = doc.cycle.committee_report if doc.cycle else None
+    if report is not None and report.status == "READY_TO_CLOSE":
+        _mark_committee_report_dirty(report, actor_id)
+
+    changed_lines = []
+    removed_lines = []
     for line in doc.lines:
         values = updates.get(line.id, {}) or {}
         snapshot = dict(line.snapshot or {})
+        before_snapshot = dict(snapshot)
         for key, max_length in (
             ("tag", 255), ("name", 255), ("serial", 200), ("location", 500),
             ("condition", 40), ("target_lifecycle", 40), ("inventory_note", 4000),
@@ -273,6 +330,40 @@ def revise_inventory_document(doc, actor_id, line_updates, note=None):
         line.snapshot = snapshot
         line.decision = "PENDING"
         line.employee_note = None
+        if before_snapshot != snapshot:
+            changed_lines.append(snapshot.get("tag") or line.asset_id)
+        if before_snapshot.get("included", True) and snapshot.get("included", True) is False:
+            removed_lines.append(snapshot.get("tag") or line.asset_id)
+
+    existing_asset_ids = {line.asset_id for line in doc.lines}
+    added_lines = []
+    if new_asset_ids:
+        employee = db.session.get(User, doc.employee_id)
+        for asset_id in dict.fromkeys(new_asset_ids):
+            if asset_id in existing_asset_ids:
+                continue
+            asset = db.session.get(InvFixedAsset, asset_id)
+            if asset is None:
+                raise ValueError("لا يمكن إضافة أصل غير موجود.")
+            entry = _inventory_entry_for_asset(doc.cycle_id, asset.id)
+            holder_id = (
+                entry.observed_custodian_user_id
+                if entry and entry.scanned_at
+                else (entry.expected_custodian_user_id if entry else asset.custodian_user_id)
+            )
+            if holder_id != doc.employee_id:
+                raise ValueError(f"الأصل {asset.asset_tag} غير مربوط بالموظف المختار في هذه الدورة.")
+            reserved = pending_for_asset(asset.id)
+            if reserved is not None and reserved.id != doc.id:
+                raise ValueError(f"الأصل {asset.asset_tag} مرتبط بعهدة أخرى لم تنتهِ بعد.")
+            db.session.add(InvAssetDocumentReservation(asset_id=asset.id, document_id=doc.id))
+            doc.lines.append(InvAssetDocumentLine(
+                asset_id=asset.id,
+                snapshot=_inventory_snapshot(asset, employee, entry),
+                decision="PENDING",
+            ))
+            existing_asset_ids.add(asset.id)
+            added_lines.append(asset.asset_tag)
 
     now = datetime.utcnow()
     doc.status = "PENDING"
@@ -285,8 +376,21 @@ def revise_inventory_document(doc, actor_id, line_updates, note=None):
     doc.committee_revision_note = note or None
     doc.committee_revised_at = now
     doc.committee_revised_by_id = actor_id
-    record_document_event(doc, "COMMITTEE_REVISED", actor_id, note, {"revision": doc.revision_number})
+    record_document_event(
+        doc,
+        "COMMITTEE_REVISED",
+        actor_id,
+        note,
+        {
+            "revision": doc.revision_number,
+            "changed": changed_lines,
+            "added": added_lines,
+            "removed": removed_lines,
+        },
+    )
     notify_document(doc, doc.employee_id, "أعادت اللجنة إرسال العهدة بعد التعديل")
+    if report is not None and report.status == "SUBMITTED":
+        _notify_secretary_general(report)
 
 
 def escalate_inventory_rejection(doc, actor_id, note=None):
@@ -321,6 +425,23 @@ def get_or_create_committee_report(cycle, actor_id=None):
     return report
 
 
+def _mark_committee_report_dirty(report, actor_id=None):
+    """Require a fresh Secretary General decision after a pre-close edit."""
+    if not report or report.status != "READY_TO_CLOSE":
+        return False
+    now = datetime.utcnow()
+    report.status = "SUBMITTED"
+    report.decided_by_id = None
+    report.decided_at = None
+    report.secretary_note = None
+    report.updated_at = now
+    if actor_id:
+        report.submitted_by_id = actor_id
+        report.submitted_at = now
+    _notify_secretary_general(report)
+    return True
+
+
 def inventory_documents_for_cycle(cycle_id):
     return (
         InvAssetDocument.query
@@ -342,8 +463,8 @@ def inventory_documents_for_cycle(cycle_id):
 def submit_committee_report(report, actor_id):
     if report.status not in {"DRAFT", "RETURNED"}:
         raise ValueError("هذا التقرير لا يمكن رفعه من حالته الحالية.")
-    if not report.cycle or report.cycle.status != "CLOSED":
-        raise ValueError("يجب إغلاق دورة الجرد قبل رفع تقرير اللجنة.")
+    if not report.cycle or report.cycle.status not in {"ACTIVE", "CLOSED"}:
+        raise ValueError("دورة الجرد غير متاحة لرفع التقرير.")
     if report.cycle.finalized_at is not None:
         raise ValueError("اعتمد الأمين العام تقرير هذه الدورة؛ لا يمكن رفعه مرة أخرى.")
     documents = inventory_documents_for_cycle(report.cycle_id)
@@ -378,14 +499,19 @@ def _notify_secretary_general(report):
         except Exception:
             continue
     for user_id in recipients:
-        db.session.add(Notification(
+        notification = Notification(
             user_id=user_id,
             message=f"تقرير جرد الأصول الثابتة للدورة {report.cycle.code} بانتظار مراجعة الأمين العام",
             source="portal",
             link_url=f"/portal/inventory/fixed-assets/cycles/{report.cycle_id}/committee-report",
             event_key=f"fixed-asset-report-{report.id}-submitted",
             actor_id=report.submitted_by_id,
-        ))
+            target_type="INV_FIXED_ASSET_COMMITTEE_REPORT",
+            target_id=report.id,
+            email_delivery_mode=PORTAL_APPROVAL_EMAIL_MODE,
+        )
+        db.session.add(notification)
+        enqueue_notification_email(notification)
 
 
 def decide_committee_report(report, actor_id, decision, note=None):
@@ -397,16 +523,16 @@ def decide_committee_report(report, actor_id, decision, note=None):
         raise ValueError("قرار التقرير غير صالح.")
     if decision == "RETURN" and len(note) < 3:
         raise ValueError("يجب توضيح سبب إعادة التقرير للجنة.")
-    report.status = "APPROVED" if decision == "APPROVE" else "RETURNED"
+    report.status = "READY_TO_CLOSE" if decision == "APPROVE" else "RETURNED"
     report.decided_by_id = actor_id
     report.decided_at = datetime.utcnow()
     report.secretary_note = note or None
     report.updated_at = datetime.utcnow()
-    next_cycle = None
     if decision == "APPROVE":
-        next_cycle = open_followup_inventory_cycle(report.cycle, created_by_id=actor_id)
-        report.cycle.finalized_at = report.decided_at
-        report.cycle.finalized_by_id = actor_id
+        documents = inventory_documents_for_cycle(report.cycle_id)
+        pending = [doc for doc in documents if doc.status not in {"APPROVED", "ISSUED", "COMPLETED"}]
+        if pending:
+            raise ValueError("لا يمكن اعتماد التقرير قبل اعتماد جميع العهد من الموظفين.")
     # The Secretary General approves the consolidated committee report only.
     # Employee custody approval remains the employee's decision, and the
     # operational issue/assignment of an approved custody is a separate action.
@@ -414,13 +540,68 @@ def decide_committee_report(report, actor_id, decision, note=None):
         notify_document(
             doc,
             doc.employee_id,
-            "تم اعتماد تقرير لجنة الجرد من الأمين العام" if decision == "APPROVE" else "أعاد الأمين العام تقرير لجنة الجرد للجنة",
+            "اعتمد الأمين العام تقرير لجنة الجرد وأعاده للجنة للإغلاق" if decision == "APPROVE" else "أعاد الأمين العام تقرير لجنة الجرد للجنة للتعديل",
             link_url=f"/portal/inventory/fixed-assets/documents/{doc.id}",
         )
-    if next_cycle is not None:
-        report.cycle.successor_cycle_id = next_cycle.id
-        report.cycle.successor_cycle = next_cycle
+    for member in report.cycle.members or []:
+        notification = Notification(
+            user_id=member.user_id,
+            message=(
+                f"اعتمد الأمين العام تقرير جرد الدورة {report.cycle.code}؛ يمكن للجنة إغلاق الدورة الآن"
+                if decision == "APPROVE"
+                else f"أعاد الأمين العام تقرير جرد الدورة {report.cycle.code} للجنة للتعديل"
+            ),
+            source="portal",
+            link_url=f"/portal/inventory/fixed-assets/cycles/{report.cycle_id}/committee-report",
+            event_key=f"fixed-asset-report-{report.id}-{'ready-to-close' if decision == 'APPROVE' else 'returned'}",
+            actor_id=actor_id,
+            target_type="INV_FIXED_ASSET_COMMITTEE_REPORT",
+            target_id=report.id,
+            email_delivery_mode=PORTAL_APPROVAL_EMAIL_MODE,
+        )
+        db.session.add(notification)
+        enqueue_notification_email(notification)
     return report
+
+
+def close_committee_cycle(report, actor_id):
+    """Close the inventory cycle only after the Secretary General handoff."""
+    if not report or report.status != "READY_TO_CLOSE":
+        raise ValueError("يجب أن يعيد الأمين العام التقرير للجنة للإغلاق أولاً.")
+    cycle = report.cycle
+    if not cycle or cycle.status not in {"ACTIVE", "CLOSED"} or (
+        cycle.status == "CLOSED" and cycle.finalized_at is not None
+    ):
+        raise ValueError("دورة الجرد ليست مفتوحة للإغلاق.")
+    documents = inventory_documents_for_cycle(report.cycle_id)
+    if not documents:
+        raise ValueError("لا توجد عهد موظفين لإغلاق دورة الجرد.")
+    pending = [
+        doc for doc in documents
+        if doc.status not in {"APPROVED", "ISSUED", "COMPLETED"}
+    ]
+    if pending:
+        raise ValueError("لا يمكن إغلاق الدورة قبل اكتمال قرارات الموظفين على جميع العهد.")
+
+    result = (
+        close_inventory_cycle(
+            cycle,
+            closed_by_id=actor_id,
+            apply_observed_values=True,
+            apply_custodian_values=False,
+        )
+        if cycle.status == "ACTIVE"
+        else {"missing": 0, "reconciled": 0}
+    )
+    now = datetime.utcnow()
+    report.status = "CLOSED"
+    report.updated_at = now
+    cycle.finalized_at = now
+    cycle.finalized_by_id = actor_id
+    next_cycle = open_followup_inventory_cycle(cycle, created_by_id=actor_id)
+    cycle.successor_cycle_id = next_cycle.id
+    cycle.successor_cycle = next_cycle
+    return result, next_cycle
 
 
 def save_manual_previous_lines(cycle, employee_id, raw_text, actor_id):

@@ -1,4 +1,4 @@
-"""Read models for open HR approval requests shown in Masar reports."""
+"""Read models for open Portal approval requests shown in Masar reports."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from sqlalchemy.orm import noload
 from models import (
     HRAttendanceSchedulePlan,
     HRAttendanceSpecialCase,
+    HREmployeeAchievement,
+    InvFixedAssetCommitteeReport,
     InvEmployeeRequest,
     HRLeaveRequest,
     HRPermissionRequest,
@@ -28,6 +30,8 @@ OPEN_APPROVAL_CATEGORIES = (
     ("SCHEDULE_CHANGE", "طلبات تغيير جدول الدوام"),
     ("DAILY_ATTENDANCE", "تعديلات الدوام اليومية"),
     ("MATERIAL_REQUEST", "طلبات المواد"),
+    ("FIXED_ASSET_INVENTORY", "تقارير لجان جرد الأصول"),
+    ("ACHIEVEMENT", "الجوائز والإنجازات"),
 )
 
 OPEN_APPROVAL_CATEGORY_LABELS = dict(OPEN_APPROVAL_CATEGORIES)
@@ -54,6 +58,7 @@ OPEN_APPROVAL_STAGE_LABELS = {
     "SECRETARY_GENERAL": "الأمين العام",
     "MANAGER": "المدير المباشر",
     "FINAL": "الاعتماد النهائي",
+    "INVENTORY_COMMITTEE": "لجنة جرد الأصول",
 }
 
 OPEN_APPROVAL_STATUS_LABELS = {
@@ -62,6 +67,8 @@ OPEN_APPROVAL_STATUS_LABELS = {
     "PENDING": "بانتظار الاعتماد",
     "MANAGER_APPROVED": "بانتظار الاعتماد التالي",
     "GENERAL_DIRECTOR_APPROVED": "بانتظار الاعتماد النهائي",
+    "READY_TO_CLOSE": "بانتظار إغلاق لجنة الجرد",
+    "RETURNED": "معاد للمراجعة والتعديل",
 }
 
 
@@ -117,6 +124,7 @@ def _row(
     day: str | None = None,
     period_start: str | None = None,
     period_end: str | None = None,
+    target_url: str | None = None,
 ) -> dict[str, Any]:
     normalized_status = (status or "").strip().upper()
     return {
@@ -136,6 +144,7 @@ def _row(
         "day": day,
         "period_start": period_start,
         "period_end": period_end,
+        "target_url": target_url,
     }
 
 
@@ -269,12 +278,48 @@ def _load_rows(category: str) -> tuple[list[dict[str, Any]], dict[str, bool]]:
         )
         truncated["MATERIAL_REQUEST"] = len(material_rows) > OPEN_APPROVAL_REPORT_MAX_ROWS
 
+    inventory_report_rows = []
+    if "FIXED_ASSET_INVENTORY" in requested:
+        inventory_report_rows = (
+            InvFixedAssetCommitteeReport.query
+            .filter(
+                InvFixedAssetCommitteeReport.status.in_(
+                    ("SUBMITTED", "RETURNED", "READY_TO_CLOSE")
+                )
+            )
+            .order_by(
+                InvFixedAssetCommitteeReport.updated_at.desc(),
+                InvFixedAssetCommitteeReport.id.desc(),
+            )
+            .limit(OPEN_APPROVAL_REPORT_MAX_ROWS + 1)
+            .all()
+        )
+        truncated["FIXED_ASSET_INVENTORY"] = (
+            len(inventory_report_rows) > OPEN_APPROVAL_REPORT_MAX_ROWS
+        )
+
+    achievement_rows = []
+    if "ACHIEVEMENT" in requested:
+        achievement_rows = (
+            HREmployeeAchievement.query
+            .filter(HREmployeeAchievement.status == "PENDING")
+            .order_by(
+                HREmployeeAchievement.updated_at.desc(),
+                HREmployeeAchievement.id.desc(),
+            )
+            .limit(OPEN_APPROVAL_REPORT_MAX_ROWS + 1)
+            .all()
+        )
+        truncated["ACHIEVEMENT"] = len(achievement_rows) > OPEN_APPROVAL_REPORT_MAX_ROWS
+
     leave_rows = leave_rows[:OPEN_APPROVAL_REPORT_MAX_ROWS]
     permission_rows = permission_rows[:OPEN_APPROVAL_REPORT_MAX_ROWS]
     schedule_rows = schedule_rows[:OPEN_APPROVAL_REPORT_MAX_ROWS]
     maternity_rows = maternity_rows[:OPEN_APPROVAL_REPORT_MAX_ROWS]
     manual_rows = manual_rows[:OPEN_APPROVAL_REPORT_MAX_ROWS]
     material_rows = material_rows[:OPEN_APPROVAL_REPORT_MAX_ROWS]
+    inventory_report_rows = inventory_report_rows[:OPEN_APPROVAL_REPORT_MAX_ROWS]
+    achievement_rows = achievement_rows[:OPEN_APPROVAL_REPORT_MAX_ROWS]
 
     pending_steps = _pending_hr_steps(
         {int(row.id) for row in leave_rows if row.id},
@@ -343,6 +388,55 @@ def _load_rows(category: str) -> tuple[list[dict[str, Any]], dict[str, bool]]:
             period=period,
             details=request_row.items_text or "طلب مواد",
             note=note,
+        ))
+
+    for report in inventory_report_rows:
+        cycle = getattr(report, "cycle", None)
+        cycle_code = getattr(cycle, "code", None) or f"#{report.cycle_id}"
+        cycle_name = getattr(cycle, "name", None) or "دورة جرد الأصول الثابتة"
+        report_status = (report.status or "SUBMITTED").upper()
+        rows.append(_row(
+            kind="FIXED_ASSET_INVENTORY",
+            request_id=report.id,
+            employee_id=None,
+            employee_name=(
+                getattr(cycle, "committee_name", None)
+                or "لجنة جرد الأصول الثابتة"
+            ),
+            status=report_status,
+            stage=(
+                "INVENTORY_COMMITTEE"
+                if report_status in {"READY_TO_CLOSE", "RETURNED"}
+                else "SECRETARY_GENERAL"
+            ),
+            submitted_at=_submitted_at(report),
+            period=getattr(cycle, "inventory_date", None) or "—",
+            details=f"{cycle_code} — {cycle_name}",
+            note=(report.secretary_note or report.summary or "").strip(),
+            target_url=(
+                f"/portal/inventory/fixed-assets/cycles/{report.cycle_id}/committee-report"
+            ),
+        ))
+
+    for achievement in achievement_rows:
+        title = (achievement.title or "").strip()
+        achievement_type = (achievement.achievement_type or "OTHER").strip()
+        note_parts = [
+            (achievement.issuer or "").strip(),
+            (achievement.description or "").strip(),
+        ]
+        rows.append(_row(
+            kind="ACHIEVEMENT",
+            request_id=achievement.id,
+            employee_id=achievement.user_id,
+            employee_name=_name(achievement.user, achievement.user_id),
+            status="PENDING",
+            stage="SECRETARY_GENERAL",
+            submitted_at=_submitted_at(achievement),
+            period=achievement.achieved_on,
+            details=f"{title} ({achievement_type})",
+            note=" — ".join(value for value in note_parts if value),
+            target_url=f"/portal/hr/achievements/{achievement.id}",
         ))
 
     for request_row in maternity_rows:
@@ -419,7 +513,7 @@ def build_open_approval_report(
     page: int = 1,
     per_page: int | None = 50,
 ) -> dict[str, Any]:
-    """Build the open HR approvals report without per-row database queries.
+    """Build the open approvals report without per-row database queries.
 
     ``viewer`` is accepted for the same report-builder contract as the employee
     report. Access is enforced by the Masar report permission at the route and

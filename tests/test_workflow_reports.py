@@ -11,11 +11,14 @@ from extensions import db
 from models import (
     HRAttendanceSchedulePlan,
     HRAttendanceSpecialCase,
+    HREmployeeAchievement,
     HRLeaveRequest,
     HRLeaveType,
     HRPermissionRequest,
     HRPermissionType,
     InvEmployeeRequest,
+    InvFixedAssetCommitteeReport,
+    InvFixedAssetCycle,
     Notification,
     User,
     UserPermission,
@@ -334,6 +337,42 @@ class WorkflowReportsTests(unittest.TestCase):
         self.assertEqual(material_row["details"], "A4 paper")
         self.assertEqual(material_row["stage_code"], "WAREHOUSE")
         self.assertEqual(report["max_rows_per_category"], 2000)
+
+    def test_open_approval_report_includes_inventory_reports_and_achievements(self):
+        cycle = InvFixedAssetCycle(
+            code="WF-INV-2026",
+            name="جرد أصول 2026",
+            inventory_date="2026-10-19",
+            committee_name="لجنة الجرد",
+            status="ACTIVE",
+        )
+        db.session.add(cycle)
+        db.session.flush()
+        db.session.add(InvFixedAssetCommitteeReport(
+            cycle_id=cycle.id,
+            status="SUBMITTED",
+            summary="ملخص الجرد",
+            submitted_by_id=self.employee.id,
+        ))
+        db.session.add(HREmployeeAchievement(
+            user_id=self.employee.id,
+            title="جائزة اختبارية",
+            achievement_type="AWARD",
+            achieved_on="2026-10-18",
+            status="PENDING",
+            submitted_by_id=self.employee.id,
+        ))
+        db.session.commit()
+
+        report = build_open_approval_report(self.employee, per_page=None)
+
+        self.assertEqual(report["counts"]["FIXED_ASSET_INVENTORY"], 1)
+        self.assertEqual(report["counts"]["ACHIEVEMENT"], 1)
+        inventory_row = next(row for row in report["all_rows"] if row["kind"] == "FIXED_ASSET_INVENTORY")
+        achievement_row = next(row for row in report["all_rows"] if row["kind"] == "ACHIEVEMENT")
+        self.assertIn("WF-INV-2026", inventory_row["details"])
+        self.assertTrue(inventory_row["target_url"].endswith("/committee-report"))
+        self.assertEqual(achievement_row["details"], "جائزة اختبارية (AWARD)")
 
 
 if __name__ == "__main__":

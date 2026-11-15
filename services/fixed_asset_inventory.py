@@ -14,6 +14,7 @@ from models import (
     InvFixedAssetScanLog,
     InvAssetDocument,
     InvAssetDocumentLine,
+    InvFixedAssetCommitteeReport,
 )
 
 
@@ -409,8 +410,17 @@ def close_inventory_cycle(
 
         if apply_observed_values and entry.asset:
             asset = entry.asset
-            if ((apply_custodian_values and asset.custodian_user_id != entry.observed_custodian_user_id) or asset.lifecycle_status != entry.observed_lifecycle_status) and InvAssetDocumentLine.query.filter_by(asset_id=asset.id).first():
-                raise ValueError("توجد عهدة موثقة لبعض الأصول؛ أغلق الجرد دون تحديث السجل ثم نفذ نقل أو إسقاط العهدة من حركات العهدة.")
+            blocking_document = (
+                InvAssetDocumentLine.query
+                .join(InvAssetDocument)
+                .filter(
+                    InvAssetDocumentLine.asset_id == asset.id,
+                    InvAssetDocument.status.in_(["PENDING", "CHANGE_REQUESTED", "REJECTED", "REJECTED_ESCALATED"]),
+                )
+                .first()
+            )
+            if ((apply_custodian_values and asset.custodian_user_id != entry.observed_custodian_user_id) or asset.lifecycle_status != entry.observed_lifecycle_status) and blocking_document:
+                raise ValueError("توجد عهدة قيد المراجعة لبعض الأصول؛ أكمل رد الموظف قبل تثبيت نتيجة الجرد.")
             asset.warehouse_id = entry.observed_warehouse_id
             asset.room_id = entry.observed_room_id
             if apply_custodian_values:
@@ -457,7 +467,7 @@ def open_followup_inventory_cycle(
     *,
     created_by_id: int | None,
 ) -> InvFixedAssetCycle:
-    """Open the next annual committee cycle exactly once after approval."""
+    """Open the next annual committee cycle exactly once after final closure."""
     if cycle.status != "CLOSED":
         raise ValueError("يجب إغلاق دورة الجرد قبل فتح الدورة السنوية التالية.")
 
@@ -517,12 +527,13 @@ def open_followup_inventory_cycle(
 
 
 def reopen_inventory_cycle(cycle: InvFixedAssetCycle) -> int:
-    if cycle.finalized_at is not None:
-        raise ValueError("اعتمد الأمين العام تقرير هذه الدورة؛ لا يمكن إعادة فتحها.")
-    if InvAssetDocument.query.filter(InvAssetDocument.cycle_id == cycle.id, InvAssetDocument.status.notin_(["CANCELLED", "REJECTED"])).first():
-        raise ValueError("صدرت تقارير اعتماد لهذه الدورة. ألغ التقارير المعلقة أولاً، أو أنشئ دورة جديدة إن صدرت العهدة.")
     if cycle.status != "CLOSED":
         raise ValueError("دورة الجرد ليست مغلقة.")
+    if cycle.finalized_at is None and InvAssetDocument.query.filter(
+        InvAssetDocument.cycle_id == cycle.id,
+        InvAssetDocument.status.notin_(["CANCELLED", "REJECTED"]),
+    ).first():
+        raise ValueError("صدرت تقارير اعتماد لهذه الدورة. ألغ التقارير المعلقة أولاً، أو أنشئ دورة جديدة إن صدرت العهدة.")
     reset_count = 0
     now = datetime.utcnow()
     for entry in cycle.entries:
@@ -533,6 +544,13 @@ def reopen_inventory_cycle(cycle: InvFixedAssetCycle) -> int:
     cycle.status = "ACTIVE"
     cycle.closed_at = None
     cycle.closed_by_id = None
+    cycle.finalized_at = None
+    cycle.finalized_by_id = None
+    report = InvFixedAssetCommitteeReport.query.filter_by(cycle_id=cycle.id).first()
+    if report and report.status == "CLOSED":
+        report.status = "RETURNED"
+        report.secretary_note = "أعيد فتح الدورة بواسطة السوبر أدمن للتعديل."
+        report.updated_at = now
     return reset_count
 
 

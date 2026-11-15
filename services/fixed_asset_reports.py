@@ -331,6 +331,7 @@ def build_committee_report_pdf(
     condition_labels=None,
     lifecycle_labels=None,
     result_labels=None,
+    report_audits=None,
 ):
     """Build a readable Arabic PDF with a page boundary before every employee."""
     condition_labels = condition_labels or {}
@@ -445,6 +446,50 @@ def build_committee_report_pdf(
             story.append(Spacer(1, 3 * mm))
             story.append(_p("ملاحظات الموظف", styles["section"]))
             story.append(_p("\n".join(employee_notes), styles["body"]))
+
+        audit_rows = [[
+            _p("التاريخ", styles["header"]),
+            _p("الإجراء", styles["header"]),
+            _p("بواسطة", styles["header"]),
+            _p("الملاحظة", styles["header"]),
+        ]]
+        for doc in employee_documents:
+            for event in doc.events:
+                audit_rows.append([
+                    _p(event.created_at.strftime("%Y-%m-%d %H:%M") if event.created_at else "-", styles["body"]),
+                    _p(event.action, styles["body"]),
+                    _p(event.actor.full_name if event.actor else "-", styles["body"]),
+                    _p(event.note or "-", styles["body"]),
+                ])
+        if len(audit_rows) > 1:
+            story.append(Spacer(1, 3 * mm))
+            story.append(_p("سجل إجراءات العهدة", styles["section"]))
+            story.append(_table(audit_rows, [28 * mm, 34 * mm, 42 * mm, 78 * mm], styles))
+
+    report_audits = report_audits or []
+    report_audit_rows = [[
+        _p("التاريخ", styles["header"]),
+        _p("الإجراء", styles["header"]),
+        _p("بواسطة", styles["header"]),
+        _p("الملاحظة", styles["header"]),
+    ]]
+    for audit in report_audits:
+        report_audit_rows.append([
+            _p(audit.created_at.strftime("%Y-%m-%d %H:%M") if audit.created_at else "-", styles["body"]),
+            _p(audit.action, styles["body"]),
+            _p(audit.user.full_name if audit.user else "-", styles["body"]),
+            _p(audit.note or "-", styles["body"]),
+        ])
+    if len(report_audit_rows) == 1:
+        report_audit_rows.append([
+            _p("-", styles["center"]),
+            _p("لا يوجد سجل تقرير بعد", styles["body"]),
+            _p("-", styles["body"]),
+            _p("-", styles["body"]),
+        ])
+    story.append(PageBreak())
+    story.append(_p("سجل التقرير", styles["section"]))
+    story.append(_table(report_audit_rows, [28 * mm, 34 * mm, 42 * mm, 78 * mm], styles))
 
     document.build(
         story,

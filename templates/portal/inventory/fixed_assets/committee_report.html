@@ -12,18 +12,19 @@
     <a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.id) }}">دورة الجرد</a>
     <a class="btn btn-outline-primary" target="_blank" rel="noopener" href="{{ url_for('portal.asset_committee_report_print', cycle_id=cycle.id) }}">معاينة الطباعة</a>
     <a class="btn btn-outline-success" href="{{ url_for('portal.asset_committee_report_pdf', cycle_id=cycle.id) }}">تنزيل PDF الرسمي</a>
+    <a class="btn btn-success" href="{{ url_for('portal.asset_committee_report_excel', cycle_id=cycle.id) }}">تنزيل Excel</a>
   </div>
 </div>
 
 <div class="card shadow-sm mb-3"><div class="card-body"><div class="row g-3">
   <div class="col-md-3"><div class="text-muted small">الجهة المرسلة</div><strong>{{ cycle.committee.label if cycle.committee else cycle.committee_name or 'لجنة الجرد الثابت' }}</strong></div>
   <div class="col-md-3"><div class="text-muted small">الجهة الموجه إليها</div><strong>الأمين العام</strong></div>
-  <div class="col-md-3"><div class="text-muted small">حالة التقرير</div><span class="badge text-bg-{{ 'success' if report.status == 'APPROVED' else ('warning' if report.status == 'RETURNED' else ('primary' if report.status == 'SUBMITTED' else 'secondary')) }} report-status">{{ report_statuses.get(report.status, report.status) }}</span></div>
+  <div class="col-md-3"><div class="text-muted small">حالة التقرير</div><span class="badge text-bg-{{ 'success' if report.status in ['CLOSED','APPROVED'] else ('info' if report.status == 'READY_TO_CLOSE' else ('warning' if report.status == 'RETURNED' else ('primary' if report.status == 'SUBMITTED' else 'secondary'))) }} report-status">{{ report_statuses.get(report.status, report.status) }}</span></div>
   <div class="col-md-3"><div class="text-muted small">عدد العهد</div><strong>{{ documents|length }}</strong></div>
 </div></div></div>
 {% if cycle.successor_cycle %}<div class="alert alert-success">اعتمد الأمين العام التقرير وأُغلقت دورة {{ cycle.code }} نهائيًا. دورة الجرد الجديدة مفتوحة: <a class="alert-link" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.successor_cycle.id) }}">{{ cycle.successor_cycle.code }} · {{ cycle.successor_cycle.name }}</a></div>{% endif %}
 
-{% if committee_actor and report.status in ['DRAFT','RETURNED'] %}
+{% if committee_actor and report.status in ['DRAFT','RETURNED','SUBMITTED','READY_TO_CLOSE'] %}
 <form method="post" enctype="multipart/form-data" class="card shadow-sm mb-4 report-intro">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="card-header fw-bold">إعداد التقرير</div>
@@ -36,18 +37,29 @@
   </div></div>
   <div class="card-footer d-flex flex-wrap gap-2">
     <button class="btn btn-outline-primary" name="action" value="save">حفظ المسودة</button>
-    <button class="btn btn-success" name="action" value="submit" {% if not documents %}disabled{% endif %}>رفع التقرير للأمين العام</button>
+    {% if report.status in ['DRAFT','RETURNED'] %}<button class="btn btn-success" name="action" value="submit" {% if not documents %}disabled{% endif %}>رفع التقرير للأمين العام</button>{% elif report.status == 'READY_TO_CLOSE' %}<span class="text-muted align-self-center small">اعتمد الأمين العام التقرير؛ احفظ أي تعديل قبل الإغلاق ليعاد للمراجعة.</span>{% else %}<span class="text-muted align-self-center small">التقرير لدى الأمين العام، وأي تعديل يظهر مباشرة في النسخة الحالية.</span>{% endif %}
   </div>
 </form>
-{% elif report.status == 'RETURNED' %}<div class="alert alert-warning">أعاد الأمين العام التقرير للجنة. راجع الملاحظة ثم أعد رفعه.</div>{% endif %}
+{% endif %}
+{% if report.status == 'RETURNED' %}<div class="alert alert-warning">أعاد الأمين العام التقرير للجنة للتعديل. راجع الملاحظة ثم أعد رفعه.</div>{% endif %}
 
 {% if secretary_actor and report.status == 'SUBMITTED' %}
 <form method="post" class="card border-primary mb-4"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="card-body">
   <h6 class="fw-bold">قرار الأمين العام</h6>
   <textarea class="form-control mb-2" name="secretary_note" rows="3" maxlength="4000" placeholder="الملاحظة أو سبب الإعادة للجنة"></textarea>
-  <button class="btn btn-success" name="action" value="approve">اعتماد التقرير فقط</button>
+  <button class="btn btn-success" name="action" value="approve">اعتماد وإعادة للجنة للإغلاق</button>
   <button class="btn btn-outline-warning" name="action" value="return">إعادة للجنة للتعديل</button>
 </div></form>
+{% endif %}
+
+{% if committee_actor and report.status == 'READY_TO_CLOSE' and cycle.status in ['ACTIVE','CLOSED'] and not cycle.finalized_at %}
+<div class="alert alert-info d-flex flex-wrap justify-content-between align-items-center gap-2">
+  <div><strong>أعاد الأمين العام التقرير للجنة للإغلاق.</strong><br><span class="small">بعد الإغلاق لن يمكن تعديل الدورة. الإعادة للفتح متاحة للسوبر أدمن فقط.</span></div>
+  <form method="post" action="{{ url_for('portal.fixed_asset_cycle_close', cycle_id=cycle.id) }}" onsubmit="return confirm('سيتم إغلاق الدورة نهائياً ومنع التعديل عليها. هل تريد المتابعة؟')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn btn-primary" type="submit"><i class="bi bi-lock"></i> إغلاق الدورة نهائياً</button>
+  </form>
+</div>
 {% endif %}
 
 <div class="card shadow-sm"><div class="card-header fw-bold">العهدة حسب الموظف</div><div class="table-responsive"><table class="table table-hover align-middle mb-0">
@@ -64,11 +76,20 @@
       <td>{% for doc in employee_docs %}{% if doc.employee_response_note %}<div class="small">{{ doc.employee_response_note }}</div>{% endif %}{% else %}-{% endfor %}</td>
       <td>{{ previous_by_employee.get(employee.id, [])|length }} بند{% if cycle.previous_cycle %} · {{ cycle.previous_cycle.inventory_date }}{% else %} · يدوي{% endif %}</td>
       <td class="text-nowrap">
-        {% if committee_actor and report.status in ['DRAFT','RETURNED'] %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.asset_committee_report_previous', cycle_id=cycle.id, employee_id=employee.id) }}">إدخال السنة السابقة</a>{% endif %}
+        {% if committee_actor and report.status in ['DRAFT','RETURNED','SUBMITTED','READY_TO_CLOSE'] %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.asset_committee_report_previous', cycle_id=cycle.id, employee_id=employee.id) }}">إدخال السنة السابقة</a>{% endif %}
         <a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener" href="{{ url_for('portal.asset_committee_report_print', cycle_id=cycle.id) }}#employee-{{ employee.id }}">عرض التقرير</a>
       </td>
     </tr>
-  {% else %}<tr><td colspan="7" class="text-center text-muted py-5">لا توجد عهد موظفين بعد. أغلق الدورة ثم أرسل تقارير الموظفين أولاً.</td></tr>{% endfor %}
+  {% else %}<tr><td colspan="7" class="text-center text-muted py-5">لا توجد عهد موظفين بعد. أكمل قراءة الأصول ثم اضغط «إسناد العهد للموظفين».</td></tr>{% endfor %}
   </tbody>
 </table></div></div>
+
+<div class="card shadow-sm mt-3"><div class="card-header fw-bold">سجل إجراءات العهد</div><div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>التاريخ</th><th>الموظف</th><th>الإجراء</th><th>بواسطة</th><th>الملاحظة</th></tr></thead><tbody>
+{% set event_count = namespace(value=0) %}{% for doc in documents %}{% for event in doc.events %}{% set event_count.value = event_count.value + 1 %}<tr><td>{{ event.created_at|local_datetime }}</td><td>{{ doc.employee.full_name }}</td><td>{{ event.action }}</td><td>{{ event.actor.full_name if event.actor else '-' }}</td><td>{{ event.note or '-' }}</td></tr>{% endfor %}{% endfor %}
+{% if event_count.value == 0 %}<tr><td colspan="5" class="text-center text-muted">لا يوجد سجل بعد.</td></tr>{% endif %}
+</tbody></table></div></div>
+
+<div class="card shadow-sm mt-3"><div class="card-header fw-bold">سجل التقرير</div><div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>التاريخ</th><th>الإجراء</th><th>بواسطة</th><th>الملاحظة</th></tr></thead><tbody>
+{% for audit in report_audits %}<tr><td>{{ audit.created_at|local_datetime }}</td><td>{{ audit.action }}</td><td>{{ audit.user.full_name if audit.user else '-' }}</td><td>{{ audit.note or '-' }}</td></tr>{% else %}<tr><td colspan="4" class="text-center text-muted">لا يوجد سجل تقرير بعد.</td></tr>{% endfor %}
+</tbody></table></div></div>
 {% endblock %}

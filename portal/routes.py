@@ -132,7 +132,12 @@ from services.delivery_controls import (
     notifications_enabled,
 )
 from services.workflow_task_email import resolve_user_delivery_email
-from services.notification_email import HR_DEDUCTION_EMAIL_MODE, MEETING_EMAIL_MODE, enqueue_notification_email
+from services.notification_email import (
+    HR_DEDUCTION_EMAIL_MODE,
+    MEETING_EMAIL_MODE,
+    PORTAL_APPROVAL_EMAIL_MODE,
+    enqueue_notification_email,
+)
 from services.user_calendar import (
     CALENDAR_EVENT_TYPE_LABELS,
     CALENDAR_REMINDER_OPTIONS,
@@ -27009,6 +27014,80 @@ def _hr_approvals_can_open(user=None) -> bool:
         return False
 
 
+def _inventory_approval_visible_to_user(report, user) -> bool:
+    cycle = getattr(report, "cycle", None)
+    try:
+        role = (getattr(user, "role", None) or "").upper().replace("-", "_").replace(" ", "_")
+        if (
+            user.has_perm(STORE_READ)
+            or user.has_perm(STORE_MANAGE)
+            or user.has_perm("INVENTORY_FIXED_ASSET_REPORT_APPROVE")
+            or user.has_perm("INVENTORY_SECRETARY_GENERAL_APPROVE")
+            or _user_is_super_admin_account(user)
+            or "SECRETARY_GENERAL" in role
+            or role in {"SECRETARY", "GENERAL_SECRETARY"}
+        ):
+            return True
+    except Exception:
+        pass
+    return bool(
+        cycle
+        and any(int(member.user_id) == int(user.id) for member in (cycle.members or []))
+    )
+
+
+def _hr_inventory_approval_rows(status: str, user) -> list:
+    from models import InvFixedAssetCommitteeReport
+
+    if status == "SUBMITTED":
+        allowed = {"SUBMITTED", "RETURNED", "READY_TO_CLOSE"}
+    elif status == "APPROVED":
+        allowed = {"APPROVED", "CLOSED"}
+    elif status == "ALL":
+        allowed = {"DRAFT", "SUBMITTED", "RETURNED", "READY_TO_CLOSE", "APPROVED", "CLOSED"}
+    else:
+        return []
+    rows = (
+        InvFixedAssetCommitteeReport.query
+        .filter(InvFixedAssetCommitteeReport.status.in_(sorted(allowed)))
+        .order_by(InvFixedAssetCommitteeReport.updated_at.desc(), InvFixedAssetCommitteeReport.id.desc())
+        .limit(300)
+        .all()
+    )
+    return [row for row in rows if _inventory_approval_visible_to_user(row, user)]
+
+
+def _hr_achievement_approval_rows(status: str, user) -> list:
+    allowed = {
+        "SUBMITTED": {"PENDING"},
+        "APPROVED": {"APPROVED"},
+        "REJECTED": {"REJECTED"},
+        "ALL": {"PENDING", "APPROVED", "REJECTED"},
+    }.get(status)
+    if not allowed:
+        return []
+    rows = (
+        HREmployeeAchievement.query
+        .filter(HREmployeeAchievement.status.in_(sorted(allowed)))
+        .order_by(HREmployeeAchievement.updated_at.desc(), HREmployeeAchievement.id.desc())
+        .limit(500)
+        .all()
+    )
+    try:
+        privileged = _achievement_privileged(user)
+    except Exception:
+        privileged = False
+    user_id = int(getattr(user, "id", 0) or 0)
+    visible = []
+    for row in rows:
+        if privileged or int(row.user_id) == user_id:
+            visible.append(row)
+            continue
+        if any(int(step.approver_user_id or 0) == user_id for step in (row.approval_steps or [])):
+            visible.append(row)
+    return visible
+
+
 def _attendance_schedule_review_stage(
     plan: HRAttendanceSchedulePlan | None,
     user=None,
@@ -27417,6 +27496,9 @@ def hr_approvals():
             if current_stage_labels.get(key) == "-":
                 current_stage_labels[key] = hr_stage_label(stage_code)
 
+    inventory_approval_rows = _hr_inventory_approval_rows(status, current_user)
+    achievement_approval_rows = _hr_achievement_approval_rows(status, current_user)
+
     return render_template(
         "portal/hr/approvals.html",
         status=status,
@@ -27430,6 +27512,8 @@ def hr_approvals():
         deletable_leave_ids=deletable_leave_ids,
         view_only_leave_ids=view_only_leave_ids,
         current_stage_labels=current_stage_labels,
+        inventory_approval_rows=inventory_approval_rows,
+        achievement_approval_rows=achievement_approval_rows,
     )
 
 
@@ -28301,7 +28385,7 @@ def _achievement_notify(user_ids, message: str, ntype: str, row: HREmployeeAchie
         if user_id <= 0 or user_id == actor_id or user_id in seen:
             continue
         seen.add(user_id)
-        db.session.add(Notification(
+        notification = Notification(
             user_id=user_id,
             type=ntype,
             message=str(message or "")[:255],
@@ -28309,7 +28393,14 @@ def _achievement_notify(user_ids, message: str, ntype: str, row: HREmployeeAchie
             link_url=link,
             is_read=False,
             created_at=now,
-        ))
+            event_key=f"hr-achievement-{row.id}-{ntype}",
+            actor_id=actor_id or None,
+            target_type="HR_EMPLOYEE_ACHIEVEMENT",
+            target_id=row.id,
+            email_delivery_mode=PORTAL_APPROVAL_EMAIL_MODE,
+        )
+        db.session.add(notification)
+        enqueue_notification_email(notification)
 
 
 def _achievement_privileged(user=None) -> bool:

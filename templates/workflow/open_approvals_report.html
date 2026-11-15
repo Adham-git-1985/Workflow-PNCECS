@@ -43,7 +43,7 @@
   <div class="open-approvals-screen-header d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3 no-print">
     <div>
       <h3 class="mb-1"><i class="bi bi-check2-square"></i> تقرير الموافقات المفتوحة</h3>
-      <div class="text-muted">طلبات الإجازات والمغادرات وتغييرات الدوام التي ما زالت قيد المراجعة أو لم تُغلق.</div>
+      <div class="text-muted">طلبات الإجازات والمغادرات وتغييرات الدوام، وتقارير جرد الأصول والجوائز والإنجازات التي ما زالت قيد المراجعة أو لم تُغلق.</div>
     </div>
     <div class="d-flex flex-wrap gap-2">
       <a class="btn btn-outline-secondary" href="{{ url_for('workflow.workflow_reports') }}"><i class="bi bi-arrow-right"></i> فهرس التقارير</a>
@@ -54,7 +54,7 @@
   <section id="workflow-open-approvals-print" class="open-approvals-print">
     <div class="open-approvals-print-heading">
       <h1>تقرير الموافقات المفتوحة</h1>
-      <p>الموافقات والطلبات غير المغلقة في الإجازات والمغادرات والدوام.</p>
+      <p>الموافقات والطلبات غير المغلقة، بما فيها تقارير جرد الأصول والجوائز والإنجازات.</p>
       {% if q or category %}
       <div>
         {% if q %}البحث: {{ q }}{% endif %}
@@ -142,6 +142,8 @@
                   <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_attendance_manual_edit', user_id=row.employee_id, day=row.day, override_id=row.request_id) }}">فتح التعديل</a>
                 {% elif row.kind == 'MATERIAL_REQUEST' %}
                   <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_employee_request_view', request_id=row.request_id) }}">فتح طلب المواد</a>
+                {% elif row.target_url %}
+                  <a class="btn btn-sm btn-outline-primary" href="{{ row.target_url }}">فتح السجل</a>
                 {% endif %}
               </td>
             </tr>

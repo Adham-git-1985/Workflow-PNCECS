@@ -5,9 +5,9 @@
 {% if can_scan and cycle.status == 'ACTIVE' %}<a class="btn btn-primary" href="{{ url_for('portal.fixed_asset_cycle_scan', cycle_id=cycle.id) }}">القراءة بالهاتف</a>{% endif %}
 {% if can_manage and cycle.status == 'ACTIVE' %}<a class="btn btn-success" href="{{ url_for('portal.fixed_asset_mobile_settings') }}"><i class="bi bi-phone"></i> إدارة أجهزة الهاتف</a>{% endif %}
 {% if can_manage or can_scan %}<a class="btn btn-outline-primary" href="{{ url_for('portal.asset_documents', cycle_id=cycle.id) }}">تقارير الموظفين والعهد</a><a class="btn btn-outline-dark" href="{{ url_for('portal.asset_committee_report', cycle_id=cycle.id) }}">تقرير لجنة الجرد</a>
-{% if (can_manage or can_scan) and cycle.status == 'CLOSED' and not cycle.finalized_at %}<form method="post" action="{{ url_for('portal.asset_send_reports', cycle_id=cycle.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-success">إرسال عهد الموظفين للاعتماد</button></form>{% endif %}{% endif %}
+{% if (can_manage or can_scan) and cycle.status in ['ACTIVE','CLOSED'] and not cycle.finalized_at %}<form method="post" action="{{ url_for('portal.asset_send_reports', cycle_id=cycle.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-success">إسناد العهد للموظفين</button></form>{% endif %}{% endif %}
 </div>
-<p class="text-muted">إغلاق الجرد يثبت النتيجة. تغيير الموظف صاحب العهدة يتم بعد مراجعة تقريره وإصدار العهدة.</p>
+<p class="text-muted">تُرسل العهد للموظفين للتوقيع، ويظهر كل تعديل في تقرير اللجنة. يعتمد الأمين العام التقرير ثم تعيد اللجنة الدورة للإغلاق النهائي؛ بعد الإغلاق لا يسمح بالتعديل.</p>
 {% set total = stats.get('TOTAL', 0) %}
 {% set completed = total - stats.get('PENDING', 0) %}
 {% set progress = ((completed * 100 / total)|round|int) if total else 0 %}
@@ -20,7 +20,7 @@
   <div class="col-md-3"><div class="text-muted small">اللجنة الحالية</div><div class="fw-bold">{{ cycle.committee.label if cycle.committee else cycle.committee_name or '-' }}</div>{% for member in cycle.members %}<span class="badge text-bg-light border">{{ member.user.full_name }}{% if member.member_role == 'CHAIR' %} · رئيس{% endif %}</span> {% endfor %}</div>
   <div class="col-md-3"><div class="text-muted small">اللجنة/الدورة السابقة</div><div class="fw-bold">{{ cycle.previous_cycle.committee_name if cycle.previous_cycle else '-' }}</div>{% if cycle.previous_cycle %}<a class="small" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.previous_cycle.id) }}">{{ cycle.previous_cycle.code }}</a>{% endif %}</div>
   <div class="col-md-3"><div class="text-muted small">بدأها</div><div class="fw-bold">{{ cycle.created_by.full_name if cycle.created_by else '-' }}</div><div class="small text-muted">{{ cycle.started_at|local_datetime }}</div></div>
-  <div class="col-md-3"><div class="text-muted small">الإغلاق</div><div class="fw-bold">{{ cycle.closed_by.full_name if cycle.closed_by else '-' }}</div><div class="small text-muted">{{ cycle.closed_at|local_datetime if cycle.closed_at else 'ما زالت جارية' }}</div>{% if cycle.finalized_at %}<div class="small text-success mt-1">إغلاق نهائي باعتماد الأمين العام: {{ cycle.finalized_at|local_datetime }}</div>{% endif %}</div>
+  <div class="col-md-3"><div class="text-muted small">الإغلاق</div><div class="fw-bold">{{ cycle.closed_by.full_name if cycle.closed_by else '-' }}</div><div class="small text-muted">{{ cycle.closed_at|local_datetime if cycle.closed_at else 'ما زالت جارية' }}</div>{% if cycle.finalized_at %}<div class="small text-success mt-1">إغلاق نهائي بواسطة اللجنة بعد اعتماد الأمين العام: {{ cycle.finalized_at|local_datetime }}</div>{% endif %}</div>
   {% if cycle.successor_cycle %}<div class="col-12"><div class="alert alert-success mb-0">تم اعتماد التقرير وفتح دورة الجرد التالية: <a class="alert-link" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.successor_cycle.id) }}">{{ cycle.successor_cycle.code }} · {{ cycle.successor_cycle.name }}</a></div></div>{% endif %}
   {% if cycle.note %}<div class="col-12"><div class="text-muted small">ملاحظات</div><div>{{ cycle.note }}</div></div>{% endif %}
 </div></div></div>
@@ -38,11 +38,19 @@
 {% if can_manage and cycle.status == 'ACTIVE' %}
 <div class="d-flex flex-wrap gap-2 mb-3">
   <form method="post" action="{{ url_for('portal.fixed_asset_cycle_refresh', cycle_id=cycle.id) }}"><button class="btn btn-sm btn-outline-primary" onclick="return confirm('إضافة الأصول الجديدة المطابقة للنطاق إلى هذه الدورة؟')"><i class="bi bi-arrow-repeat"></i> تحديث نطاق الأصول</button></form>
-  <button class="btn btn-sm btn-outline-danger" type="button" data-bs-toggle="collapse" data-bs-target="#closeCycle"><i class="bi bi-lock"></i> إغلاق الدورة</button>
 </div>
-<div class="collapse mb-3" id="closeCycle"><form method="post" action="{{ url_for('portal.fixed_asset_cycle_close', cycle_id=cycle.id) }}" class="card card-body border-danger"><h6 class="text-danger">اعتماد النتيجة وإغلاق الدورة</h6><p class="small mb-2">ستُصنف كل الأصول غير المقروءة كغير موجودة، ولن تقبل الدورة قراءات جديدة إلا بعد إعادة فتحها.</p><div class="form-check mb-3"><input class="form-check-input" type="checkbox" name="apply_observed_values" value="1" id="applyObserved" checked><label class="form-check-label" for="applyObserved">تحديث الموقع والحالة في سجل الأصل حسب نتيجة اللجنة الحالية (العهدة بعد اعتماد الموظف)</label></div><div><button class="btn btn-danger" onclick="return confirm('هل أنت متأكد من اعتماد وإغلاق دورة الجرد؟')">اعتماد وإغلاق</button></div></form></div>
-{% elif can_manage and cycle.status == 'CLOSED' and not cycle.finalized_at %}
-<form method="post" action="{{ url_for('portal.fixed_asset_cycle_reopen', cycle_id=cycle.id) }}" class="mb-3"><button class="btn btn-sm btn-outline-warning" onclick="return confirm('إعادة فتح الدورة للسماح بقراءات جديدة؟')"><i class="bi bi-unlock"></i> إعادة فتح الدورة</button></form>
+<div class="alert alert-info mb-3">بعد اكتمال ردود الموظفين اضغط «تقرير لجنة الجرد» ثم ارفع التقرير للأمين العام. بعد اعتماده يعيده الأمين العام للجنة، وعندها يظهر زر إغلاق الدورة.</div>
+{% endif %}
+{% if can_committee_close and committee_report and committee_report.status == 'READY_TO_CLOSE' and cycle.status in ['ACTIVE','CLOSED'] and not cycle.finalized_at %}
+<div class="alert alert-primary d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <span><strong>التقرير معتمد من الأمين العام.</strong> اللجنة جاهزة لإغلاق الدورة نهائياً.</span>
+  <form method="post" action="{{ url_for('portal.fixed_asset_cycle_close', cycle_id=cycle.id) }}" onsubmit="return confirm('سيتم منع أي تعديل بعد الإغلاق. هل تريد المتابعة؟')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-lock"></i> إغلاق الدورة نهائياً</button>
+  </form>
+</div>
+{% elif can_super_admin and cycle.status == 'CLOSED' %}
+<form method="post" action="{{ url_for('portal.fixed_asset_cycle_reopen', cycle_id=cycle.id) }}" class="mb-3"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-warning" onclick="return confirm('إعادة فتح الدورة للتعديل؟')"><i class="bi bi-unlock"></i> إعادة فتح الدورة للتعديل</button></form>
 {% endif %}
 
 <form class="card card-body shadow-sm mb-2" method="get"><div class="row g-2"><div class="col-md-7"><input class="form-control" name="q" value="{{ selected.q }}" placeholder="رقم الأصل، الاسم، الرقم التسلسلي..."></div><div class="col-md-3"><select class="form-select" name="status"><option value="">كل النتائج</option>{% for code, label in fixed_asset_result_labels.items() %}<option value="{{ code }}" {% if selected.status == code %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div><div class="col-md-2 d-grid"><button class="btn btn-outline-primary">تصفية</button></div></div></form>

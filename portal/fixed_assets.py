@@ -43,6 +43,7 @@ from models import (
     InvFixedAssetMobileDevice,
     InvFixedAssetEntry,
     InvFixedAssetScanLog,
+    InvFixedAssetCommitteeReport,
     InvAssetDocument,
     InvAssetDocumentLine,
     InvAssetDocumentReservation,
@@ -69,6 +70,7 @@ from services.fixed_asset_inventory import (
     record_asset_scan,
     reopen_inventory_cycle,
 )
+from services.asset_custody import close_committee_cycle
 
 from . import portal_bp
 from .routes import (
@@ -76,6 +78,7 @@ from .routes import (
     STORE_EXPORT,
     STORE_MANAGE,
     STORE_READ,
+    _user_is_super_admin_account,
     _perm_any,
 )
 
@@ -578,6 +581,13 @@ def _asset_qr_target(asset: InvFixedAsset) -> str:
 
 def _can_scan_cycle(cycle):
     return current_user.has_perm(STORE_MANAGE) or any(member.user_id == current_user.id for member in cycle.members)
+
+
+def _can_committee_close_cycle(cycle):
+    return bool(
+        current_user.has_perm(STORE_MANAGE)
+        or any(member.user_id == current_user.id for member in cycle.members)
+    )
 
 
 def _find_asset_by_system_qr(raw_value: str | None) -> InvFixedAsset | None:
@@ -1990,6 +2000,7 @@ def fixed_asset_cycle_view(cycle_id: int):
         .limit(15)
         .all()
     )
+    committee_report = InvFixedAssetCommitteeReport.query.filter_by(cycle_id=cycle.id).first()
     return render_template(
         "portal/inventory/fixed_assets/cycle_view.html",
         cycle=cycle,
@@ -1997,8 +2008,11 @@ def fixed_asset_cycle_view(cycle_id: int):
         pagination=pagination,
         stats=cycle_result_counts(cycle.id),
         recent_scans=recent_scans,
+        committee_report=committee_report,
         selected={"q": search, "status": status},
         can_manage=current_user.has_perm(STORE_MANAGE),
+        can_committee_close=_can_committee_close_cycle(cycle),
+        can_super_admin=_user_is_super_admin_account(current_user),
         can_edit=bool(
             current_user.has_perm(STORE_MANAGE)
             and cycle.finalized_at is None
@@ -2183,24 +2197,31 @@ def fixed_asset_cycle_lookup(cycle_id: int):
 
 @portal_bp.route("/inventory/fixed-assets/cycles/<int:cycle_id>/close", methods=["POST"])
 @login_required
-@_perm_any(STORE_MANAGE)
 def fixed_asset_cycle_close(cycle_id: int):
     cycle = InvFixedAssetCycle.query.get_or_404(cycle_id)
+    report = InvFixedAssetCommitteeReport.query.filter_by(cycle_id=cycle.id).first()
+    if not _can_committee_close_cycle(cycle):
+        abort(403)
+    if report is None or report.status != "READY_TO_CLOSE":
+        flash("لا يمكن إغلاق الدورة قبل إعادة التقرير للجنة من الأمين العام للإغلاق.", "warning")
+        return redirect(url_for("portal.fixed_asset_cycle_view", cycle_id=cycle.id))
     try:
-        result = close_inventory_cycle(
-            cycle,
-            closed_by_id=current_user.id,
-            apply_observed_values=bool(request.form.get("apply_observed_values")),
-        )
+        result, next_cycle = close_committee_cycle(report, current_user.id)
         _audit(
             "INV_FIXED_ASSET_CYCLE_CLOSE",
             f"إغلاق دورة {cycle.code}: مفقود {result['missing']}، تسوية {result['reconciled']}",
             "INV_FIXED_ASSET_CYCLE",
             cycle.id,
         )
+        _audit(
+            "INV_FIXED_ASSET_COMMITTEE_REPORT_CLOSE",
+            f"إغلاق تقرير لجنة الجرد للدورة {cycle.code} بعد اعتماد الأمين العام",
+            "INV_FIXED_ASSET_COMMITTEE_REPORT",
+            report.id,
+        )
         db.session.commit()
         flash(
-            f"أُغلقت الدورة. صُنّف {result['missing']} أصل كغير موجود، وحُدّث {result['reconciled']} سجل أصل.",
+            f"أُغلقت الدورة نهائياً. صُنّف {result['missing']} أصل كغير موجود، وحُدّث {result['reconciled']} سجل أصل. الدورة التالية: {next_cycle.code}.",
             "success",
         )
     except ValueError as exc:
@@ -2211,9 +2232,10 @@ def fixed_asset_cycle_close(cycle_id: int):
 
 @portal_bp.route("/inventory/fixed-assets/cycles/<int:cycle_id>/reopen", methods=["POST"])
 @login_required
-@_perm_any(STORE_MANAGE)
 def fixed_asset_cycle_reopen(cycle_id: int):
     cycle = InvFixedAssetCycle.query.get_or_404(cycle_id)
+    if not _user_is_super_admin_account(current_user):
+        abort(403)
     try:
         reset_count = reopen_inventory_cycle(cycle)
         _audit(
@@ -2222,6 +2244,14 @@ def fixed_asset_cycle_reopen(cycle_id: int):
             "INV_FIXED_ASSET_CYCLE",
             cycle.id,
         )
+        report = InvFixedAssetCommitteeReport.query.filter_by(cycle_id=cycle.id).first()
+        if report:
+            _audit(
+                "INV_FIXED_ASSET_COMMITTEE_REPORT_REOPEN",
+                f"إعادة فتح تقرير لجنة الجرد للدورة {cycle.code} بواسطة السوبر أدمن",
+                "INV_FIXED_ASSET_COMMITTEE_REPORT",
+                report.id,
+            )
         db.session.commit()
         flash("تمت إعادة فتح دورة الجرد.", "success")
     except ValueError as exc:

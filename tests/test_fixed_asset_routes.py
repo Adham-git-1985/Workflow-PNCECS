@@ -315,7 +315,7 @@ class FixedAssetRouteTests(unittest.TestCase):
             data={"apply_observed_values": "1"},
         )
         self.assertEqual(close_response.status_code, 302)
-        self.assertEqual(cycle.status, "CLOSED")
+        self.assertEqual(cycle.status, "ACTIVE")
         self.assertEqual(
             self.client.get(f"/portal/inventory/fixed-assets/cycles/{cycle.id}").status_code,
             200,

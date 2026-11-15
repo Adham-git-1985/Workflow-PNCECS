@@ -43,7 +43,17 @@
       {% for variance in variances %}{% set before = variance.previous %}{% set after = variance.current %}<tr><td><strong>{{ variance.tag }}</strong></td><td>الاسم: {{ before.get('name') or '-' }}<br>التسلسلي: {{ before.get('serial') or '-' }}<br>الموقع: {{ before.get('location') or '-' }}<br>صاحب العهدة: {{ before.get('custodian') or '-' }}<br>الحالة: {{ condition_labels.get(before.get('condition'), before.get('condition') or '-') }}<br>الوضع: {{ lifecycle_labels.get(before.get('lifecycle'), before.get('lifecycle') or '-') }}</td><td>الاسم: {{ after.get('name') or '-' }}<br>التسلسلي: {{ after.get('serial') or '-' }}<br>الموقع: {{ after.get('location') or '-' }}<br>صاحب العهدة: {{ after.get('custodian') or '-' }}<br>الحالة: {{ condition_labels.get(after.get('condition'), after.get('condition') or '-') }}<br>الوضع: {{ lifecycle_labels.get(after.get('lifecycle'), after.get('lifecycle') or '-') }}</td><td><div style="white-space:pre-wrap">{{ variance.differences|join('\n') }}</div></td></tr>{% endfor %}
       </tbody></table></div>{% else %}<div class="alert alert-light border">لا توجد بيانات سابقة للمقارنة لهذا الموظف.</div>{% endif %}
       {% for doc in employee_docs %}{% if doc.employee_response_note %}<div class="alert alert-light border"><strong>ملاحظة الموظف:</strong> {{ doc.employee_response_note }}</div>{% endif %}{% endfor %}
+      <h5>سجل إجراءات العهدة</h5>
+      <div class="table-responsive"><table class="table table-bordered report-table"><thead><tr><th>التاريخ</th><th>الإجراء</th><th>بواسطة</th><th>الملاحظة</th></tr></thead><tbody>
+      {% for doc in employee_docs %}{% for event in doc.events %}<tr><td>{{ event.created_at|local_datetime }}</td><td>{{ event.action }}</td><td>{{ event.actor.full_name if event.actor else '-' }}</td><td>{{ event.note or '-' }}</td></tr>{% endfor %}{% endfor %}
+      </tbody></table></div>
     </section>
   {% endfor %}
+  <section class="employee-report">
+    <h3>سجل التقرير</h3>
+    <div class="table-responsive"><table class="table table-bordered report-table"><thead><tr><th>التاريخ</th><th>الإجراء</th><th>بواسطة</th><th>الملاحظة</th></tr></thead><tbody>
+    {% for audit in report_audits %}<tr><td>{{ audit.created_at|local_datetime }}</td><td>{{ audit.action }}</td><td>{{ audit.user.full_name if audit.user else '-' }}</td><td>{{ audit.note or '-' }}</td></tr>{% else %}<tr><td colspan="4">لا يوجد سجل تقرير بعد.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
 </div>
 {% endblock %}

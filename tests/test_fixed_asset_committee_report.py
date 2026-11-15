@@ -2,6 +2,7 @@ import io
 import unittest
 
 from flask import g
+from openpyxl import load_workbook
 
 from extensions import db
 from models import (
@@ -12,8 +13,14 @@ from models import (
     InvFixedAssetPreviousLine,
     User,
 )
-from services.asset_custody import review_inventory_document, send_cycle_reports
-from services.fixed_asset_inventory import close_inventory_cycle, populate_cycle_entries, record_asset_scan
+from services.asset_custody import (
+    get_or_create_committee_report,
+    review_inventory_document,
+    revise_inventory_document,
+    send_cycle_reports,
+    submit_committee_report,
+)
+from services.fixed_asset_inventory import populate_cycle_entries, record_asset_scan
 import tests.test_fixed_asset_routes as fixtures
 
 
@@ -70,7 +77,6 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
             observed_condition="GOOD",
             observed_lifecycle_status="ACTIVE",
         )
-        close_inventory_cycle(cycle, closed_by_id=self.admin.id)
         db.session.commit()
         return cycle, asset
 
@@ -168,6 +174,16 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         self.assertEqual(doc.status, "APPROVED")
         self.assertEqual(doc.employee_response, "ACCEPT")
         self.assertIsNone(asset.custodian_user_id)
+        self.assertEqual(cycle.committee_report.status, "READY_TO_CLOSE")
+        self.assertEqual(cycle.status, "ACTIVE")
+        self.assertIsNone(cycle.finalized_at)
+
+        self.login(self.admin)
+        close_response = self.client.post(
+            f"/portal/inventory/fixed-assets/cycles/{cycle.id}/close",
+        )
+        self.assertEqual(close_response.status_code, 302)
+        self.assertEqual(cycle.committee_report.status, "CLOSED")
         self.assertEqual(cycle.status, "CLOSED")
         self.assertIsNotNone(cycle.finalized_at)
         next_cycle = cycle.successor_cycle
@@ -203,6 +219,147 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         previous = InvFixedAssetPreviousLine.query.one()
         self.assertEqual(previous.employee_id, self.employee.id)
         self.assertEqual(previous.snapshot["location"], "مكتب قديم")
+
+    def test_open_cycle_can_send_custody_and_report_to_secretary(self):
+        asset = self._create_asset("FA-OPEN-001")
+        cycle = InvFixedAssetCycle(
+            code="COMMITTEE-OPEN-2026",
+            name="جرد مفتوح 2026",
+            inventory_date="2026-09-12",
+            committee_name="لجنة الجرد الثابت 2026",
+            status="ACTIVE",
+        )
+        db.session.add(cycle)
+        db.session.flush()
+        db.session.add(InvFixedAssetCycleMember(cycle_id=cycle.id, user_id=self.admin.id, member_role="CHAIR"))
+        populate_cycle_entries(cycle)
+        record_asset_scan(
+            cycle,
+            asset,
+            scanned_by_id=self.admin.id,
+            observed_warehouse_id=self.warehouse.id,
+            observed_room_id=None,
+            observed_custodian_user_id=self.employee.id,
+            observed_condition="GOOD",
+            observed_lifecycle_status="ACTIVE",
+        )
+        db.session.commit()
+
+        doc = send_cycle_reports(cycle, self.admin.id)[0]
+        db.session.commit()
+        self.assertEqual(cycle.status, "ACTIVE")
+        review_inventory_document(doc, self.employee.id, "ACCEPT", "تمت المطابقة")
+        report = get_or_create_committee_report(cycle, self.admin.id)
+        submit_committee_report(report, self.admin.id)
+        db.session.commit()
+        self.assertEqual(report.status, "SUBMITTED")
+
+        export = self.client.get(f"/portal/inventory/fixed-assets/cycles/{cycle.id}/committee-report.xlsx")
+        self.assertEqual(export.status_code, 200)
+        self.assertIn("spreadsheetml", export.mimetype)
+        workbook = load_workbook(io.BytesIO(export.data), read_only=True)
+        self.assertEqual(
+            set(workbook.sheetnames),
+            {"ملخص التقرير", "العهد والأصول", "الفروقات", "السجل"},
+        )
+
+        self.login(self.secretary)
+        response = self.client.post(
+            f"/portal/inventory/fixed-assets/cycles/{cycle.id}/committee-report",
+            data={"action": "approve", "secretary_note": "معتمد"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(report.status, "READY_TO_CLOSE")
+        self.assertEqual(cycle.status, "ACTIVE")
+        self.assertIsNone(cycle.finalized_at)
+        self.login(self.admin)
+        close_response = self.client.post(
+            f"/portal/inventory/fixed-assets/cycles/{cycle.id}/close",
+        )
+        self.assertEqual(close_response.status_code, 302)
+        self.assertEqual(cycle.status, "CLOSED")
+        self.assertIsNotNone(cycle.finalized_at)
+
+    def test_committee_can_remove_and_add_asset_before_final_approval(self):
+        first = self._create_asset("FA-EDIT-001")
+        second = self._create_asset("FA-EDIT-002")
+        cycle = InvFixedAssetCycle(
+            code="COMMITTEE-EDIT-2026",
+            name="جرد تعديل 2026",
+            inventory_date="2026-09-13",
+            committee_name="لجنة الجرد الثابت 2026",
+            status="ACTIVE",
+        )
+        db.session.add(cycle)
+        db.session.flush()
+        db.session.add(InvFixedAssetCycleMember(cycle_id=cycle.id, user_id=self.admin.id, member_role="CHAIR"))
+        populate_cycle_entries(cycle)
+        record_asset_scan(
+            cycle,
+            first,
+            scanned_by_id=self.admin.id,
+            observed_warehouse_id=self.warehouse.id,
+            observed_room_id=None,
+            observed_custodian_user_id=self.employee.id,
+            observed_condition="GOOD",
+            observed_lifecycle_status="ACTIVE",
+        )
+        db.session.commit()
+        doc = send_cycle_reports(cycle, self.admin.id)[0]
+        db.session.commit()
+        review_inventory_document(doc, self.employee.id, "ACCEPT", "تمت المطابقة")
+        db.session.commit()
+
+        report = get_or_create_committee_report(cycle, self.admin.id)
+        submit_committee_report(report, self.admin.id)
+        db.session.commit()
+
+        record_asset_scan(
+            cycle,
+            second,
+            scanned_by_id=self.admin.id,
+            observed_warehouse_id=self.warehouse.id,
+            observed_room_id=None,
+            observed_custodian_user_id=self.employee.id,
+            observed_condition="GOOD",
+            observed_lifecycle_status="ACTIVE",
+        )
+        db.session.commit()
+
+        line = next(line for line in doc.lines if line.asset_id == first.id)
+        revise_inventory_document(
+            doc,
+            self.admin.id,
+            {
+                line.id: {"included": False},
+                "__new_asset_ids": [str(second.id)],
+            },
+            "تعديل اللجنة حسب المراجعة",
+        )
+        db.session.commit()
+        self.assertEqual(doc.status, "PENDING")
+        self.assertIsNone(doc.employee_response)
+        self.assertFalse(next(line for line in doc.lines if line.asset_id == first.id).snapshot["included"])
+        self.assertTrue(any(line.asset_id == second.id for line in doc.lines))
+        self.assertTrue(any(event.action == "COMMITTEE_REVISED" for event in doc.events))
+
+        review_inventory_document(doc, self.employee.id, "ACCEPT", "تم اعتماد التعديل")
+        db.session.commit()
+        self.login(self.secretary)
+        response = self.client.post(
+            f"/portal/inventory/fixed-assets/cycles/{cycle.id}/committee-report",
+            data={"action": "approve", "secretary_note": "معتمد بعد التعديل"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(report.status, "READY_TO_CLOSE")
+        self.assertEqual(cycle.status, "ACTIVE")
+        self.login(self.admin)
+        close_response = self.client.post(
+            f"/portal/inventory/fixed-assets/cycles/{cycle.id}/close",
+        )
+        self.assertEqual(close_response.status_code, 302)
+        self.assertEqual(report.status, "CLOSED")
+        self.assertEqual(cycle.status, "CLOSED")
 
 
 if __name__ == "__main__":

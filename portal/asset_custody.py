@@ -14,11 +14,13 @@ from werkzeug.utils import secure_filename
 
 from extensions import db
 from models import (
+    AuditLog,
     InvAssetDocument,
     InvAssetDocumentLine,
     InvFixedAsset,
     InvFixedAssetCycle,
     InvFixedAssetCycleMember,
+    InvFixedAssetEntry,
     InvFixedAssetCommitteeReport,
     InvFixedAssetPreviousLine,
     User,
@@ -27,10 +29,11 @@ from services.asset_custody import (COMMITTEE_REPORT_STATUSES, EMPLOYEE_RESPONSE
                                     KINDS, STATUSES, cancel_document, create_movement,
                                     decide_committee_report,
                                     escalate_inventory_rejection, get_or_create_committee_report,
-                                    inventory_documents_for_cycle, issue_document,
+                                    inventory_documents_for_cycle, issue_document, pending_for_asset,
                                     review_document, review_inventory_document,
                                     revise_inventory_document, save_manual_previous_lines,
-                                    send_cycle_reports, submit_committee_report)
+                                    send_cycle_reports, submit_committee_report,
+                                    _mark_committee_report_dirty, _notify_secretary_general)
 from services.fixed_asset_reports import build_committee_report_pdf, build_committee_variance_index
 from services.fixed_asset_inventory import ASSET_CONDITIONS, ASSET_LIFECYCLE_STATUSES, INVENTORY_RESULT_LABELS
 from . import portal_bp
@@ -52,6 +55,8 @@ def protect_asset_actions():
         "asset_committee_report_previous",
         "asset_committee_report_decision",
         "asset_movement",
+        "fixed_asset_cycle_close",
+        "fixed_asset_cycle_reopen",
         "fixed_asset_cycle_scan",
         "fixed_asset_mobile_device_approve",
         "fixed_asset_mobile_device_revoke",
@@ -205,7 +210,7 @@ def asset_document(document_id):
         if action == "review":
             if current_user.id != doc.employee_id:
                 abort(403)
-        elif action == "revise":
+        elif action in {"revise", "add_assets"}:
             if not committee_actor:
                 abort(403)
         elif action == "escalate":
@@ -248,10 +253,18 @@ def asset_document(document_id):
                         "inventory_note": request.form.get(f"inventory_note_{line.id}"),
                         "included": bool(request.form.get(f"include_{line.id}")),
                     }
+                updates["__new_asset_ids"] = request.form.getlist("add_asset_ids")
                 revise_inventory_document(
                     doc,
                     current_user.id,
                     updates,
+                    request.form.get("committee_revision_note"),
+                )
+            elif action == "add_assets":
+                revise_inventory_document(
+                    doc,
+                    current_user.id,
+                    {"__new_asset_ids": request.form.getlist("add_asset_ids")},
                     request.form.get("committee_revision_note"),
                 )
             elif action == "escalate":
@@ -276,16 +289,50 @@ def asset_document(document_id):
         kinds=KINDS,
         statuses=STATUSES,
         can_review=doc.employee_id == current_user.id and doc.status == "PENDING",
-        can_revise=committee_actor and doc.kind == "INVENTORY" and doc.status == "CHANGE_REQUESTED",
+        can_revise=(
+            committee_actor
+            and doc.kind == "INVENTORY"
+            and doc.status in {"PENDING", "CHANGE_REQUESTED", "REJECTED", "REJECTED_ESCALATED", "APPROVED"}
+            and not (doc.cycle and doc.cycle.finalized_at)
+        ),
         can_escalate=committee_actor and doc.kind == "INVENTORY" and doc.status == "REJECTED",
         asset_conditions=ASSET_CONDITIONS,
         asset_lifecycle_statuses=ASSET_LIFECYCLE_STATUSES,
         events=doc.events,
+        addable_assets=_document_addable_assets(doc),
     )
 
 
 def _report_access(cycle):
     return _can_committee_act(cycle) or _is_secretary_general()
+
+
+def _document_addable_assets(doc):
+    """Return current-cycle assets that can be added to a custody document."""
+    if not doc.cycle_id or not doc.cycle or doc.cycle.finalized_at is not None:
+        return []
+    existing_ids = {line.asset_id for line in doc.lines}
+    entries = (
+        InvFixedAssetEntry.query
+        .filter_by(cycle_id=doc.cycle_id)
+        .join(InvFixedAsset)
+        .order_by(InvFixedAsset.asset_tag.asc())
+        .all()
+    )
+    result = []
+    for entry in entries:
+        holder_id = (
+            entry.observed_custodian_user_id
+            if entry.scanned_at
+            else entry.expected_custodian_user_id
+        )
+        if entry.asset_id in existing_ids or holder_id != doc.employee_id:
+            continue
+        reserved = pending_for_asset(entry.asset_id)
+        if reserved is not None and reserved.id != doc.id:
+            continue
+        result.append(entry.asset)
+    return result
 
 
 @portal_bp.route("/inventory/fixed-assets/cycles/<int:cycle_id>/committee-report", methods=["GET", "POST"])
@@ -312,8 +359,9 @@ def asset_committee_report(cycle_id):
             if action in {"save", "submit"}:
                 if not committee_actor:
                     abort(403)
-                if report.status not in {"DRAFT", "RETURNED"}:
+                if report.status not in {"DRAFT", "RETURNED", "SUBMITTED", "READY_TO_CLOSE"}:
                     raise ValueError("لا يمكن تعديل التقرير بعد رفعه أو اعتماده.")
+                previous_report_status = report.status
                 report.introduction = (request.form.get("introduction") or "").strip() or None
                 report.points = (request.form.get("points") or "").strip() or None
                 report.summary = (request.form.get("summary") or "").strip() or None
@@ -331,6 +379,16 @@ def asset_committee_report(cycle_id):
                     )
                     flash("تم رفع تقرير اللجنة إلى الأمين العام.", "success")
                 else:
+                    if previous_report_status == "READY_TO_CLOSE":
+                        _mark_committee_report_dirty(report, current_user.id)
+                    elif previous_report_status == "SUBMITTED":
+                        _notify_secretary_general(report)
+                    _audit(
+                        "INV_FIXED_ASSET_COMMITTEE_REPORT_SAVE",
+                        f"حفظ تعديلات تقرير اللجنة للدورة {cycle.code}",
+                        "INV_FIXED_ASSET_COMMITTEE_REPORT",
+                        report.id,
+                    )
                     flash("تم حفظ إعدادات تقرير اللجنة.", "success")
             elif action in {"approve", "return"}:
                 if not secretary_actor:
@@ -342,13 +400,10 @@ def asset_committee_report(cycle_id):
                     "INV_FIXED_ASSET_COMMITTEE_REPORT",
                     report.id,
                 )
-                if action == "approve" and cycle.successor_cycle:
-                    flash(
-                        f"تم اعتماد تقرير اللجنة وإغلاق دورة {cycle.code} نهائياً، وفتح دورة الجرد الجديدة {cycle.successor_cycle.code}.",
-                        "success",
-                    )
+                if action == "approve":
+                    flash("تم اعتماد تقرير اللجنة وإعادته للجنة لإغلاق الدورة نهائياً.", "success")
                 else:
-                    flash("تم حفظ قرار الأمين العام.", "success")
+                    flash("تم حفظ قرار الأمين العام وإعادة التقرير للجنة للتعديل.", "success")
             else:
                 abort(400)
             db.session.commit()
@@ -358,6 +413,12 @@ def asset_committee_report(cycle_id):
             flash(str(exc) if isinstance(exc, ValueError) else "تعذر حفظ تقرير اللجنة بسبب إجراء متزامن.", "danger")
 
     documents = inventory_documents_for_cycle(cycle.id)
+    report_audits = (
+        AuditLog.query
+        .filter_by(target_type="INV_FIXED_ASSET_COMMITTEE_REPORT", target_id=report.id)
+        .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
+        .all()
+    )
     previous_by_employee = _report_previous_rows(cycle.id)
     employees = []
     seen = set()
@@ -377,6 +438,151 @@ def asset_committee_report(cycle_id):
         report_statuses=COMMITTEE_REPORT_STATUSES,
         statuses=STATUSES,
         employee_response_labels=EMPLOYEE_RESPONSE_LABELS,
+        report_audits=report_audits,
+    )
+
+
+@portal_bp.route("/inventory/fixed-assets/cycles/<int:cycle_id>/committee-report.xlsx")
+@login_required
+def asset_committee_report_excel(cycle_id):
+    """Download the live committee report with custody, variance, and audit sheets."""
+    cycle = InvFixedAssetCycle.query.options(
+        noload(InvFixedAssetCycle.entries),
+        noload(InvFixedAssetCycle.manual_previous_lines),
+    ).get_or_404(cycle_id)
+    if not _report_access(cycle):
+        abort(403)
+    report = InvFixedAssetCommitteeReport.query.filter_by(cycle_id=cycle.id).first_or_404()
+    documents = inventory_documents_for_cycle(cycle.id)
+    report_audits = (
+        AuditLog.query
+        .filter_by(target_type="INV_FIXED_ASSET_COMMITTEE_REPORT", target_id=report.id)
+        .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
+        .all()
+    )
+    previous_by_employee = _report_previous_rows(cycle.id)
+    variance_by_employee = build_committee_variance_index(
+        cycle,
+        documents,
+        previous_by_employee,
+        condition_labels=ASSET_CONDITIONS,
+        lifecycle_labels=ASSET_LIFECYCLE_STATUSES,
+        result_labels=INVENTORY_RESULT_LABELS,
+    )
+    from utils.excel import make_xlsx_bytes_multi
+    import json
+
+    summary_rows = [[
+        cycle.code,
+        cycle.name,
+        cycle.inventory_date,
+        cycle.committee.label if cycle.committee else cycle.committee_name or "",
+        COMMITTEE_REPORT_STATUSES.get(report.status, report.status),
+        report.submitted_by.full_name if report.submitted_by else "",
+        report.decided_by.full_name if report.decided_by else "",
+        report.submitted_at,
+        report.decided_at,
+        report.introduction or "",
+        report.points or "",
+        report.summary or "",
+        report.secretary_note or "",
+    ]]
+    custody_rows = []
+    event_rows = []
+    employee_by_id = {}
+    for doc in documents:
+        employee_by_id[doc.employee_id] = doc.employee.full_name if doc.employee else ""
+        for line in doc.lines:
+            snap = line.snapshot or {}
+            custody_rows.append([
+                doc.id,
+                doc.employee.full_name if doc.employee else "",
+                STATUSES.get(doc.status, doc.status),
+                EMPLOYEE_RESPONSE_LABELS.get(doc.employee_response, "لم يقرر بعد"),
+                doc.revision_number or 0,
+                doc.response_at,
+                "نعم" if snap.get("included", True) else "لا",
+                snap.get("tag", ""),
+                snap.get("name", ""),
+                snap.get("serial", "") or "",
+                snap.get("location", "") or "",
+                ASSET_CONDITIONS.get(snap.get("condition"), snap.get("condition", "") or ""),
+                ASSET_LIFECYCLE_STATUSES.get(snap.get("target_lifecycle"), snap.get("target_lifecycle", "") or ""),
+                INVENTORY_RESULT_LABELS.get(snap.get("result"), snap.get("result", "") or ""),
+                line.decision or "",
+                line.employee_note or "",
+                doc.committee_revision_note or "",
+            ])
+        for event in doc.events:
+            event_rows.append([
+                doc.id,
+                doc.employee.full_name if doc.employee else "",
+                event.created_at,
+                event.action,
+                event.actor.full_name if event.actor else "",
+                event.note or "",
+                json.dumps(event.metadata_json or {}, ensure_ascii=False),
+            ])
+
+    for audit in report_audits:
+        event_rows.append([
+            "التقرير",
+            "",
+            audit.created_at,
+            audit.action,
+            audit.user.full_name if audit.user else "",
+            audit.note or "",
+            "",
+        ])
+
+    variance_rows = []
+    for employee_id, rows in variance_by_employee.items():
+        for row in rows:
+            before = row.get("previous") or {}
+            after = row.get("current") or {}
+            variance_rows.append([
+                employee_by_id.get(employee_id, after.get("custodian") or before.get("custodian") or ""),
+                row.get("tag", ""),
+                before.get("name", ""),
+                before.get("serial", ""),
+                before.get("location", ""),
+                before.get("custodian", ""),
+                ASSET_CONDITIONS.get(before.get("condition"), before.get("condition", "") or ""),
+                after.get("name", ""),
+                after.get("serial", ""),
+                after.get("location", ""),
+                after.get("custodian", ""),
+                ASSET_CONDITIONS.get(after.get("condition"), after.get("condition", "") or ""),
+                "\n".join(row.get("differences") or []),
+            ])
+
+    payload = make_xlsx_bytes_multi([
+        (
+            "ملخص التقرير",
+            ["رقم الدورة", "اسم الدورة", "تاريخ الجرد", "اللجنة", "حالة التقرير", "رفع بواسطة", "قرار الأمين العام", "تاريخ الرفع", "تاريخ القرار", "المقدمة", "البنود", "الملخص", "ملاحظة الأمين العام"],
+            summary_rows,
+        ),
+        (
+            "العهد والأصول",
+            ["رقم المستند", "الموظف", "حالة المستند", "رد الموظف", "رقم المراجعة", "تاريخ رد الموظف", "مدرج", "رقم الأصل", "اسم الأصل", "التسلسلي", "الموقع", "الحالة", "الوضع", "نتيجة الجرد", "قرار البند", "ملاحظة الموظف", "ملاحظة تعديل اللجنة"],
+            custody_rows,
+        ),
+        (
+            "الفروقات",
+            ["الموظف", "رقم الأصل", "اسم سابق", "تسلسلي سابق", "موقع سابق", "عهدة سابقة", "حالة سابقة", "اسم حالي", "تسلسلي حالي", "موقع حالي", "عهدة حالية", "حالة حالية", "الفروقات"],
+            variance_rows,
+        ),
+        (
+            "السجل",
+            ["رقم المستند", "الموظف", "التاريخ", "الإجراء", "بواسطة", "الملاحظة", "تفاصيل التعديل"],
+            event_rows,
+        ),
+    ])
+    return send_file(
+        BytesIO(payload),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=f"fixed-asset-committee-report-{cycle.code}.xlsx",
     )
 
 
@@ -411,7 +617,7 @@ def asset_committee_report_previous(cycle_id, employee_id):
     report = InvFixedAssetCommitteeReport.query.filter_by(cycle_id=cycle.id).first()
     if report is None:
         report = get_or_create_committee_report(cycle, current_user.id)
-    if report.status not in {"DRAFT", "RETURNED"}:
+    if report.status not in {"DRAFT", "RETURNED", "SUBMITTED", "READY_TO_CLOSE"}:
         flash("لا يمكن تعديل بيانات السنة السابقة بعد رفع التقرير.", "warning")
         return redirect(url_for("portal.asset_committee_report", cycle_id=cycle.id))
 
@@ -421,7 +627,19 @@ def asset_committee_report_previous(cycle_id, employee_id):
     ).order_by(InvFixedAssetPreviousLine.id.asc()).all()
     if request.method == "POST":
         try:
+            report_was_ready_to_close = report.status == "READY_TO_CLOSE"
             count = save_manual_previous_lines(cycle, employee.id, request.form.get("previous_data"), current_user.id)
+            if report_was_ready_to_close:
+                _mark_committee_report_dirty(report, current_user.id)
+            elif report.status == "SUBMITTED":
+                _notify_secretary_general(report)
+            report.updated_at = datetime.utcnow()
+            _audit(
+                "INV_FIXED_ASSET_COMMITTEE_REPORT_PREVIOUS_SAVE",
+                f"حفظ بيانات الجرد السابق للموظف {employee.full_name} في الدورة {cycle.code}",
+                "INV_FIXED_ASSET_COMMITTEE_REPORT",
+                report.id,
+            )
             db.session.commit()
             flash(f"تم حفظ {count} بنداً من بيانات السنة السابقة للموظف.", "success")
             return redirect(url_for("portal.asset_committee_report", cycle_id=cycle.id))
@@ -465,6 +683,12 @@ def asset_committee_report_print(cycle_id):
         if document.employee_id not in seen_employee_ids:
             seen_employee_ids.add(document.employee_id)
             employees.append(document.employee)
+    report_audits = (
+        AuditLog.query
+        .filter_by(target_type="INV_FIXED_ASSET_COMMITTEE_REPORT", target_id=report.id)
+        .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
+        .all()
+    )
     previous_by_employee = _report_previous_rows(cycle.id)
     return render_template(
         "portal/inventory/fixed_assets/committee_report_print.html",
@@ -486,6 +710,7 @@ def asset_committee_report_print(cycle_id):
         lifecycle_labels=ASSET_LIFECYCLE_STATUSES,
         result_labels=INVENTORY_RESULT_LABELS,
         employee_response_labels=EMPLOYEE_RESPONSE_LABELS,
+        report_audits=report_audits,
     )
 
 
@@ -499,6 +724,12 @@ def asset_committee_report_pdf(cycle_id):
     if not _report_access(cycle):
         abort(403)
     report = InvFixedAssetCommitteeReport.query.filter_by(cycle_id=cycle.id).first_or_404()
+    report_audits = (
+        AuditLog.query
+        .filter_by(target_type="INV_FIXED_ASSET_COMMITTEE_REPORT", target_id=report.id)
+        .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
+        .all()
+    )
     output = build_committee_report_pdf(
         report,
         inventory_documents_for_cycle(cycle.id),
@@ -507,6 +738,7 @@ def asset_committee_report_pdf(cycle_id):
         condition_labels=ASSET_CONDITIONS,
         lifecycle_labels=ASSET_LIFECYCLE_STATUSES,
         result_labels=INVENTORY_RESULT_LABELS,
+        report_audits=report_audits,
     )
     return send_file(
         output,

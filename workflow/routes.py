@@ -6518,7 +6518,7 @@ def workflow_employee_paths_report():
 @login_required
 @perm_required("WORKFLOW_REPORTS_READ")
 def workflow_open_approvals_report():
-    """Open HR approvals across the Portal request and attendance flows."""
+    """Open approvals across Portal requests, inventory, and achievements."""
     search = (request.args.get("q") or "").strip()
     category = (request.args.get("category") or "").strip().upper()
     page = request.args.get("page", type=int, default=1)

@@ -37,10 +37,9 @@
     <input type="hidden" name="action" value="review">
     <h6 class="fw-bold">قرار الموظف</h6>
     <div class="row g-2">
-      <div class="col-md-4"><label class="border rounded p-2 d-block"><input type="radio" name="inventory_action" value="ACCEPT" required> أوافق على العهدة</label></div>
-      <div class="col-md-4"><label class="border rounded p-2 d-block"><input type="radio" name="inventory_action" value="CHANGE"> أطلب مراجعة وتعديلاً</label></div>
-      <div class="col-md-4"><label class="border rounded p-2 d-block"><input type="radio" name="inventory_action" value="REJECT"> أرفض العهدة</label></div>
-      <div class="col-12"><label class="form-label">التوضيح (إلزامي للرفض أو طلب التعديل)</label><textarea class="form-control" name="employee_note" rows="3" maxlength="4000"></textarea></div>
+      <div class="col-md-6"><label class="border rounded p-2 d-block"><input type="radio" name="inventory_action" value="ACCEPT" required> أوافق على العهدة</label></div>
+      <div class="col-md-6"><label class="border rounded p-2 d-block"><input type="radio" name="inventory_action" value="CHANGE"> أطلب مراجعة وتعديلاً</label></div>
+      <div class="col-12"><label class="form-label">سبب طلب التعديل (إلزامي عند اختيار طلب التعديل)</label><textarea class="form-control" name="employee_note" rows="3" maxlength="4000"></textarea></div>
     </div>
     <button class="btn btn-primary mt-3">إرسال قرار الموظف</button>
   </form>
@@ -50,8 +49,8 @@
   <form method="post" class="card card-body border-warning mb-3">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="action" value="revise">
-    <h6 class="fw-bold text-warning">تعديل اللجنة وإعادة الإرسال للموظف</h6>
-    <p class="small text-muted">عدّل البيانات المطلوبة فقط، وأزل تحديد البند إذا قررت اللجنة عدم إدراجه في العهدة.</p>
+    <h6 class="fw-bold text-warning">تعديل العهدة من اللجنة</h6>
+    <p class="small text-muted">يمكن للجنة تعديل البيانات أو إزالة أصل أو إضافة أصل جديد ما دامت دورة الجرد غير مغلقة نهائياً. بعد أي تعديل يعود المستند للموظف ليؤكده من جديد.</p>
     <div class="table-responsive"><table class="table table-bordered align-middle">
       <thead><tr><th>إدراج</th><th>رقم الأصل</th><th>الاسم</th><th>التسلسلي</th><th>الموقع</th><th>الحالة</th><th>الوضع</th><th>ملاحظة</th></tr></thead>
       <tbody>{% for line in doc.lines %}{% set snap = line.snapshot %}
@@ -67,6 +66,7 @@
         </tr>
       {% endfor %}</tbody>
     </table></div>
+    {% if addable_assets %}<div class="mt-3"><label class="form-label">إضافة أصول إلى نفس العهدة</label><select class="form-select" name="add_asset_ids" multiple size="5">{% for asset in addable_assets %}<option value="{{ asset.id }}">{{ asset.asset_tag }} — {{ asset.name }}</option>{% endfor %}</select><div class="form-text">يمكن تحديد أكثر من أصل باستخدام Ctrl أو Shift.</div></div>{% endif %}
     <textarea class="form-control" name="committee_revision_note" rows="2" maxlength="4000" placeholder="ملاحظة اللجنة على التعديل (اختيارية)"></textarea>
     <button class="btn btn-warning mt-3">حفظ التعديل وإعادة الإرسال</button>
   </form>
