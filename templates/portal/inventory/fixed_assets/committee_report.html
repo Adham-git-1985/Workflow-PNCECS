@@ -85,7 +85,7 @@
       <td>{{ previous_by_employee.get(employee.id, [])|length }} بند{% if cycle.previous_cycle %} · {{ cycle.previous_cycle.inventory_date }}{% else %} · يدوي{% endif %}</td>
       <td class="text-nowrap">
         {% if committee_actor and report.status in ['DRAFT','RETURNED','SUBMITTED','READY_TO_CLOSE'] %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.asset_committee_report_previous', cycle_id=cycle.id, employee_id=employee.id) }}">إدخال السنة السابقة</a>{% endif %}
-        <a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener" href="{{ url_for('portal.asset_committee_report_print', cycle_id=cycle.id) }}#employee-{{ employee.id }}">عرض التقرير</a>
+        <a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener" href="{{ url_for('portal.asset_committee_report_print', cycle_id=cycle.id, employee_id=employee.id) }}#employee-{{ employee.id }}">عرض تقرير الموظف</a>
       </td>
     </tr>
   {% else %}<tr><td colspan="7" class="text-center text-muted py-5">لا توجد عهد موظفين بعد. أكمل قراءة الأصول ثم اضغط «إسناد العهد للموظفين».</td></tr>{% endfor %}

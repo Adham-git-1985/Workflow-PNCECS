@@ -136,8 +136,11 @@ def _report_header_path(report):
     return path if path.is_file() else None
 
 
-def _report_previous_rows(cycle_id):
-    rows = InvFixedAssetPreviousLine.query.filter_by(cycle_id=cycle_id).order_by(
+def _report_previous_rows(cycle_id, employee_id=None):
+    query = InvFixedAssetPreviousLine.query.filter_by(cycle_id=cycle_id)
+    if employee_id is not None:
+        query = query.filter(InvFixedAssetPreviousLine.employee_id == employee_id)
+    rows = query.order_by(
         InvFixedAssetPreviousLine.employee_id.asc(), InvFixedAssetPreviousLine.id.asc()
     ).all()
     result = {}
@@ -272,6 +275,8 @@ def asset_document(document_id):
         elif action in {"issue", "cancel"}:
             if not manager:
                 abort(403)
+            if action == "cancel" and doc.employee_id == current_user.id and doc.employee_response == "ACCEPT":
+                abort(403)
         else:
             abort(400)
         try:
@@ -325,7 +330,7 @@ def asset_document(document_id):
             elif action == "issue":
                 issue_document(doc, current_user.id)
             else:
-                cancel_document(doc)
+                cancel_document(doc, current_user.id)
             _audit("INV_ASSET_DOCUMENT_" + action.upper(), f"{KINDS[doc.kind]} #{doc.id}: {doc.status}", "INV_ASSET_DOCUMENT", doc.id)
             db.session.commit()
             flash("تم حفظ الإجراء وإشعار المعنيين.", "success")
@@ -344,6 +349,9 @@ def asset_document(document_id):
         statuses=STATUSES,
         report_statuses=COMMITTEE_REPORT_STATUSES,
         can_review=doc.employee_id == current_user.id and doc.status == "PENDING",
+        can_cancel=manager and not (
+            doc.employee_id == current_user.id and doc.employee_response == "ACCEPT"
+        ),
         can_revise=(
             committee_actor
             and doc.kind == "INVENTORY"
@@ -508,14 +516,15 @@ def asset_committee_report_excel(cycle_id):
     if not _report_access(cycle):
         abort(403)
     report = InvFixedAssetCommitteeReport.query.filter_by(cycle_id=cycle.id).first_or_404()
-    documents = inventory_documents_for_cycle(cycle.id)
+    selected_employee_id = _optional_int(request.args.get("employee_id"))
+    documents = inventory_documents_for_cycle(cycle.id, employee_id=selected_employee_id)
     report_audits = (
         AuditLog.query
         .filter_by(target_type="INV_FIXED_ASSET_COMMITTEE_REPORT", target_id=report.id)
         .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
         .all()
     )
-    previous_by_employee = _report_previous_rows(cycle.id)
+    previous_by_employee = _report_previous_rows(cycle.id, employee_id=selected_employee_id)
     variance_by_employee = build_committee_variance_index(
         cycle,
         documents,
@@ -747,7 +756,8 @@ def asset_committee_report_print(cycle_id):
     if not _report_access(cycle):
         abort(403)
     report = InvFixedAssetCommitteeReport.query.filter_by(cycle_id=cycle.id).first_or_404()
-    documents = inventory_documents_for_cycle(cycle.id)
+    selected_employee_id = _optional_int(request.args.get("employee_id"))
+    documents = inventory_documents_for_cycle(cycle.id, employee_id=selected_employee_id)
     employees = []
     seen_employee_ids = set()
     for document in documents:
@@ -760,7 +770,7 @@ def asset_committee_report_print(cycle_id):
         .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
         .all()
     )
-    previous_by_employee = _report_previous_rows(cycle.id)
+    previous_by_employee = _report_previous_rows(cycle.id, employee_id=selected_employee_id)
     return render_template(
         "portal/inventory/fixed_assets/committee_report_print.html",
         cycle=cycle,
@@ -782,6 +792,7 @@ def asset_committee_report_print(cycle_id):
         result_labels=INVENTORY_RESULT_LABELS,
         employee_response_labels=EMPLOYEE_RESPONSE_LABELS,
         report_audits=report_audits,
+        selected_employee_id=selected_employee_id,
     )
 
 
@@ -795,6 +806,7 @@ def asset_committee_report_pdf(cycle_id):
     if not _report_access(cycle):
         abort(403)
     report = InvFixedAssetCommitteeReport.query.filter_by(cycle_id=cycle.id).first_or_404()
+    selected_employee_id = _optional_int(request.args.get("employee_id"))
     report_audits = (
         AuditLog.query
         .filter_by(target_type="INV_FIXED_ASSET_COMMITTEE_REPORT", target_id=report.id)
@@ -803,8 +815,8 @@ def asset_committee_report_pdf(cycle_id):
     )
     output = build_committee_report_pdf(
         report,
-        inventory_documents_for_cycle(cycle.id),
-        _report_previous_rows(cycle.id),
+        inventory_documents_for_cycle(cycle.id, employee_id=selected_employee_id),
+        _report_previous_rows(cycle.id, employee_id=selected_employee_id),
         header_path=_report_header_path(report),
         condition_labels=ASSET_CONDITIONS,
         lifecycle_labels=ASSET_LIFECYCLE_STATUSES,

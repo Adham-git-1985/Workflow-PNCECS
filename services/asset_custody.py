@@ -588,8 +588,8 @@ def _mark_committee_report_dirty(report, actor_id=None):
     return True
 
 
-def inventory_documents_for_cycle(cycle_id):
-    return (
+def inventory_documents_for_cycle(cycle_id, employee_id=None):
+    query = (
         InvAssetDocument.query
         .options(
             joinedload(InvAssetDocument.employee),
@@ -601,9 +601,10 @@ def inventory_documents_for_cycle(cycle_id):
             InvAssetDocument.kind == "INVENTORY",
             InvAssetDocument.status != "CANCELLED",
         )
-        .order_by(InvAssetDocument.employee_id.asc(), InvAssetDocument.id.asc())
-        .all()
     )
+    if employee_id is not None:
+        query = query.filter(InvAssetDocument.employee_id == employee_id)
+    return query.order_by(InvAssetDocument.employee_id.asc(), InvAssetDocument.id.asc()).all()
 
 
 def submit_committee_report(report, actor_id):
@@ -832,7 +833,9 @@ def issue_document(doc, actor_id):
     notify_document(doc, doc.employee_id, "تم إصدار العهدة" if doc.status == "ISSUED" else ("تم اعتماد تقرير الجرد النهائي" if report_only else "تم تنفيذ " + KINDS[doc.kind]))
 
 
-def cancel_document(doc):
+def cancel_document(doc, actor_id=None):
+    if actor_id is not None and actor_id == doc.employee_id and doc.employee_response == "ACCEPT":
+        raise ValueError("لا يمكن للموظف إلغاء المستند بعد الموافقة على العهدة.")
     if doc.status not in {"PENDING", "APPROVED", "CHANGE_REQUESTED", "REJECTED", "REJECTED_ESCALATED"}:
         raise ValueError("لا يمكن إلغاء حركة منفذة. استخدم حركة إرجاع أو نقل موثقة.")
     _transition(doc, doc.status, "CANCELLED")

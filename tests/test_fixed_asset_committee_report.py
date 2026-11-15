@@ -141,6 +141,37 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         self.assertIn("لا توجد بيانات سابقة للمقارنة", preview_text)
         self.assertNotIn('data-has-difference="1"', preview_text)
 
+    def test_committee_report_print_loads_only_selected_employee(self):
+        cycle, asset, doc = self.send_one()
+        other = User(
+            email="committee-holder-two@example.test",
+            name="موظف آخر في التقرير",
+            role="EMPLOYEE",
+            password_hash="unused",
+        )
+        db.session.add(other)
+        db.session.flush()
+        other_asset = self._create_asset("FA-REPORT-OTHER-001")
+        other_asset.custodian_user_id = other.id
+        db.session.commit()
+        populate_cycle_entries(cycle)
+        db.session.commit()
+        send_cycle_reports(cycle, self.admin.id)
+        db.session.commit()
+
+        self.login(self.admin)
+        report_url = f"/portal/inventory/fixed-assets/cycles/{cycle.id}/committee-report"
+        self.assertEqual(self.client.get(report_url).status_code, 200)
+        full_text = self.client.get(
+            f"{report_url}/print"
+        ).get_data(as_text=True)
+        selected_text = self.client.get(
+            f"{report_url}/print?employee_id={self.employee.id}#employee-{self.employee.id}"
+        ).get_data(as_text=True)
+        self.assertIn(other.full_name, full_text)
+        self.assertNotIn(other.full_name, selected_text)
+        self.assertIn(self.employee.full_name, selected_text)
+
     def test_employee_change_then_committee_revise_and_reject_escalate(self):
         cycle, asset, doc = self.send_one()
         review_inventory_document(doc, self.employee.id, "CHANGE", "الموقع يحتاج تصحيحاً")
@@ -304,9 +335,9 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         documents_page = self.client.get("/portal/inventory/fixed-assets/documents")
         documents_text = documents_page.get_data(as_text=True)
         self.assertEqual(documents_page.status_code, 200)
-        self.assertIn("SN-REPORT-2026", documents_text)
-        self.assertIn("حاسوب محمول", documents_text)
-        self.assertIn("صنف المستودع", documents_text)
+        self.assertIn("فتح العهدة والتفاصيل", documents_text)
+        self.assertIn("1 أصل", documents_text)
+        self.assertNotIn("SN-REPORT-2026", documents_text)
         self.assertEqual(
             self.client.get(f"/portal/inventory/fixed-assets/assets/{asset.id}/image").status_code,
             200,

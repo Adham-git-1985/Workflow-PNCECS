@@ -85,6 +85,26 @@ class AssetCustodyTests(unittest.TestCase):
             issue_document(doc, self.admin.id)
         db.session.rollback()
 
+    def test_employee_cannot_cancel_inventory_document_after_approval(self):
+        asset = self._create_asset()
+        cycle = self.cycle(asset)
+        doc = send_cycle_reports(cycle, self.admin.id)[0]
+        db.session.commit()
+        endpoint = f"/portal/inventory/fixed-assets/documents/{doc.id}"
+
+        self.login(self.employee)
+        response = self.client.post(endpoint, data={
+            "action": "review",
+            "inventory_action": "ACCEPT",
+        })
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(doc.status, "APPROVED")
+
+        cancel_response = self.client.post(endpoint, data={"action": "cancel"})
+        self.assertEqual(cancel_response.status_code, 403)
+        self.assertEqual(doc.status, "APPROVED")
+        self.assertNotIn("إلغاء المستند", self.client.get(endpoint).get_data(as_text=True))
+
     def test_unrelated_employee_cannot_read_or_review(self):
         doc = create_movement(self._create_asset(), "ASSIGN", self.employee.id, self.admin.id, "تجهيز المكتب")
         db.session.commit()

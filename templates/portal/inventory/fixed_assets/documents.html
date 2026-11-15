@@ -8,43 +8,25 @@
   .document-asset-photo { width: 52px; height: 52px; object-fit: cover; border: 1px solid #d9e2ec; border-radius: .35rem; float: inline-start; margin-inline-end: .55rem; }
   .document-report-status { min-width: 205px; }
   .document-report-status .badge { white-space: normal; text-align: start; }
+  .documents-table { min-width: 920px; }
+  .documents-asset-summary { min-width: 190px; }
+  .documents-asset-summary .asset-tags { line-height: 1.6; overflow-wrap: anywhere; }
 </style>
 <h4>عهدي وتقارير الاعتماد</h4>
 <p class="text-muted">راجع كل بند وأضف ملاحظاتك. من عمود «تقرير لجنة الجرد» تعرف هل تم رفع التقرير للأمين العام، ويمكنك فتح التقرير الكامل وقراءته.</p>
-<form class="d-flex gap-2 mb-3"><select class="form-select" name="status"><option value="">جميع الحالات</option>{% for key, label in statuses.items() %}<option value="{{ key }}" {{ 'selected' if selected_status == key }}>{{ label }}</option>{% endfor %}</select><button class="btn btn-outline-primary">تصفية</button></form>
-<div class="table-responsive"><table class="table table-bordered bg-white align-middle"><thead><tr><th>الرقم</th><th>المستند</th><th>الموظف</th><th>الأصول والتفاصيل</th><th>حالة المستند / رد الموظف</th><th>تقرير لجنة الجرد / القراءة</th><th>التاريخ</th></tr></thead><tbody>
+<form class="d-flex gap-2 mb-3"><input type="hidden" name="cycle_id" value="{{ request.args.get('cycle_id', '') }}"><select class="form-select" name="status"><option value="">جميع الحالات</option>{% for key, label in statuses.items() %}<option value="{{ key }}" {{ 'selected' if selected_status == key }}>{{ label }}</option>{% endfor %}</select><button class="btn btn-outline-primary">تصفية</button></form>
+<div class="table-responsive"><table class="table table-bordered bg-white align-middle documents-table"><thead><tr><th>الرقم</th><th>المستند</th><th>الموظف</th><th>الأصول</th><th>حالة المستند / رد الموظف</th><th>تقرير لجنة الجرد / القراءة</th><th>التاريخ</th></tr></thead><tbody>
 {% for doc in documents.items %}
 <tr>
   <td><a href="{{ url_for('portal.asset_document', document_id=doc.id) }}">{{ doc.id }}</a></td>
   <td>{{ kinds[doc.kind] }}{% if doc.cycle %}<div class="small text-muted">دورة: {{ doc.cycle.code }}</div>{% endif %}</td>
   <td>{{ doc.employee.full_name }}</td>
-  <td>
-    <details open class="document-asset-list">
-      <summary>{{ doc.lines|length }} أصل — عرض التفاصيل</summary>
-      {% for line in doc.lines %}
-        {% set snap = line.snapshot or {} %}
-        {% set asset = line.asset %}
-        {% set asset_tag = snap.get('tag') or (asset.asset_tag if asset else '') %}
-        {% set asset_name = snap.get('name') or (asset.name if asset else '') %}
-        {% set serial = snap.get('serial') or (asset.serial_number if asset else '') %}
-        {% set item_label = snap.get('item') or (asset.item.label if asset and asset.item else '') %}
-        {% set category_label = snap.get('category') or (asset.category.name if asset and asset.category else '') %}
-        {% set warehouse_label = snap.get('warehouse') or (asset.warehouse.label if asset and asset.warehouse else '') %}
-        {% set room_label = snap.get('room') or (asset.room.label if asset and asset.room else '') %}
-        {% set description = snap.get('description') or (asset.description if asset else '') %}
-        {% set image_filename = snap.get('image_filename') or (asset.image_filename if asset else '') %}
-        <div class="document-asset {% if snap.get('included') is sameas false %}text-muted{% endif %}">
-          {% if image_filename and asset %}<img class="document-asset-photo" loading="lazy" src="{{ url_for('portal.fixed_asset_image', asset_id=asset.id) }}" alt="صورة {{ asset_name or 'الأصل' }}">{% endif %}
-          <div class="document-asset-name">{{ asset_name or '-' }}</div>
-          <div class="small">رقم الأصل: {{ asset_tag or '-' }} · الرقم التسلسلي: {{ serial or '-' }}</div>
-          <div class="small">صنف المستودع: {{ item_label or '-' }} · التصنيف: {{ category_label or '-' }}</div>
-          <div class="small">المستودع: {{ warehouse_label or '-' }} · الغرفة: {{ room_label or '-' }}</div>
-          <div class="small">الوصف: {{ description or '-' }}</div>
-          {% if snap.get('included') is sameas false %}<div class="small text-warning">تمت إزالة الأصل من العهدة في آخر تعديل.</div>{% endif %}
-          <div class="clearfix"></div>
-        </div>
-      {% else %}<div class="small text-muted mt-2">لا توجد أصول.</div>{% endfor %}
-    </details>
+  <td class="documents-asset-summary">
+    <div class="fw-semibold">{{ doc.lines|length }} أصل</div>
+    <div class="small text-muted asset-tags">
+      {% for line in doc.lines[:3] %}{% set snap = line.snapshot or {} %}{% set asset = line.asset %}{{ snap.get('tag') or (asset.asset_tag if asset else '-') }}{% if not loop.last %}، {% endif %}{% endfor %}{% if doc.lines|length > 3 %} … +{{ doc.lines|length - 3 }}{% endif %}
+    </div>
+    <a class="btn btn-sm btn-outline-primary mt-2" href="{{ url_for('portal.asset_document', document_id=doc.id) }}">فتح العهدة والتفاصيل</a>
   </td>
   <td><span class="badge text-bg-{{ 'success' if doc.status in ['APPROVED','ISSUED','COMPLETED'] else ('danger' if doc.status in ['REJECTED','REJECTED_ESCALATED'] else ('warning' if doc.status == 'CHANGE_REQUESTED' else 'secondary')) }}">{{ statuses[doc.status] }}</span><div class="small mt-1">رد الموظف: {{ employee_response_labels.get(doc.employee_response, 'لم يقرر بعد') }}</div></td>
   <td class="document-report-status">
@@ -52,7 +34,7 @@
       {% set committee_report = doc.cycle.committee_report %}
       {% if committee_report %}
         <span class="badge text-bg-{{ 'success' if committee_report.status in ['READY_TO_CLOSE','APPROVED','CLOSED'] else ('primary' if committee_report.status == 'SUBMITTED' else ('warning' if committee_report.status == 'RETURNED' else 'secondary')) }}">{{ report_statuses.get(committee_report.status, committee_report.status) }}</span>
-        {% if can_read_committee_report %}<div class="d-flex flex-wrap gap-1 mt-2"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.asset_committee_report', cycle_id=doc.cycle.id) }}">فتح التقرير</a><a class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener" href="{{ url_for('portal.asset_committee_report_print', cycle_id=doc.cycle.id) }}">قراءة التقرير</a></div>{% else %}<div class="small text-muted mt-2">قراءة التقرير الكامل متاحة للجنة الجرد والأمين العام.</div>{% endif %}
+        {% if can_read_committee_report %}<div class="d-flex flex-wrap gap-1 mt-2"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.asset_committee_report', cycle_id=doc.cycle.id) }}">فتح التقرير</a><a class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener" href="{{ url_for('portal.asset_committee_report_print', cycle_id=doc.cycle.id, employee_id=doc.employee_id) }}#employee-{{ doc.employee_id }}">قراءة التقرير للموظف</a></div>{% else %}<div class="small text-muted mt-2">قراءة التقرير الكامل متاحة للجنة الجرد والأمين العام.</div>{% endif %}
       {% else %}<span class="text-muted">لم يُنشأ تقرير اللجنة بعد.</span>{% endif %}
     {% else %}<span class="text-muted">لا يرتبط بدورة جرد.</span>{% endif %}
   </td>

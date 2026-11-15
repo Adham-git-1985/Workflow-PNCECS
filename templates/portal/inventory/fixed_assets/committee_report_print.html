@@ -67,9 +67,10 @@
 
 <div class="official-report" id="committeeReport">
   <div class="no-print d-flex flex-wrap justify-content-end gap-2 mb-3">
+    {% if selected_employee_id %}<a class="btn btn-outline-dark" href="{{ url_for('portal.asset_committee_report_print', cycle_id=cycle.id) }}">عرض تقرير جميع الموظفين</a>{% endif %}
     <button class="btn btn-outline-primary" type="button" onclick="window.print()">طباعة / حفظ PDF</button>
-    <a class="btn btn-outline-success" href="{{ url_for('portal.asset_committee_report_excel', cycle_id=cycle.id) }}">تنزيل Excel</a>
-    <a class="btn btn-outline-success" href="{{ url_for('portal.asset_committee_report_pdf', cycle_id=cycle.id) }}">تنزيل PDF الرسمي</a>
+    <a class="btn btn-outline-success" href="{{ url_for('portal.asset_committee_report_excel', cycle_id=cycle.id, employee_id=selected_employee_id) }}">تنزيل Excel</a>
+    <a class="btn btn-outline-success" href="{{ url_for('portal.asset_committee_report_pdf', cycle_id=cycle.id, employee_id=selected_employee_id) }}">تنزيل PDF الرسمي</a>
   </div>
 
   {% if report.header_filename %}<div class="text-center mb-3"><img src="{{ url_for('portal.asset_committee_report_header', cycle_id=cycle.id) }}" alt="الترويسة" style="max-width:100%;max-height:130px;object-fit:contain"></div>{% endif %}
@@ -87,7 +88,7 @@
         <button class="btn btn-sm btn-outline-secondary" id="resetReportFilters" type="button">تصفير الفلاتر</button>
       </div>
       <div class="row g-2">
-        <div class="col-md-3"><label class="form-label" for="employeeFilter">الموظف / صاحب العهدة</label><select class="form-select" id="employeeFilter"><option value="">كل الموظفين</option>{% for employee in employees %}<option value="{{ employee.id }}">{{ employee.full_name }}</option>{% endfor %}</select></div>
+        <div class="col-md-3"><label class="form-label" for="employeeFilter">الموظف / صاحب العهدة</label><select class="form-select" id="employeeFilter">{% if not selected_employee_id %}<option value="">كل الموظفين</option>{% endif %}{% for employee in employees %}<option value="{{ employee.id }}" {% if selected_employee_id == employee.id %}selected{% endif %}>{{ employee.full_name }}</option>{% endfor %}</select></div>
         <div class="col-md-3"><label class="form-label" for="custodySearch">بحث في العهدة</label><input class="form-control" id="custodySearch" type="search" placeholder="رقم الأصل، الاسم، الموقع، التسلسلي"></div>
         <div class="col-md-2"><label class="form-label" for="responseFilter">رد الموظف</label><select class="form-select" id="responseFilter"><option value="">كل الردود</option>{% for key, label in employee_response_labels.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
         <div class="col-md-2"><label class="form-label" for="documentStatusFilter">حالة المستند</label><select class="form-select" id="documentStatusFilter"><option value="">كل الحالات</option>{% for key, label in statuses.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
