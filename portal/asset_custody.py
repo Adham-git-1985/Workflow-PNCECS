@@ -32,7 +32,7 @@ from services.asset_custody import (COMMITTEE_REPORT_STATUSES, EMPLOYEE_RESPONSE
                                     inventory_documents_for_cycle, issue_document, pending_for_asset,
                                     review_document, review_inventory_document,
                                     revise_inventory_document, save_manual_previous_lines,
-                                    send_cycle_reports, submit_committee_report,
+                                    cycle_assignment_groups, send_cycle_reports, submit_committee_report,
                                     _mark_committee_report_dirty, _notify_secretary_general)
 from services.fixed_asset_reports import build_committee_report_pdf, build_committee_variance_index
 from services.fixed_asset_inventory import ASSET_CONDITIONS, ASSET_LIFECYCLE_STATUSES, INVENTORY_RESULT_LABELS
@@ -180,6 +180,52 @@ def asset_documents():
         documents=query.order_by(InvAssetDocument.id.desc()).paginate(per_page=30),
         assets=assets, kinds=KINDS, statuses=STATUSES, manager=manager,
         committee_cycle_ids=committee_cycle_ids, selected_status=status)
+
+
+def _assignment_cycles_for_current_user():
+    manager = current_user.has_perm(STORE_MANAGE)
+    cycles = (
+        InvFixedAssetCycle.query
+        .filter(
+            InvFixedAssetCycle.status.in_(["ACTIVE", "CLOSED"]),
+            InvFixedAssetCycle.finalized_at.is_(None),
+        )
+        .order_by(InvFixedAssetCycle.inventory_date.desc(), InvFixedAssetCycle.id.desc())
+        .limit(100)
+        .all()
+    )
+    if manager:
+        return cycles
+    allowed = [cycle for cycle in cycles if _can_committee_act(cycle)]
+    if not allowed:
+        abort(403)
+    return allowed
+
+
+@portal_bp.route("/inventory/fixed-assets/assignments")
+@login_required
+def asset_assignments():
+    """Show open inventory cycles and provide one-click bulk custody assignment."""
+    rows = []
+    for cycle in _assignment_cycles_for_current_user():
+        groups = cycle_assignment_groups(cycle)
+        existing_documents = InvAssetDocument.query.filter(
+            InvAssetDocument.cycle_id == cycle.id,
+            InvAssetDocument.kind == "INVENTORY",
+            InvAssetDocument.status != "CANCELLED",
+        ).count()
+        rows.append({
+            "cycle": cycle,
+            "asset_count": len(cycle.entries),
+            "employee_count": len(groups),
+            "new_asset_count": sum(len(entries) for entries in groups.values()),
+            "document_count": existing_documents,
+        })
+    return render_template(
+        "portal/inventory/fixed_assets/assignments.html",
+        assignment_rows=rows,
+        manager=current_user.has_perm(STORE_MANAGE),
+    )
 
 
 @portal_bp.route("/inventory/fixed-assets/cycles/<int:cycle_id>/send-reports", methods=["POST"])

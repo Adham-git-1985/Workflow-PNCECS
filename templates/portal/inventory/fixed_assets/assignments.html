@@ -1,0 +1,55 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div>
+    <h4 class="mb-1">إسناد العهدة</h4>
+    <p class="text-muted mb-0">إسناد أصول دورة الجرد إلى الموظفين دفعة واحدة وإرسالها للتوقيع والاعتماد.</p>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_cycles') }}">كل دورات الجرد</a>
+</div>
+
+<div class="alert alert-info">
+  <strong>الإسناد الجماعي:</strong>
+  سيجمع النظام الأصول حسب الموظف، وينشئ مستند عهدة واحدًا لكل موظف، ثم يرسل له إشعارًا ليوافق أو يطلب التعديل.
+  الأصول التي سبق إرسالها لا تُكرر، ويمكن إعادة التنفيذ بعد إضافة أصول جديدة.
+</div>
+
+{% for row in assignment_rows %}
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
+      <div>
+        <h5 class="mb-1">{{ row.cycle.name }}</h5>
+        <div class="text-muted">{{ row.cycle.code }} · {{ row.cycle.inventory_date }} · {{ row.cycle.scope_label }}</div>
+      </div>
+      <span class="badge text-bg-{{ 'primary' if row.cycle.status == 'ACTIVE' else 'warning' }}">
+        {{ 'دورة نشطة' if row.cycle.status == 'ACTIVE' else 'بانتظار الإغلاق' }}
+      </span>
+    </div>
+
+    <div class="row g-2 my-3">
+      <div class="col-6 col-lg-3"><div class="border rounded p-2"><div class="small text-muted">إجمالي الأصول</div><strong>{{ row.asset_count }}</strong></div></div>
+      <div class="col-6 col-lg-3"><div class="border rounded p-2"><div class="small text-muted">الموظفون الجدد</div><strong>{{ row.employee_count }}</strong></div></div>
+      <div class="col-6 col-lg-3"><div class="border rounded p-2"><div class="small text-muted">أصول جاهزة للإسناد</div><strong>{{ row.new_asset_count }}</strong></div></div>
+      <div class="col-6 col-lg-3"><div class="border rounded p-2"><div class="small text-muted">مستندات مرسلة سابقًا</div><strong>{{ row.document_count }}</strong></div></div>
+    </div>
+
+    <div class="d-flex flex-wrap gap-2">
+      {% if row.new_asset_count %}
+      <form method="post" action="{{ url_for('portal.asset_send_reports', cycle_id=row.cycle.id) }}" onsubmit="return confirm('هل تريد إسناد العهدة لكل الموظفين في هذه الدورة الآن؟');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-success"><i class="bi bi-person-check"></i> إسناد العهدة للجميع مرة واحدة</button>
+      </form>
+      {% else %}
+      <span class="btn btn-outline-secondary disabled">لا توجد أصول جديدة للإسناد</span>
+      {% endif %}
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.asset_documents', cycle_id=row.cycle.id) }}">عرض عهدي وتقارير الاعتماد</a>
+      <a class="btn btn-outline-dark" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=row.cycle.id) }}">فتح الدورة</a>
+    </div>
+  </div>
+</div>
+{% else %}
+<div class="card shadow-sm"><div class="card-body text-center text-muted py-5">لا توجد دورة جرد مفتوحة متاحة للإسناد حاليًا.</div></div>
+{% endfor %}
+{% endblock %}

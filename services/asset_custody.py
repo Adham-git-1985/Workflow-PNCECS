@@ -158,21 +158,71 @@ def _new_document(kind, employee_id, actor_id, assets, *, cycle=None, reason=Non
     return doc
 
 
+def cycle_assignment_groups(cycle):
+    """Return the not-yet-assigned inventory entries grouped by employee.
+
+    A cycle may be sent more than once after the committee adds assets.  The
+    old implementation skipped an entire employee when that employee had any
+    previous document, which meant newly added assets were never sent.  Work
+    at asset level instead, while preserving the existing document history and
+    ignoring lines explicitly removed by the committee.
+    """
+    documents = (
+        InvAssetDocument.query
+        .options(selectinload(InvAssetDocument.lines))
+        .filter(
+            InvAssetDocument.cycle_id == cycle.id,
+            InvAssetDocument.kind == "INVENTORY",
+            InvAssetDocument.status != "CANCELLED",
+        )
+        .all()
+    )
+    already_documented_asset_ids = {
+        line.asset_id
+        for document in documents
+        for line in document.lines
+        if (line.snapshot or {}).get("included", True) is not False
+    }
+    entry_asset_ids = {entry.asset_id for entry in cycle.entries}
+    reserved_asset_ids = set()
+    if entry_asset_ids:
+        reserved_lines = (
+            InvAssetDocumentLine.query
+            .join(InvAssetDocument)
+            .filter(
+                InvAssetDocumentLine.asset_id.in_(entry_asset_ids),
+                InvAssetDocument.status.in_(["PENDING", "APPROVED", "CHANGE_REQUESTED"]),
+            )
+            .all()
+        )
+        reserved_asset_ids = {
+            line.asset_id
+            for line in reserved_lines
+            if (line.snapshot or {}).get("included", True) is not False
+        }
+
+    groups = {}
+    for entry in cycle.entries:
+        employee_id = (
+            entry.observed_custodian_user_id
+            if entry.scanned_at
+            else entry.expected_custodian_user_id
+        )
+        if (
+            employee_id
+            and entry.asset_id not in already_documented_asset_ids
+            and entry.asset_id not in reserved_asset_ids
+        ):
+            groups.setdefault(employee_id, []).append(entry)
+    return groups
+
+
 def send_cycle_reports(cycle, actor_id):
     if cycle.status not in {"ACTIVE", "CLOSED"}:
         raise ValueError("دورة الجرد غير متاحة لإسناد العهد.")
     if cycle.finalized_at is not None:
         raise ValueError("اعتمد الأمين العام تقرير هذه الدورة؛ استخدم دورة الجرد الجديدة.")
-    sent_employee_ids = {row.employee_id for row in InvAssetDocument.query.filter(
-        InvAssetDocument.cycle_id == cycle.id,
-        InvAssetDocument.kind == "INVENTORY",
-        InvAssetDocument.status != "CANCELLED",
-    ).all()}
-    groups = {}
-    for entry in cycle.entries:
-        employee_id = entry.observed_custodian_user_id if entry.scanned_at else entry.expected_custodian_user_id
-        if employee_id and employee_id not in sent_employee_ids:
-            groups.setdefault(employee_id, []).append(entry)
+    groups = cycle_assignment_groups(cycle)
     if not groups:
         raise ValueError("لا توجد تقارير جديدة للإرسال؛ راجع التقارير القائمة أو ربط البنود بالموظفين.")
     return [_new_document("INVENTORY", employee_id, actor_id, [e.asset for e in entries],

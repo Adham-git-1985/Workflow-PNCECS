@@ -181,6 +181,37 @@ class AssetCustodyTests(unittest.TestCase):
         self.assertEqual(asset.lifecycle_status, "ACTIVE")
         self.assertEqual(doc.lines[0].snapshot["result"], "MISSING")
 
+    def test_bulk_assignment_page_and_new_asset_for_existing_employee(self):
+        asset = self._create_asset("FA-BULK-001")
+        cycle = self.cycle(asset)
+
+        page = self.client.get("/portal/inventory/fixed-assets/assignments")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("إسناد العهدة للجميع مرة واحدة", page.get_data(as_text=True))
+
+        first = send_cycle_reports(cycle, self.admin.id)
+        db.session.commit()
+        self.assertEqual(len(first), 1)
+        self.assertEqual(len(first[0].lines), 1)
+
+        new_asset = self._create_asset("FA-BULK-002")
+        cycle.entries.append(InvFixedAssetEntry(
+            asset=new_asset,
+            expected_warehouse_id=self.warehouse.id,
+            expected_custodian_user_id=self.employee.id,
+            expected_condition="GOOD",
+            expected_lifecycle_status="ACTIVE",
+            result_status="MATCHED",
+        ))
+        db.session.commit()
+
+        second = send_cycle_reports(cycle, self.admin.id)
+        db.session.commit()
+        self.assertEqual(len(second), 1)
+        self.assertEqual(len(second[0].lines), 1)
+        self.assertEqual(second[0].lines[0].asset_id, new_asset.id)
+        self.assertEqual(InvAssetDocument.query.count(), 2)
+
     def test_reports_freeze_cycle_and_duplicate_send_is_rejected(self):
         cycle = self.cycle(self._create_asset())
         send_cycle_reports(cycle, self.admin.id)

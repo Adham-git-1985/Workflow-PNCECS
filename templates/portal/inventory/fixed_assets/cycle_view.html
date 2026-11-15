@@ -5,7 +5,7 @@
 {% if can_scan and cycle.status == 'ACTIVE' %}<a class="btn btn-primary" href="{{ url_for('portal.fixed_asset_cycle_scan', cycle_id=cycle.id) }}">القراءة بالهاتف</a>{% endif %}
 {% if can_manage and cycle.status == 'ACTIVE' %}<a class="btn btn-success" href="{{ url_for('portal.fixed_asset_mobile_settings') }}"><i class="bi bi-phone"></i> إدارة أجهزة الهاتف</a>{% endif %}
 {% if can_manage or can_scan %}<a class="btn btn-outline-primary" href="{{ url_for('portal.asset_documents', cycle_id=cycle.id) }}">تقارير الموظفين والعهد</a><a class="btn btn-outline-dark" href="{{ url_for('portal.asset_committee_report', cycle_id=cycle.id) }}">تقرير لجنة الجرد</a>
-{% if (can_manage or can_scan) and cycle.status in ['ACTIVE','CLOSED'] and not cycle.finalized_at %}<form method="post" action="{{ url_for('portal.asset_send_reports', cycle_id=cycle.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-success">إسناد العهد للموظفين</button></form>{% endif %}{% endif %}
+{% if (can_manage or can_scan) and cycle.status in ['ACTIVE','CLOSED'] and not cycle.finalized_at %}<form method="post" action="{{ url_for('portal.asset_send_reports', cycle_id=cycle.id) }}" onsubmit="return confirm('هل تريد إسناد العهدة لكل الموظفين في هذه الدورة الآن؟');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-success">إسناد العهدة للجميع مرة واحدة</button></form>{% endif %}{% endif %}
 </div>
 <p class="text-muted">تُرسل العهد للموظفين للتوقيع، ويظهر كل تعديل في تقرير اللجنة. يعتمد الأمين العام التقرير ثم تعيد اللجنة الدورة للإغلاق النهائي؛ بعد الإغلاق لا يسمح بالتعديل.</p>
 {% set total = stats.get('TOTAL', 0) %}
