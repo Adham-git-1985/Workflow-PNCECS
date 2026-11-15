@@ -1,8 +1,10 @@
 import io
 import unittest
+from pathlib import Path
 
 from flask import g
 from openpyxl import load_workbook
+from PIL import Image
 
 from extensions import db
 from models import (
@@ -11,6 +13,9 @@ from models import (
     InvFixedAssetCycleMember,
     InvFixedAssetEntry,
     InvFixedAssetPreviousLine,
+    InvItem,
+    InvItemCategory,
+    InvRoom,
     User,
 )
 from services.asset_custody import (
@@ -163,6 +168,8 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         preview = self.client.get(f"{report_url}/print")
         self.assertEqual(preview.status_code, 200)
         self.assertIn("تقرير الفروقات", preview.get_data(as_text=True))
+        self.assertIn("بحث متقدم داخل التقرير", preview.get_data(as_text=True))
+        self.assertIn("فلتر الفروقات", preview.get_data(as_text=True))
         response = self.client.post(report_url, data={"action": "submit", "summary": "ملخص اللجنة"})
         self.assertEqual(response.status_code, 302)
 
@@ -219,6 +226,63 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         previous = InvFixedAssetPreviousLine.query.one()
         self.assertEqual(previous.employee_id, self.employee.id)
         self.assertEqual(previous.snapshot["location"], "مكتب قديم")
+        preview = self.client.get(f"{report_url}/print")
+        self.assertEqual(preview.status_code, 200)
+        self.assertIn("تفاصيل الفروقات", preview.get_data(as_text=True))
+        self.assertIn("الرقم التسلسلي", preview.get_data(as_text=True))
+
+    def test_document_and_committee_report_show_complete_asset_details(self):
+        cycle, asset, doc = self.send_one()
+        category = InvItemCategory(name="أجهزة مكتبية")
+        item = InvItem(name="حاسوب محمول", code="IT-2026", category=category)
+        room = InvRoom(name="غرفة الاجتماعات", code="R-12")
+        asset.serial_number = "SN-REPORT-2026"
+        asset.description = "جهاز محمول مع حقيبة وملحقات"
+        asset.category = category
+        asset.item = item
+        asset.room = room
+        asset.image_filename = "committee-report-asset.png"
+        db.session.add_all([category, item, room])
+        db.session.commit()
+        image_path = Path(self.app.instance_path) / "uploads" / "fixed_assets" / asset.image_filename
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (6, 6), (32, 112, 160)).save(image_path, format="PNG")
+
+        self.login(self.employee)
+        document_page = self.client.get(f"/portal/inventory/fixed-assets/documents/{doc.id}")
+        document_text = document_page.get_data(as_text=True)
+        self.assertEqual(document_page.status_code, 200)
+        self.assertIn("SN-REPORT-2026", document_text)
+        self.assertIn("صنف المستودع", document_text)
+        self.assertIn("حاسوب محمول", document_text)
+        self.assertIn("غرفة الاجتماعات", document_text)
+        self.assertIn("جهاز محمول مع حقيبة وملحقات", document_text)
+        self.assertEqual(
+            self.client.get(f"/portal/inventory/fixed-assets/assets/{asset.id}/image").status_code,
+            200,
+        )
+
+        self.login(self.admin)
+        report_url = f"/portal/inventory/fixed-assets/cycles/{cycle.id}/committee-report"
+        self.assertEqual(self.client.get(report_url).status_code, 200)
+        preview = self.client.get(f"/portal/inventory/fixed-assets/cycles/{cycle.id}/committee-report/print")
+        preview_text = preview.get_data(as_text=True)
+        self.assertEqual(preview.status_code, 200)
+        for value in ("SN-REPORT-2026", "حاسوب محمول", "أجهزة مكتبية", "غرفة الاجتماعات", "جهاز محمول مع حقيبة وملحقات"):
+            self.assertIn(value, preview_text)
+        workbook = load_workbook(
+            io.BytesIO(self.client.get(f"/portal/inventory/fixed-assets/cycles/{cycle.id}/committee-report.xlsx").data),
+            read_only=True,
+        )
+        custody_sheet = workbook["العهد والأصول"]
+        header = next(custody_sheet.iter_rows(values_only=True))
+        self.assertIn("صنف المستودع", header)
+        self.assertIn("الوصف", header)
+        rows = list(custody_sheet.iter_rows(values_only=True))
+        self.assertIn("SN-REPORT-2026", [row[9] for row in rows[1:]])
+        pdf = self.client.get(f"/portal/inventory/fixed-assets/cycles/{cycle.id}/committee-report.pdf")
+        self.assertEqual(pdf.status_code, 200)
+        self.assertTrue(pdf.data.startswith(b"%PDF"))
 
     def test_open_cycle_can_send_custody_and_report_to_secretary(self):
         asset = self._create_asset("FA-OPEN-001")

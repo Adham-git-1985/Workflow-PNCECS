@@ -606,6 +606,18 @@ def _require_asset_access(asset):
     member = InvFixedAssetCycleMember.query.join(InvFixedAssetCycle).filter(InvFixedAssetCycleMember.user_id == current_user.id, InvFixedAssetCycle.status == "ACTIVE").first()
     if member:
         return  # Committee members can identify unexpected assets during field scans.
+    assigned_line = (
+        InvAssetDocumentLine.query
+        .join(InvAssetDocument)
+        .filter(
+            InvAssetDocumentLine.asset_id == asset.id,
+            InvAssetDocument.employee_id == current_user.id,
+            InvAssetDocument.status != "CANCELLED",
+        )
+        .first()
+    )
+    if assigned_line:
+        return  # Employees may see the photo included in their own custody document.
     abort(403)
 
 

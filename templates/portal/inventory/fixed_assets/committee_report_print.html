@@ -1,22 +1,77 @@
 {% extends "portal/inventory/base.html" %}
 {% block inv_content %}
 <style>
-  .official-report { max-width: 1100px; margin:auto; }
-  .employee-report { page-break-before: always; break-before: page; padding-top: 8px; }
-  .employee-report:first-of-type { page-break-before: auto; break-before: auto; }
+  .official-report { max-width: 1180px; margin: auto; }
+  .report-filters { position: sticky; top: .5rem; z-index: 10; background: #fff; }
+  .report-filters .form-label { font-size: .82rem; font-weight: 700; }
+  .report-summary { background: #f8fafc; border: 1px solid #d9e2ec; }
+  .employee-report { margin-top: 1.5rem; padding: 1.25rem; border: 1px solid #d9e2ec; border-radius: .6rem; background: #fff; }
+  .employee-report h3 { color: #17365d; }
   .report-table { font-size: .86rem; }
-  .report-table th { background:#17365d; color:#fff; }
+  .report-table th { background: #17365d; color: #fff; white-space: nowrap; }
+  .report-table td, .report-table th { vertical-align: top; }
   .report-table tr { break-inside: avoid; }
+  .committee-asset-card { border: 1px solid #d9e2ec; border-radius: .55rem; padding: .85rem; margin-bottom: .75rem; background: #fff; break-inside: avoid; }
+  .committee-asset-card.is-filtered { display: none; }
+  .committee-asset-heading { display: flex; align-items: flex-start; gap: .65rem; border-bottom: 1px solid #e8edf2; padding-bottom: .55rem; margin-bottom: .65rem; }
+  .committee-asset-number { min-width: 1.8rem; height: 1.8rem; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: #17365d; color: #fff; font-weight: 700; }
+  .committee-asset-name { font-size: 1rem; font-weight: 700; overflow-wrap: anywhere; }
+  .committee-asset-tag { color: #52606d; font-size: .8rem; }
+  .committee-asset-body { display: flex; gap: .8rem; align-items: flex-start; }
+  .committee-asset-photo { flex: 0 0 78px; width: 78px; height: 78px; object-fit: cover; border: 1px solid #d9e2ec; border-radius: .4rem; }
+  .committee-detail-grid { flex: 1 1 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .45rem .75rem; }
+  .committee-detail-field { min-width: 0; }
+  .committee-detail-field .label { display: block; color: #52606d; font-size: .72rem; font-weight: 700; }
+  .committee-detail-field .value { overflow-wrap: anywhere; white-space: normal; }
+  .committee-detail-field.description { grid-column: 1 / -1; }
+  .committee-detail-field.description .value { white-space: pre-wrap; }
+  .variance-value { line-height: 1.65; }
+  .variance-value .description { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .variance-photo { width: 48px; height: 48px; object-fit: cover; border-radius: .3rem; border: 1px solid #d9e2ec; vertical-align: middle; margin-inline-start: .35rem; }
+  .custody-empty-filtered, .variance-empty-filtered { display: block; }
+  .variance-row.has-difference { background: #fff9e6; }
+  .change-table { font-size: .8rem; margin-top: .35rem; }
+  .change-table th { background: #6b4f00; }
+  .change-table td, .change-table th { padding: .35rem .45rem; }
+  .difference-count { color: #8a6500; font-weight: 700; }
+  .report-audit-section { margin-top: 1.5rem; }
   @media print {
-    nav, aside, footer, .no-print { display:none!important; }
-    .container, .container-fluid { max-width:100%!important; width:100%!important; }
-    .official-report { max-width:none; }
-    .employee-report { page-break-before: always; }
-    .employee-report:first-of-type { page-break-before: auto; }
+    nav, aside, footer, .no-print, .report-filters { display: none !important; }
+    .container, .container-fluid { max-width: 100% !important; width: 100% !important; }
+    .official-report { max-width: none; }
+    .employee-report { page-break-before: always; break-before: page; border: 0; padding: 0; margin-top: 0; }
+    .employee-report.first-employee { page-break-before: auto; break-before: auto; }
+    .report-audit-section { page-break-before: always; break-before: page; }
+    .report-table { font-size: .78rem; }
+    .committee-asset-card { border-color: #aeb8c2; }
   }
 </style>
-<div class="official-report">
-  <div class="no-print d-flex justify-content-end gap-2 mb-3"><button class="btn btn-outline-primary" onclick="window.print()">طباعة / حفظ PDF</button><a class="btn btn-outline-success" href="{{ url_for('portal.asset_committee_report_pdf', cycle_id=cycle.id) }}">تنزيل PDF الرسمي</a></div>
+
+{% macro variance_details(values, show_image=false) -%}
+  <div class="variance-value">
+    {% if show_image and values.get('asset_id') and values.get('image_filename') %}<img class="variance-photo" src="{{ url_for('portal.fixed_asset_image', asset_id=values.get('asset_id')) }}" alt="صورة الأصل">{% endif %}
+    <div><strong>الاسم:</strong> {{ values.get('name') or '-' }}</div>
+    <div><strong>الرقم التسلسلي:</strong> {{ values.get('serial') or '-' }}</div>
+    <div><strong>صنف المستودع:</strong> {{ values.get('item') or '-' }}</div>
+    <div><strong>التصنيف:</strong> {{ values.get('category') or '-' }}</div>
+    <div><strong>المستودع:</strong> {{ values.get('warehouse') or '-' }}</div>
+    <div><strong>الغرفة:</strong> {{ values.get('room') or '-' }}</div>
+    <div><strong>الموقع:</strong> {{ values.get('location') or '-' }}</div>
+    <div><strong>صاحب العهدة:</strong> {{ values.get('custodian') or '-' }}</div>
+    <div><strong>الحالة:</strong> {{ condition_labels.get(values.get('condition'), values.get('condition') or '-') }}</div>
+    <div><strong>الوضع:</strong> {{ lifecycle_labels.get(values.get('lifecycle'), values.get('lifecycle') or '-') }}</div>
+    <div><strong>نتيجة الجرد:</strong> {{ result_labels.get(values.get('result'), values.get('result') or '-') }}</div>
+    <div class="description"><strong>الوصف:</strong> {{ values.get('description') or '-' }}</div>
+  </div>
+{%- endmacro %}
+
+<div class="official-report" id="committeeReport">
+  <div class="no-print d-flex flex-wrap justify-content-end gap-2 mb-3">
+    <button class="btn btn-outline-primary" type="button" onclick="window.print()">طباعة / حفظ PDF</button>
+    <a class="btn btn-outline-success" href="{{ url_for('portal.asset_committee_report_excel', cycle_id=cycle.id) }}">تنزيل Excel</a>
+    <a class="btn btn-outline-success" href="{{ url_for('portal.asset_committee_report_pdf', cycle_id=cycle.id) }}">تنزيل PDF الرسمي</a>
+  </div>
+
   {% if report.header_filename %}<div class="text-center mb-3"><img src="{{ url_for('portal.asset_committee_report_header', cycle_id=cycle.id) }}" alt="الترويسة" style="max-width:100%;max-height:130px;object-fit:contain"></div>{% endif %}
   <h2 class="text-center">تقرير جرد الأصول الثابتة للموظفين</h2>
   <p class="text-center">السنة / التاريخ: {{ cycle.inventory_date }} · دورة الجرد: {{ cycle.code }}</p>
@@ -25,35 +80,209 @@
   {% if report.points %}<h5>بنود التقرير</h5><div class="mb-3" style="white-space:pre-wrap">{{ report.points }}</div>{% endif %}
   {% if report.summary %}<h5>ملخص التقرير</h5><div class="mb-3" style="white-space:pre-wrap">{{ report.summary }}</div>{% endif %}
 
+  <div class="no-print report-filters card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+        <div><h5 class="mb-1">بحث متقدم داخل التقرير</h5><div class="small text-muted">يمكنك تصفية العهدة والفروقات معًا، ثم طباعة النتيجة الظاهرة فقط.</div></div>
+        <button class="btn btn-sm btn-outline-secondary" id="resetReportFilters" type="button">تصفير الفلاتر</button>
+      </div>
+      <div class="row g-2">
+        <div class="col-md-3"><label class="form-label" for="employeeFilter">الموظف / صاحب العهدة</label><select class="form-select" id="employeeFilter"><option value="">كل الموظفين</option>{% for employee in employees %}<option value="{{ employee.id }}">{{ employee.full_name }}</option>{% endfor %}</select></div>
+        <div class="col-md-3"><label class="form-label" for="custodySearch">بحث في العهدة</label><input class="form-control" id="custodySearch" type="search" placeholder="رقم الأصل، الاسم، الموقع، التسلسلي"></div>
+        <div class="col-md-2"><label class="form-label" for="responseFilter">رد الموظف</label><select class="form-select" id="responseFilter"><option value="">كل الردود</option>{% for key, label in employee_response_labels.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
+        <div class="col-md-2"><label class="form-label" for="documentStatusFilter">حالة المستند</label><select class="form-select" id="documentStatusFilter"><option value="">كل الحالات</option>{% for key, label in statuses.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
+        <div class="col-md-2"><label class="form-label" for="resultFilter">نتيجة الجرد</label><select class="form-select" id="resultFilter"><option value="">كل النتائج</option>{% for key, label in result_labels.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
+        <div class="col-md-3"><label class="form-label" for="varianceFilter">فلتر الفروقات</label><select class="form-select" id="varianceFilter"><option value="">كل البنود</option><option value="changed">الأصول التي عليها فروقات</option><option value="unchanged">الأصول دون فروقات</option></select></div>
+        <div class="col-md-5"><label class="form-label" for="varianceSearch">بحث داخل الفروقات</label><input class="form-control" id="varianceSearch" type="search" placeholder="رقم الأصل أو الحقل أو القيمة السابقة/الحالية"></div>
+      </div>
+      <div class="report-summary rounded p-2 mt-3 small" id="reportFilterSummary" aria-live="polite"></div>
+    </div>
+  </div>
+
   {% for employee in employees %}
     {% set employee_docs = documents|selectattr('employee_id', 'equalto', employee.id)|list %}
-    {% set current_line_state = namespace(count=0) %}{% for doc in employee_docs %}{% for line in doc.lines %}{% if line.snapshot.get('included', True) %}{% set current_line_state.count = current_line_state.count + 1 %}{% endif %}{% endfor %}{% endfor %}
-    <section class="employee-report" id="employee-{{ employee.id }}">
-      <h3 class="text-center">الموظف: {{ employee.full_name }}</h3>
-      <p class="text-center">قرار الموظف: {% for doc in employee_docs %}{{ employee_response_labels.get(doc.employee_response, 'لم يقرر بعد') }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
-      <p class="text-center">حالة المستند: {% for doc in employee_docs %}{{ statuses.get(doc.status, doc.status) }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+    {% set current_line_state = namespace(count=0) %}
+    {% set response_filter_text = namespace(value='') %}
+    {% set status_filter_text = namespace(value='') %}
+    {% for doc in employee_docs %}
+      {% set response_filter_text.value = response_filter_text.value ~ ' ' ~ (doc.employee_response or '') %}
+      {% set status_filter_text.value = status_filter_text.value ~ ' ' ~ (doc.status or '') %}
+      {% for line in doc.lines %}{% if line.snapshot.get('included', True) %}{% set current_line_state.count = current_line_state.count + 1 %}{% endif %}{% endfor %}
+    {% endfor %}
+    {% set variances = variance_by_employee.get(employee.id, []) %}
+    {% set variance_state = namespace(total=0, changed=0) %}
+    {% for variance in variances %}
+      {% set variance_state.total = variance_state.total + 1 %}
+      {% if variance.has_differences %}{% set variance_state.changed = variance_state.changed + 1 %}{% endif %}
+    {% endfor %}
+    <section class="employee-report {% if loop.first %}first-employee{% endif %}" id="employee-{{ employee.id }}" data-employee-id="{{ employee.id }}" data-employee-name="{{ employee.full_name|lower }}" data-response="{{ response_filter_text.value|lower }}" data-status="{{ status_filter_text.value|lower }}">
+      <div class="d-flex flex-wrap align-items-start justify-content-between gap-2 mb-3">
+        <div><h3 class="mb-1">الموظف: {{ employee.full_name }}</h3><div class="small text-muted">قرار الموظف: {% for doc in employee_docs %}{{ employee_response_labels.get(doc.employee_response, 'لم يقرر بعد') }}{% if not loop.last %} · {% endif %}{% endfor %}</div></div>
+        <div class="text-end small"><div>العهدة الظاهرة: <strong class="custody-count">{{ current_line_state.count }}</strong></div><div>الفروقات الفعلية: <strong class="difference-count">{{ variance_state.changed }}</strong> من {{ variance_state.total }}</div></div>
+      </div>
+      <p class="small text-center mb-3">حالة المستند: {% for doc in employee_docs %}{{ statuses.get(doc.status, doc.status) }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+
       <h5>بنود العهدة حسب الجرد</h5>
-      <div class="table-responsive"><table class="table table-bordered report-table"><thead><tr><th>م</th><th>الأصل</th><th>التسلسلي</th><th>الموقع</th><th>الحالة / الوضع</th><th>نتيجة الجرد</th></tr></thead><tbody>
-      {% set line_number = namespace(value=0) %}{% for doc in employee_docs %}{% for line in doc.lines %}{% if line.snapshot.get('included', True) %}{% set line_number.value = line_number.value + 1 %}{% set snap = line.snapshot %}<tr><td>{{ line_number.value }}</td><td><strong>{{ snap.get('tag') }}</strong><br>{{ snap.get('name') }}</td><td>{{ snap.get('serial') or '-' }}</td><td>{{ snap.get('location') or '-' }}</td><td>{{ condition_labels.get(snap.get('condition'), snap.get('condition') or '-') }}<br>{{ lifecycle_labels.get(snap.get('target_lifecycle'), snap.get('target_lifecycle') or '-') }}</td><td>{{ result_labels.get(snap.get('result'), snap.get('result') or '-') }}</td></tr>{% endif %}{% endfor %}{% endfor %}{% if current_line_state.count == 0 %}<tr><td colspan="6">لا توجد بنود.</td></tr>{% endif %}
-      </tbody></table></div>
-      <h5>تقرير الفروقات</h5>
-      <p class="small text-muted">تتم مقارنة بيانات هذه البنود مع {{ cycle.previous_cycle.inventory_date if cycle.previous_cycle else 'البيانات اليدوية للسنة السابقة' }}.</p>
-      {% set variances = variance_by_employee.get(employee.id, []) %}
-      {% if variances %}<div class="table-responsive"><table class="table table-bordered report-table"><thead><tr><th>الأصل</th><th>السنة السابقة</th><th>السنة الحالية</th><th>الفرق والتفاصيل والإجراء</th></tr></thead><tbody>
-      {% for variance in variances %}{% set before = variance.previous %}{% set after = variance.current %}<tr><td><strong>{{ variance.tag }}</strong></td><td>الاسم: {{ before.get('name') or '-' }}<br>التسلسلي: {{ before.get('serial') or '-' }}<br>الموقع: {{ before.get('location') or '-' }}<br>صاحب العهدة: {{ before.get('custodian') or '-' }}<br>الحالة: {{ condition_labels.get(before.get('condition'), before.get('condition') or '-') }}<br>الوضع: {{ lifecycle_labels.get(before.get('lifecycle'), before.get('lifecycle') or '-') }}</td><td>الاسم: {{ after.get('name') or '-' }}<br>التسلسلي: {{ after.get('serial') or '-' }}<br>الموقع: {{ after.get('location') or '-' }}<br>صاحب العهدة: {{ after.get('custodian') or '-' }}<br>الحالة: {{ condition_labels.get(after.get('condition'), after.get('condition') or '-') }}<br>الوضع: {{ lifecycle_labels.get(after.get('lifecycle'), after.get('lifecycle') or '-') }}</td><td><div style="white-space:pre-wrap">{{ variance.differences|join('\n') }}</div></td></tr>{% endfor %}
-      </tbody></table></div>{% else %}<div class="alert alert-light border">لا توجد بيانات سابقة للمقارنة لهذا الموظف.</div>{% endif %}
+      <div class="committee-asset-list">
+      {% set line_number = namespace(value=0) %}
+      {% for doc in employee_docs %}{% for line in doc.lines %}{% if line.snapshot.get('included', True) %}
+        {% set line_number.value = line_number.value + 1 %}
+        {% set snap = line.snapshot %}
+        {% set asset = line.asset %}
+        {% set asset_tag = snap.get('tag') or (asset.asset_tag if asset else '') %}
+        {% set asset_name = snap.get('name') or (asset.name if asset else '') %}
+        {% set serial = snap.get('serial') or (asset.serial_number if asset else '') %}
+        {% set item_label = snap.get('item') or (asset.item.label if asset and asset.item else '') %}
+        {% set category_label = snap.get('category') or (asset.category.name if asset and asset.category else '') %}
+        {% set warehouse_label = snap.get('warehouse') or (asset.warehouse.label if asset and asset.warehouse else '') %}
+        {% set room_label = snap.get('room') or (asset.room.label if asset and asset.room else '') %}
+        {% set location_label = snap.get('location') or (asset.location_label if asset else '') %}
+        {% set description = snap.get('description') or (asset.description if asset else '') %}
+        {% set image_filename = snap.get('image_filename') or (asset.image_filename if asset else '') %}
+        <article class="custody-row committee-asset-card" data-tag="{{ asset_tag }}" data-search="{{ [asset_tag, asset_name, serial, item_label, category_label, warehouse_label, room_label, location_label, description, snap.get('custodian')]|select|join(' ')|lower }}" data-result="{{ snap.get('result') or '' }}">
+          <div class="committee-asset-heading"><span class="committee-asset-number">{{ line_number.value }}</span><div><div class="committee-asset-name">{{ asset_name or '-' }}</div><div class="committee-asset-tag">رقم الأصل: {{ asset_tag or '-' }}</div></div></div>
+          <div class="committee-asset-body">
+            {% if image_filename and asset %}<img class="committee-asset-photo" src="{{ url_for('portal.fixed_asset_image', asset_id=asset.id) }}" alt="صورة {{ asset_name or 'الأصل' }}">{% endif %}
+            <div class="committee-detail-grid">
+              <div class="committee-detail-field"><span class="label">الاسم الكامل</span><span class="value">{{ asset_name or '-' }}</span></div>
+              <div class="committee-detail-field"><span class="label">الرقم التسلسلي</span><span class="value">{{ serial or '-' }}</span></div>
+              <div class="committee-detail-field"><span class="label">صنف المستودع</span><span class="value">{{ item_label or '-' }}</span></div>
+              <div class="committee-detail-field"><span class="label">التصنيف</span><span class="value">{{ category_label or '-' }}</span></div>
+              <div class="committee-detail-field"><span class="label">المستودع</span><span class="value">{{ warehouse_label or '-' }}</span></div>
+              <div class="committee-detail-field"><span class="label">الغرفة</span><span class="value">{{ room_label or '-' }}</span></div>
+              <div class="committee-detail-field"><span class="label">الموقع الكامل</span><span class="value">{{ location_label or '-' }}</span></div>
+              <div class="committee-detail-field"><span class="label">الحالة / الوضع</span><span class="value">{{ condition_labels.get(snap.get('condition'), snap.get('condition') or '-') }} · {{ lifecycle_labels.get(snap.get('target_lifecycle'), snap.get('target_lifecycle') or '-') }}</span></div>
+              <div class="committee-detail-field"><span class="label">نتيجة الجرد</span><span class="value">{{ result_labels.get(snap.get('result'), snap.get('result') or '-') }}</span></div>
+              <div class="committee-detail-field description"><span class="label">الوصف</span><span class="value">{{ description or '-' }}</span></div>
+            </div>
+          </div>
+        </article>
+      {% endif %}{% endfor %}{% endfor %}
+      {% if current_line_state.count == 0 %}<div class="alert alert-light border">لا توجد بنود.</div>{% else %}<div class="custody-empty-filtered d-none alert alert-light border">لا توجد أصول مطابقة لفلاتر العهدة الحالية.</div>{% endif %}
+      </div>
+
+      <h5 class="mt-4">تقرير الفروقات</h5>
+      <p class="small text-muted">تتم مقارنة بيانات هذه البنود مع {{ cycle.previous_cycle.inventory_date if cycle.previous_cycle else 'البيانات اليدوية للسنة السابقة' }}. يعرض الجدول كل حقل تغيّر بقيمته السابقة والحالية.</p>
+      {% if variances %}<div class="table-responsive"><table class="table table-bordered report-table variance-table"><thead><tr><th>الأصل</th><th>السنة السابقة</th><th>السنة الحالية</th><th>تفاصيل الفروقات</th></tr></thead><tbody>
+      {% for variance in variances %}{% set before = variance.previous %}{% set after = variance.current %}<tr class="variance-row {% if variance.has_differences %}has-difference{% endif %}" data-tag="{{ variance.tag }}" data-has-difference="{{ '1' if variance.has_differences else '0' }}" data-search="{{ [variance.tag, before.get('name'), before.get('serial'), before.get('item'), before.get('category'), before.get('room'), before.get('location'), before.get('description'), after.get('name'), after.get('serial'), after.get('item'), after.get('category'), after.get('room'), after.get('location'), after.get('description'), variance.differences|join(' ')]|select|join(' ')|lower }}"><td><strong>{{ variance.tag }}</strong></td><td>{{ variance_details(before) }}</td><td>{{ variance_details(after, true) }}</td><td>{% if variance.has_differences %}<table class="table table-sm table-bordered change-table mb-0"><thead><tr><th>الحقل</th><th>السابق</th><th>الحالي</th></tr></thead><tbody>{% for change in variance.changes %}<tr><td><strong>{{ change.field }}</strong></td><td>{{ change.before }}</td><td><strong>{{ change.after }}</strong></td></tr>{% endfor %}</tbody></table>{% else %}<span class="text-muted">لا توجد فروقات ظاهرة.</span>{% endif %}</td></tr>{% endfor %}
+      <tr class="variance-empty-filtered d-none"><td colspan="4">لا توجد فروقات مطابقة للفلاتر الحالية.</td></tr></tbody></table></div>{% else %}<div class="alert alert-light border">لا توجد بيانات سابقة للمقارنة لهذا الموظف.</div>{% endif %}
       {% for doc in employee_docs %}{% if doc.employee_response_note %}<div class="alert alert-light border"><strong>ملاحظة الموظف:</strong> {{ doc.employee_response_note }}</div>{% endif %}{% endfor %}
-      <h5>سجل إجراءات العهدة</h5>
+      <h5 class="mt-4">سجل إجراءات العهدة</h5>
       <div class="table-responsive"><table class="table table-bordered report-table"><thead><tr><th>التاريخ</th><th>الإجراء</th><th>بواسطة</th><th>الملاحظة</th></tr></thead><tbody>
       {% for doc in employee_docs %}{% for event in doc.events %}<tr><td>{{ event.created_at|local_datetime }}</td><td>{{ event.action }}</td><td>{{ event.actor.full_name if event.actor else '-' }}</td><td>{{ event.note or '-' }}</td></tr>{% endfor %}{% endfor %}
       </tbody></table></div>
     </section>
   {% endfor %}
-  <section class="employee-report">
+
+  <section class="report-audit-section">
     <h3>سجل التقرير</h3>
     <div class="table-responsive"><table class="table table-bordered report-table"><thead><tr><th>التاريخ</th><th>الإجراء</th><th>بواسطة</th><th>الملاحظة</th></tr></thead><tbody>
     {% for audit in report_audits %}<tr><td>{{ audit.created_at|local_datetime }}</td><td>{{ audit.action }}</td><td>{{ audit.user.full_name if audit.user else '-' }}</td><td>{{ audit.note or '-' }}</td></tr>{% else %}<tr><td colspan="4">لا يوجد سجل تقرير بعد.</td></tr>{% endfor %}
     </tbody></table></div>
   </section>
 </div>
+
+<script>
+(() => {
+  const root = document.getElementById('committeeReport');
+  if (!root) return;
+  const controls = {
+    employee: document.getElementById('employeeFilter'),
+    custody: document.getElementById('custodySearch'),
+    response: document.getElementById('responseFilter'),
+    status: document.getElementById('documentStatusFilter'),
+    result: document.getElementById('resultFilter'),
+    variance: document.getElementById('varianceFilter'),
+    varianceSearch: document.getElementById('varianceSearch'),
+  };
+  const sections = [...root.querySelectorAll('.employee-report')];
+  const normalize = value => String(value || '').trim().toLocaleLowerCase();
+  const hasText = (value, query) => !query || normalize(value).includes(normalize(query));
+  const params = new URLSearchParams(window.location.search);
+
+  function restore() {
+    const mapping = {
+      employee: 'employee', custody: 'custody', response: 'response', status: 'status', result: 'result', variance: 'variance', varianceSearch: 'variance_search',
+    };
+    Object.entries(mapping).forEach(([control, param]) => {
+      if (params.has(param)) controls[control].value = params.get(param);
+    });
+  }
+
+  function updateUrl() {
+    const mapping = {
+      employee: 'employee', custody: 'custody', response: 'response', status: 'status', result: 'result', variance: 'variance', varianceSearch: 'variance_search',
+    };
+    Object.entries(mapping).forEach(([control, param]) => {
+      const value = controls[control].value.trim();
+      if (value) params.set(param, value); else params.delete(param);
+    });
+    const query = params.toString();
+    window.history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+  }
+
+  function applyFilters(writeUrl = true) {
+    const employee = controls.employee.value;
+    const custodyQuery = normalize(controls.custody.value);
+    const response = normalize(controls.response.value);
+    const status = normalize(controls.status.value);
+    const result = normalize(controls.result.value);
+    const varianceMode = controls.variance.value;
+    const varianceQuery = normalize(controls.varianceSearch.value);
+    const custodyActive = Boolean(employee || custodyQuery || response || status || result);
+    const varianceActive = Boolean(varianceMode || varianceQuery);
+    let visibleEmployees = 0;
+    let visibleCustody = 0;
+    let visibleVariances = 0;
+    sections.forEach(section => {
+      const employeeMatches = !employee || section.dataset.employeeId === employee;
+      const responseMatches = !response || normalize(section.dataset.response).split(/\s+/).includes(response);
+      const statusMatches = !status || normalize(section.dataset.status).split(/\s+/).includes(status);
+      const sectionMatches = employeeMatches && responseMatches && statusMatches;
+      const custodyRows = [...section.querySelectorAll('.custody-row')];
+      const varianceRows = [...section.querySelectorAll('.variance-row')];
+      const custodyCandidates = custodyRows.filter(row => sectionMatches && hasText(row.dataset.search, custodyQuery) && (!result || normalize(row.dataset.result) === result));
+      const varianceCandidates = varianceRows.filter(row => {
+        const hasDifference = row.dataset.hasDifference === '1';
+        const modeMatches = !varianceMode || (varianceMode === 'changed' ? hasDifference : !hasDifference);
+        return sectionMatches && modeMatches && hasText(row.dataset.search, varianceQuery);
+      });
+      const varianceTags = new Set(varianceCandidates.map(row => row.dataset.tag));
+      const custodyTags = new Set(custodyCandidates.map(row => row.dataset.tag));
+      let custodyCount = 0;
+      let varianceCount = 0;
+      custodyRows.forEach(row => {
+        const matches = custodyCandidates.includes(row) && (!varianceActive || varianceTags.has(row.dataset.tag));
+        row.classList.toggle('d-none', !matches);
+        if (matches) custodyCount += 1;
+      });
+      varianceRows.forEach(row => {
+        const matches = varianceCandidates.includes(row) && (!custodyActive || custodyTags.has(row.dataset.tag));
+        row.classList.toggle('d-none', !matches);
+        if (matches) varianceCount += 1;
+      });
+      const showSection = sectionMatches && ((!custodyActive && !varianceActive) || custodyCount > 0 || varianceCount > 0);
+      section.classList.toggle('d-none', !showSection);
+      section.querySelector('.custody-empty-filtered')?.classList.toggle('d-none', !custodyRows.length || custodyCount > 0);
+      section.querySelector('.variance-empty-filtered')?.classList.toggle('d-none', !varianceRows.length || varianceCount > 0);
+      if (showSection) visibleEmployees += 1;
+      visibleCustody += custodyCount;
+      visibleVariances += varianceCount;
+    });
+    const summary = document.getElementById('reportFilterSummary');
+    if (summary) summary.textContent = `النتيجة الحالية: ${visibleEmployees} موظف · ${visibleCustody} أصل · ${visibleVariances} بند فرق`;
+    if (writeUrl) updateUrl();
+  }
+
+  Object.values(controls).forEach(control => {
+    control?.addEventListener(control.tagName === 'INPUT' ? 'input' : 'change', () => applyFilters());
+  });
+  document.getElementById('resetReportFilters')?.addEventListener('click', () => {
+    Object.values(controls).forEach(control => { if (control) control.value = ''; });
+    applyFilters();
+  });
+  restore();
+  applyFilters(false);
+})();
+</script>
 {% endblock %}

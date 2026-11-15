@@ -25,6 +25,7 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
+from services.asset_custody import fixed_asset_report_details
 
 
 _FONT_REGULAR = "FixedAssetReportArabic"
@@ -72,26 +73,41 @@ def _label(value, mapping=None, default="-"):
     return (mapping or {}).get(value, value)
 
 
-def _current_snapshot(line):
+def current_asset_report_snapshot(line):
     snapshot = dict(line.snapshot or {})
     if snapshot.get("included") is False:
         return None
+    asset = line.asset
+    details = fixed_asset_report_details(asset)
     return {
-        "tag": snapshot.get("tag") or (line.asset.asset_tag if line.asset else ""),
-        "name": snapshot.get("name") or (line.asset.name if line.asset else ""),
-        "serial": snapshot.get("serial") or (line.asset.serial_number if line.asset else ""),
-        "location": snapshot.get("location") or "",
+        "asset_id": asset.id if asset else line.asset_id,
+        "tag": snapshot.get("tag") or (asset.asset_tag if asset else ""),
+        "name": snapshot.get("name") or (asset.name if asset else ""),
+        "serial": snapshot.get("serial") or (asset.serial_number if asset else "") or "",
+        "location": snapshot.get("location") or (asset.location_label if asset else ""),
         "custodian": snapshot.get("custodian") or (line.document.employee.full_name if line.document and line.document.employee else ""),
         "condition": snapshot.get("condition") or "",
         "lifecycle": snapshot.get("target_lifecycle") or "",
         "result": snapshot.get("result") or "",
         "note": snapshot.get("inventory_note") or "",
+        "item": snapshot.get("item") or details["item"],
+        "category": snapshot.get("category") or details["category"],
+        "warehouse": snapshot.get("warehouse") or details["warehouse"],
+        "room": snapshot.get("room") or details["room"],
+        "description": snapshot.get("description") or details["description"],
+        "image_filename": snapshot.get("image_filename") or details["image_filename"],
     }
+
+
+_current_snapshot = current_asset_report_snapshot
 
 
 def _previous_snapshot(row):
     snapshot = dict(row.snapshot or {})
-    return {
+    asset = row.asset
+    details = fixed_asset_report_details(asset)
+    result = {
+        "asset_id": asset.id if asset else row.asset_id,
         "tag": snapshot.get("tag") or row.asset_tag,
         "name": snapshot.get("name") or "",
         "serial": snapshot.get("serial") or "",
@@ -102,6 +118,10 @@ def _previous_snapshot(row):
         "result": snapshot.get("result") or "",
         "note": snapshot.get("note") or "",
     }
+    for key in ("item", "category", "warehouse", "room", "description", "image_filename"):
+        if key in snapshot or asset is not None:
+            result[key] = snapshot.get(key) or details[key]
+    return result
 
 
 def _previous_rows_by_employee(cycle, manual_previous_by_employee):
@@ -125,6 +145,7 @@ def _previous_rows_by_employee(cycle, manual_previous_by_employee):
         if custodian_id in result:
             continue
         result.setdefault(custodian_id, []).append({
+            "asset_id": entry.asset.id,
             "tag": entry.asset.asset_tag,
             "name": entry.asset.name,
             "serial": entry.asset.serial_number or "",
@@ -134,6 +155,7 @@ def _previous_rows_by_employee(cycle, manual_previous_by_employee):
             "lifecycle": entry.observed_lifecycle_status if entry.scanned_at else entry.expected_lifecycle_status,
             "result": entry.result_status,
             "note": entry.note or "",
+            **fixed_asset_report_details(entry.asset),
         })
     return result
 
@@ -154,6 +176,7 @@ def _variance_rows(current_rows, previous_rows, condition_labels, lifecycle_labe
         current = current_by_tag.get(key)
         previous = previous_by_tag.get(key)
         differences = []
+        changes = []
         for field, label, mapping in (
             ("name", "الاسم", None),
             ("serial", "الرقم التسلسلي", None),
@@ -163,10 +186,20 @@ def _variance_rows(current_rows, previous_rows, condition_labels, lifecycle_labe
             ("lifecycle", "الوضع", lifecycle_labels),
             ("result", "نتيجة الجرد", result_labels),
             ("note", "الملاحظات", None),
+            ("item", "صنف المستودع", None),
+            ("category", "التصنيف", None),
+            ("warehouse", "المستودع", None),
+            ("room", "الغرفة", None),
+            ("description", "الوصف", None),
         ):
+            if field in {"item", "category", "warehouse", "room", "description"} and not previous:
+                continue
+            if field in {"item", "category", "warehouse", "room", "description"} and field not in previous:
+                continue
             before = _label(previous.get(field) if previous else None, mapping, "غير موجود")
             after = _label(current.get(field) if current else None, mapping, "غير موجود")
             if before != after:
+                changes.append({"field": label, "before": before, "after": after})
                 differences.append(f"{label}: {before} ← {after}")
         if not differences:
             differences.append("لا توجد فروقات ظاهرة")
@@ -175,6 +208,8 @@ def _variance_rows(current_rows, previous_rows, condition_labels, lifecycle_labe
             "previous": previous or {},
             "current": current or {},
             "differences": differences,
+            "changes": changes,
+            "has_differences": bool(changes),
         })
     return rows
 
@@ -322,6 +357,55 @@ def _page_callback(header_path, font_regular):
     return draw
 
 
+def _pdf_asset_cell(row, styles, image_resolver=None):
+    details = "\n".join(
+        (
+            f"{row['tag']}",
+            row["name"] or "-",
+            f"صنف المستودع: {row.get('item') or '-'}",
+            f"التصنيف: {row.get('category') or '-'}",
+            f"المستودع: {row.get('warehouse') or '-'}",
+            f"الغرفة: {row.get('room') or '-'}",
+            f"الوصف: {row.get('description') or '-'}",
+        )
+    )
+    path = None
+    if image_resolver and row.get("image_filename"):
+        try:
+            candidate = image_resolver(row["image_filename"])
+            if candidate and Path(candidate).is_file():
+                path = candidate
+        except (OSError, TypeError, ValueError):
+            path = None
+    if path is None:
+        return _p(details, styles["body"])
+    try:
+        return [
+            Image(str(path), width=18 * mm, height=18 * mm, kind="proportional"),
+            Spacer(1, 1 * mm),
+            _p(details, styles["body"]),
+        ]
+    except (OSError, ValueError):
+        return _p(details, styles["body"])
+
+
+def _pdf_variance_cell(row, styles):
+    details = "\n".join(
+        (
+            f"الاسم: {row.get('name') or '-'}",
+            f"الرقم التسلسلي: {row.get('serial') or '-'}",
+            f"صنف المستودع: {row.get('item') or '-'}",
+            f"التصنيف: {row.get('category') or '-'}",
+            f"المستودع: {row.get('warehouse') or '-'}",
+            f"الغرفة: {row.get('room') or '-'}",
+            f"الموقع: {row.get('location') or '-'}",
+            f"الحالة: {row.get('condition') or '-'}",
+            f"الوصف: {row.get('description') or '-'}",
+        )
+    )
+    return _p(details, styles["body"])
+
+
 def build_committee_report_pdf(
     report,
     documents,
@@ -332,6 +416,7 @@ def build_committee_report_pdf(
     lifecycle_labels=None,
     result_labels=None,
     report_audits=None,
+    image_resolver=None,
 ):
     """Build a readable Arabic PDF with a page boundary before every employee."""
     condition_labels = condition_labels or {}
@@ -403,7 +488,7 @@ def build_committee_report_pdf(
         for number, row in enumerate(current_rows, start=1):
             custody_data.append([
                 _p(number, styles["center"]),
-                _p(f"{row['tag']}\n{row['name']}", styles["body"]),
+                _pdf_asset_cell(row, styles, image_resolver),
                 _p(row["serial"] or "-", styles["body"]),
                 _p(row["location"] or "-", styles["body"]),
                 _p(f"{_label(row['condition'], condition_labels)}\n{_label(row['lifecycle'], lifecycle_labels)}", styles["body"]),
@@ -429,8 +514,8 @@ def build_committee_report_pdf(
             after = row["current"]
             variance_data.append([
                 _p(row["tag"], styles["body"]),
-                _p(f"{before.get('name') or '-'}\n{before.get('location') or '-'}\n{_label(before.get('condition'), condition_labels)}", styles["body"]),
-                _p(f"{after.get('name') or '-'}\n{after.get('location') or '-'}\n{_label(after.get('condition'), condition_labels)}", styles["body"]),
+                _pdf_variance_cell({**before, "condition": _label(before.get("condition"), condition_labels)}, styles),
+                _pdf_variance_cell({**after, "condition": _label(after.get("condition"), condition_labels)}, styles),
                 _p("\n".join(row["differences"]), styles["body"]),
             ])
         if len(variance_data) == 1:

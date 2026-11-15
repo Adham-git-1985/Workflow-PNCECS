@@ -34,10 +34,14 @@ from services.asset_custody import (COMMITTEE_REPORT_STATUSES, EMPLOYEE_RESPONSE
                                     revise_inventory_document, save_manual_previous_lines,
                                     cycle_assignment_groups, send_cycle_reports, submit_committee_report,
                                     _mark_committee_report_dirty, _notify_secretary_general)
-from services.fixed_asset_reports import build_committee_report_pdf, build_committee_variance_index
+from services.fixed_asset_reports import (
+    build_committee_report_pdf,
+    build_committee_variance_index,
+    current_asset_report_snapshot,
+)
 from services.fixed_asset_inventory import ASSET_CONDITIONS, ASSET_LIFECYCLE_STATUSES, INVENTORY_RESULT_LABELS
 from . import portal_bp
-from .fixed_assets import _audit, _choices, _optional_int
+from .fixed_assets import _audit, _choices, _fixed_asset_image_path, _optional_int
 from .routes import STORE_MANAGE, _perm_any
 
 
@@ -539,7 +543,8 @@ def asset_committee_report_excel(cycle_id):
     for doc in documents:
         employee_by_id[doc.employee_id] = doc.employee.full_name if doc.employee else ""
         for line in doc.lines:
-            snap = line.snapshot or {}
+            snap = current_asset_report_snapshot(line) or dict(line.snapshot or {})
+            raw_snapshot = line.snapshot or {}
             custody_rows.append([
                 doc.id,
                 doc.employee.full_name if doc.employee else "",
@@ -547,11 +552,16 @@ def asset_committee_report_excel(cycle_id):
                 EMPLOYEE_RESPONSE_LABELS.get(doc.employee_response, "لم يقرر بعد"),
                 doc.revision_number or 0,
                 doc.response_at,
-                "نعم" if snap.get("included", True) else "لا",
+                "نعم" if raw_snapshot.get("included", True) else "لا",
                 snap.get("tag", ""),
                 snap.get("name", ""),
                 snap.get("serial", "") or "",
+                snap.get("item", "") or "",
+                snap.get("category", "") or "",
+                snap.get("warehouse", "") or "",
+                snap.get("room", "") or "",
                 snap.get("location", "") or "",
+                snap.get("description", "") or "",
                 ASSET_CONDITIONS.get(snap.get("condition"), snap.get("condition", "") or ""),
                 ASSET_LIFECYCLE_STATUSES.get(snap.get("target_lifecycle"), snap.get("target_lifecycle", "") or ""),
                 INVENTORY_RESULT_LABELS.get(snap.get("result"), snap.get("result", "") or ""),
@@ -591,12 +601,22 @@ def asset_committee_report_excel(cycle_id):
                 row.get("tag", ""),
                 before.get("name", ""),
                 before.get("serial", ""),
+                before.get("item", ""),
+                before.get("category", ""),
+                before.get("warehouse", ""),
+                before.get("room", ""),
                 before.get("location", ""),
+                before.get("description", ""),
                 before.get("custodian", ""),
                 ASSET_CONDITIONS.get(before.get("condition"), before.get("condition", "") or ""),
                 after.get("name", ""),
                 after.get("serial", ""),
+                after.get("item", ""),
+                after.get("category", ""),
+                after.get("warehouse", ""),
+                after.get("room", ""),
                 after.get("location", ""),
+                after.get("description", ""),
                 after.get("custodian", ""),
                 ASSET_CONDITIONS.get(after.get("condition"), after.get("condition", "") or ""),
                 "\n".join(row.get("differences") or []),
@@ -610,12 +630,12 @@ def asset_committee_report_excel(cycle_id):
         ),
         (
             "العهد والأصول",
-            ["رقم المستند", "الموظف", "حالة المستند", "رد الموظف", "رقم المراجعة", "تاريخ رد الموظف", "مدرج", "رقم الأصل", "اسم الأصل", "التسلسلي", "الموقع", "الحالة", "الوضع", "نتيجة الجرد", "قرار البند", "ملاحظة الموظف", "ملاحظة تعديل اللجنة"],
+            ["رقم المستند", "الموظف", "حالة المستند", "رد الموظف", "رقم المراجعة", "تاريخ رد الموظف", "مدرج", "رقم الأصل", "اسم الأصل", "التسلسلي", "صنف المستودع", "التصنيف", "المستودع", "الغرفة", "الموقع", "الوصف", "الحالة", "الوضع", "نتيجة الجرد", "قرار البند", "ملاحظة الموظف", "ملاحظة تعديل اللجنة"],
             custody_rows,
         ),
         (
             "الفروقات",
-            ["الموظف", "رقم الأصل", "اسم سابق", "تسلسلي سابق", "موقع سابق", "عهدة سابقة", "حالة سابقة", "اسم حالي", "تسلسلي حالي", "موقع حالي", "عهدة حالية", "حالة حالية", "الفروقات"],
+            ["الموظف", "رقم الأصل", "اسم سابق", "تسلسلي سابق", "صنف سابق", "تصنيف سابق", "مستودع سابق", "غرفة سابقة", "موقع سابق", "وصف سابق", "عهدة سابقة", "حالة سابقة", "اسم حالي", "تسلسلي حالي", "صنف حالي", "تصنيف حالي", "مستودع حالي", "غرفة حالية", "موقع حالي", "وصف حالي", "عهدة حالية", "حالة حالية", "الفروقات"],
             variance_rows,
         ),
         (
@@ -785,6 +805,7 @@ def asset_committee_report_pdf(cycle_id):
         lifecycle_labels=ASSET_LIFECYCLE_STATUSES,
         result_labels=INVENTORY_RESULT_LABELS,
         report_audits=report_audits,
+        image_resolver=_fixed_asset_image_path,
     )
     return send_file(
         output,

@@ -112,6 +112,29 @@ def _inventory_entry_for_asset(cycle_id, asset_id):
     return InvFixedAssetEntry.query.filter_by(cycle_id=cycle_id, asset_id=asset_id).first()
 
 
+def fixed_asset_report_details(asset, entry=None):
+    """Return the descriptive fields that should travel with an asset report.
+
+    Older custody documents do not have these keys in their JSON snapshot, so
+    report/detail views also fall back to the related asset.  New documents
+    store the values here to keep the report useful even after an asset is
+    edited later.
+    """
+    scanned = bool(entry and entry.scanned_at)
+    warehouse = getattr(entry, "observed_warehouse", None) if scanned else getattr(entry, "expected_warehouse", None)
+    room = getattr(entry, "observed_room", None) if scanned else getattr(entry, "expected_room", None)
+    warehouse = warehouse or getattr(entry, "expected_warehouse", None) or getattr(asset, "warehouse", None)
+    room = room or getattr(entry, "expected_room", None) or getattr(asset, "room", None)
+    return {
+        "item": asset.item.label if asset and asset.item else "",
+        "category": asset.category.name if asset and asset.category else "",
+        "warehouse": warehouse.label if warehouse else "",
+        "room": room.label if room else "",
+        "description": (asset.description or "") if asset else "",
+        "image_filename": (asset.image_filename or "") if asset else "",
+    }
+
+
 def _inventory_snapshot(asset, employee, entry=None):
     scanned = bool(entry and entry.scanned_at)
     eligible = bool(
@@ -122,7 +145,7 @@ def _inventory_snapshot(asset, employee, entry=None):
     return {
         "tag": asset.asset_tag,
         "name": asset.name,
-        "serial": asset.serial_number,
+        "serial": asset.serial_number or "",
         "state": asset_state(asset),
         "location": (entry.observed_location_label if scanned else entry.expected_location_label)
         if entry else asset.location_label,
@@ -133,6 +156,7 @@ def _inventory_snapshot(asset, employee, entry=None):
         "eligible": eligible,
         "target_lifecycle": entry.observed_lifecycle_status if scanned else (entry.expected_lifecycle_status if entry else asset.lifecycle_status),
         "included": True,
+        **fixed_asset_report_details(asset, entry),
     }
 
 

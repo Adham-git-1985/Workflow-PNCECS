@@ -1,11 +1,27 @@
 {% extends "portal/inventory/base.html" %}
 {% block inv_content %}
 <style>
+  .asset-detail-card { border: 1px solid #d9e2ec; border-radius: .65rem; padding: 1rem; margin-bottom: 1rem; background: #fff; }
+  .asset-detail-card.is-removed { background: #f5f6f7; opacity: .85; }
+  .asset-detail-heading { display: flex; align-items: flex-start; gap: .75rem; border-bottom: 1px solid #e8edf2; padding-bottom: .65rem; margin-bottom: .75rem; }
+  .asset-detail-heading .asset-number { min-width: 2rem; height: 2rem; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: #17365d; color: #fff; font-weight: 700; }
+  .asset-detail-name { font-size: 1.08rem; font-weight: 700; overflow-wrap: anywhere; white-space: normal; }
+  .asset-detail-tag { color: #52606d; font-size: .86rem; }
+  .asset-detail-body { display: flex; align-items: flex-start; gap: 1rem; }
+  .asset-detail-photo { flex: 0 0 105px; width: 105px; height: 105px; object-fit: cover; border: 1px solid #d9e2ec; border-radius: .45rem; background: #f8fafc; }
+  .asset-detail-grid { flex: 1 1 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: .65rem .9rem; }
+  .asset-detail-field { min-width: 0; }
+  .asset-detail-field .label { display: block; color: #52606d; font-size: .78rem; font-weight: 700; margin-bottom: .1rem; }
+  .asset-detail-field .value { overflow-wrap: anywhere; white-space: normal; }
+  .asset-detail-field.full-width { grid-column: 1 / -1; }
+  .asset-detail-field.description .value { white-space: pre-wrap; }
+  @media (max-width: 575px) { .asset-detail-body { display: block; } .asset-detail-photo { margin-bottom: .75rem; } }
   @media print {
     nav, aside, .col-lg-3, .no-print, footer { display:none!important; }
     .col-lg-9 { width:100%!important; }
     textarea, input, select { border:0!important; background:transparent!important; }
-    tr { break-inside:avoid; }
+    tr, .asset-detail-card { break-inside:avoid; }
+    .asset-detail-card { border-color: #aeb8c2; }
   }
 </style>
 
@@ -58,7 +74,7 @@
           <td><input class="form-check-input" type="checkbox" name="include_{{ line.id }}" {% if snap.get('included', True) %}checked{% endif %}></td>
           <td><input class="form-control form-control-sm" name="tag_{{ line.id }}" value="{{ snap.get('tag', '') }}"></td>
           <td><input class="form-control form-control-sm" name="name_{{ line.id }}" value="{{ snap.get('name', '') }}"></td>
-          <td><input class="form-control form-control-sm" name="serial_{{ line.id }}" value="{{ snap.get('serial', '') or '' }}"></td>
+          <td><input class="form-control form-control-sm" name="serial_{{ line.id }}" value="{{ snap.get('serial') or (line.asset.serial_number if line.asset else '') or '' }}"></td>
           <td><input class="form-control form-control-sm" name="location_{{ line.id }}" value="{{ snap.get('location', '') or '' }}"></td>
           <td><select class="form-select form-select-sm" name="condition_{{ line.id }}">{% for key, label in asset_conditions.items() %}<option value="{{ key }}" {% if snap.get('condition') == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></td>
           <td><select class="form-select form-select-sm" name="lifecycle_{{ line.id }}">{% for key, label in asset_lifecycle_statuses.items() %}<option value="{{ key }}" {% if snap.get('target_lifecycle') == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></td>
@@ -81,19 +97,53 @@
   </form>
   {% endif %}
 
-  <div class="card shadow-sm mb-3"><div class="table-responsive"><table class="table table-bordered bg-white align-middle mb-0">
-    <thead><tr><th>م</th><th>الأصل</th><th>الموقع والحالة</th><th>نتيجة الجرد</th><th>قرار الموظف</th><th>ملاحظات الموظف</th></tr></thead>
-    <tbody>{% for line in doc.lines %}{% set snap = line.snapshot %}
-      <tr class="{% if snap.get('included') is sameas false %}table-secondary{% endif %}">
-        <td>{{ loop.index }}</td>
-        <td><strong>{{ snap.get('tag') }}</strong><br>{{ snap.get('name') }}<br><small>{{ snap.get('serial') or '' }}</small></td>
-        <td>{{ snap.get('location') or '-' }}<br>{{ fixed_asset_condition_labels.get(snap.get('condition'), snap.get('condition') or '-') }}<br>{{ fixed_asset_lifecycle_labels.get(snap.get('target_lifecycle'), snap.get('target_lifecycle') or '-') }}</td>
-        <td>{{ fixed_asset_result_labels.get(snap.get('result'), snap.get('result') or '-') }}{% if snap.get('inventory_note') %}<br><small>{{ snap.get('inventory_note') }}</small>{% endif %}{% if not snap.get('eligible', True) %}<br><strong>للمراجعة فقط؛ لا يضاف إلى العهدة</strong>{% endif %}</td>
-        <td>{{ {'PENDING':'لم يقرر','ACCEPT':'موافق','OBJECT':'اعتراض'}.get(line.decision, line.decision) }}</td>
-        <td>{{ line.employee_note or '-' }}</td>
-      </tr>
-    {% endfor %}</tbody>
-  </table></div></div>
+  <div class="card card-body shadow-sm mb-3">
+    <h5 class="mb-3">تفاصيل الأصول المسندة</h5>
+    {% for line in doc.lines %}
+      {% set snap = line.snapshot %}
+      {% set asset = line.asset %}
+      {% set asset_tag = snap.get('tag') or (asset.asset_tag if asset else '') %}
+      {% set asset_name = snap.get('name') or (asset.name if asset else '') %}
+      {% set serial = snap.get('serial') or (asset.serial_number if asset else '') %}
+      {% set item_label = snap.get('item') or (asset.item.label if asset and asset.item else '') %}
+      {% set category_label = snap.get('category') or (asset.category.name if asset and asset.category else '') %}
+      {% set warehouse_label = snap.get('warehouse') or (asset.warehouse.label if asset and asset.warehouse else '') %}
+      {% set room_label = snap.get('room') or (asset.room.label if asset and asset.room else '') %}
+      {% set location_label = snap.get('location') or (asset.location_label if asset else '') %}
+      {% set description = snap.get('description') or (asset.description if asset else '') %}
+      {% set image_filename = snap.get('image_filename') or (asset.image_filename if asset else '') %}
+      <article class="asset-detail-card {% if snap.get('included') is sameas false %}is-removed{% endif %}">
+        <div class="asset-detail-heading">
+          <span class="asset-number">{{ loop.index }}</span>
+          <div>
+            <div class="asset-detail-name">{{ asset_name or '-' }}</div>
+            <div class="asset-detail-tag">رقم الأصل: {{ asset_tag or '-' }}</div>
+          </div>
+        </div>
+        <div class="asset-detail-body">
+          {% if image_filename and asset %}<img class="asset-detail-photo" src="{{ url_for('portal.fixed_asset_image', asset_id=asset.id) }}" alt="صورة {{ asset_name or 'الأصل' }}">{% endif %}
+          <div class="asset-detail-grid">
+            <div class="asset-detail-field"><span class="label">الاسم الكامل</span><span class="value">{{ asset_name or '-' }}</span></div>
+            <div class="asset-detail-field"><span class="label">الرقم التسلسلي</span><span class="value">{{ serial or '-' }}</span></div>
+            <div class="asset-detail-field"><span class="label">صنف المستودع</span><span class="value">{{ item_label or '-' }}</span></div>
+            <div class="asset-detail-field"><span class="label">التصنيف</span><span class="value">{{ category_label or '-' }}</span></div>
+            <div class="asset-detail-field"><span class="label">المستودع</span><span class="value">{{ warehouse_label or '-' }}</span></div>
+            <div class="asset-detail-field"><span class="label">الغرفة</span><span class="value">{{ room_label or '-' }}</span></div>
+            <div class="asset-detail-field"><span class="label">الموقع الكامل</span><span class="value">{{ location_label or '-' }}</span></div>
+            <div class="asset-detail-field"><span class="label">الحالة / الوضع</span><span class="value">{{ fixed_asset_condition_labels.get(snap.get('condition'), snap.get('condition') or '-') }} · {{ fixed_asset_lifecycle_labels.get(snap.get('target_lifecycle'), snap.get('target_lifecycle') or '-') }}</span></div>
+            <div class="asset-detail-field"><span class="label">نتيجة الجرد</span><span class="value">{{ fixed_asset_result_labels.get(snap.get('result'), snap.get('result') or '-') }}</span></div>
+            <div class="asset-detail-field"><span class="label">قرار الموظف</span><span class="value">{{ {'PENDING':'لم يقرر','ACCEPT':'موافق','OBJECT':'اعتراض'}.get(line.decision, line.decision) }}</span></div>
+            <div class="asset-detail-field full-width description"><span class="label">الوصف</span><span class="value">{{ description or '-' }}</span></div>
+            <div class="asset-detail-field full-width"><span class="label">ملاحظات الجرد</span><span class="value">{{ snap.get('inventory_note') or '-' }}</span></div>
+            <div class="asset-detail-field full-width"><span class="label">ملاحظات الموظف</span><span class="value">{{ line.employee_note or '-' }}</span></div>
+          </div>
+        </div>
+        {% if not snap.get('eligible', True) %}<div class="alert alert-warning mt-3 mb-0"><strong>للمراجعة فقط:</strong> لا يضاف هذا الأصل إلى العهدة لأنه غير مؤهل للإسناد.</div>{% endif %}
+      </article>
+    {% else %}
+      <div class="alert alert-light border mb-0">لا توجد أصول في هذا المستند.</div>
+    {% endfor %}
+  </div>
 {% else %}
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="review">
