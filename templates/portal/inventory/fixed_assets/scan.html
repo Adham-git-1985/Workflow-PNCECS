@@ -9,7 +9,7 @@
 <div class="row g-3">
   <div class="col-lg-7">
     <div class="card shadow-sm mb-3">
-      <div class="card-header d-flex justify-content-between align-items-center"><span class="fw-bold">قراءة الملصق</span><span class="badge text-bg-secondary">متبقٍ {{ stats.get('PENDING', 0) }}</span></div>
+      <div class="card-header d-flex justify-content-between align-items-center"><span class="fw-bold">قراءة / إدخال الأصل</span><span class="badge text-bg-secondary">متبقٍ للجرد {{ stats.get('PENDING', 0) }}</span></div>
       <div class="card-body">
         <div id="scanMessage" class="alert alert-info py-2">{% if mobile_mode %}اضغط الزر وافتح كاميرا الهاتف لتصوير QR الأصل.{% else %}اختر صورة QR أو أدخل رقم الأصل يدوياً.{% endif %}</div>
         <div class="d-flex flex-wrap gap-2 mb-3">
@@ -53,7 +53,7 @@
   </div>
 
   <div class="col-lg-5">
-    <div class="card shadow-sm mb-3"><div class="card-header fw-bold">تقدم اللجنة</div><div class="card-body"><div class="row text-center g-2"><div class="col-4"><div class="border rounded p-2"><div class="fs-4 fw-bold">{{ stats.get('TOTAL', 0) }}</div><small class="text-muted">الإجمالي</small></div></div><div class="col-4"><div class="border rounded p-2"><div class="fs-4 fw-bold text-success">{{ stats.get('SCANNED', 0) }}</div><small class="text-muted">مقروء</small></div></div><div class="col-4"><div class="border rounded p-2"><div class="fs-4 fw-bold text-secondary">{{ stats.get('PENDING', 0) }}</div><small class="text-muted">متبقٍ</small></div></div></div></div></div>
+    <div class="card shadow-sm mb-3"><div class="card-header fw-bold">تقدم اللجنة</div><div class="card-body"><div class="row text-center g-2"><div class="col-4"><div class="border rounded p-2"><div class="fs-4 fw-bold">{{ stats.get('TOTAL', 0) }}</div><small class="text-muted">الإجمالي</small></div></div><div class="col-4"><div class="border rounded p-2"><div class="fs-4 fw-bold text-success">{{ stats.get('SCANNED', 0) }}</div><small class="text-muted">تم جرده</small></div></div><div class="col-4"><div class="border rounded p-2"><div class="fs-4 fw-bold text-secondary">{{ stats.get('PENDING', 0) }}</div><small class="text-muted">متبقٍ للجرد</small></div></div></div></div></div>
     <div class="card shadow-sm"><div class="card-header fw-bold">آخر القراءات</div><div class="list-group list-group-flush" style="max-height:520px;overflow:auto">{% for scan in recent_scans %}<a class="list-group-item list-group-item-action" href="{{ url_for('portal.fixed_asset_view', asset_id=scan.asset_id) }}" target="_blank"><div class="d-flex justify-content-between gap-2"><span class="fw-semibold">{{ scan.asset.asset_tag }}</span><small class="text-muted">{{ scan.scanned_at|local_datetime }}</small></div><div>{{ scan.asset.name }}</div><span class="badge text-bg-{{ fixed_asset_result_colors.get(scan.result_status, 'secondary') }}">{{ fixed_asset_result_labels.get(scan.result_status, scan.result_status) }}</span></a>{% else %}<div class="text-center text-muted py-4">ابدأ بأول قراءة.</div>{% endfor %}</div></div>
   </div>
 </div>

@@ -15,6 +15,13 @@
   .asset-detail-field .value { overflow-wrap: anywhere; white-space: normal; }
   .asset-detail-field.full-width { grid-column: 1 / -1; }
   .asset-detail-field.description .value { white-space: pre-wrap; }
+  .committee-revision-table { min-width: 1180px; }
+  .committee-revision-asset { min-width: 330px; }
+  .committee-revision-result { min-width: 135px; }
+  .committee-revision-asset-photo { width: 58px; height: 58px; object-fit: cover; border: 1px solid #d9e2ec; border-radius: .35rem; float: inline-start; margin-inline-end: .55rem; }
+  .committee-revision-asset-name { font-weight: 700; overflow-wrap: anywhere; }
+  .committee-revision-asset-details { clear: both; padding-top: .45rem; line-height: 1.55; }
+  .committee-revision-asset-details div { overflow-wrap: anywhere; }
   @media (max-width: 575px) { .asset-detail-body { display: block; } .asset-detail-photo { margin-bottom: .75rem; } }
   @media print {
     nav, aside, .col-lg-3, .no-print, footer { display:none!important; }
@@ -76,17 +83,39 @@
     <input type="hidden" name="action" value="revise">
     <h6 class="fw-bold text-warning">تعديل العهدة من اللجنة</h6>
     <p class="small text-muted">يمكن للجنة تعديل البيانات أو إزالة أصل أو إضافة أصل جديد ما دامت دورة الجرد غير مغلقة نهائياً. بعد أي تعديل يعود المستند للموظف ليؤكده من جديد.</p>
-    <div class="table-responsive"><table class="table table-bordered align-middle">
-      <thead><tr><th>إدراج</th><th>رقم الأصل</th><th>الاسم</th><th>التسلسلي</th><th>الموقع</th><th>الحالة</th><th>الوضع</th><th>ملاحظة</th></tr></thead>
+    <div class="table-responsive"><table class="table table-bordered align-middle committee-revision-table">
+      <thead><tr><th>إدراج</th><th>الأصل والتفاصيل</th><th>الموقع الكامل</th><th>الحالة</th><th>الوضع</th><th>نتيجة الجرد</th><th>ملاحظة</th></tr></thead>
       <tbody>{% for line in doc.lines %}{% set snap = line.snapshot %}
+        {% set asset = line.asset %}
+        {% set asset_tag = snap.get('tag') or (asset.asset_tag if asset else '') %}
+        {% set asset_name = snap.get('name') or (asset.name if asset else '') %}
+        {% set serial = snap.get('serial') or (asset.serial_number if asset else '') %}
+        {% set item_label = snap.get('item') or (asset.item.label if asset and asset.item else '') %}
+        {% set category_label = snap.get('category') or (asset.category.name if asset and asset.category else '') %}
+        {% set warehouse_label = snap.get('warehouse') or (asset.warehouse.label if asset and asset.warehouse else '') %}
+        {% set room_label = snap.get('room') or (asset.room.label if asset and asset.room else '') %}
+        {% set description = snap.get('description') or (asset.description if asset else '') %}
+        {% set image_filename = snap.get('image_filename') or (asset.image_filename if asset else '') %}
         <tr>
           <td><input class="form-check-input" type="checkbox" name="include_{{ line.id }}" {% if snap.get('included', True) %}checked{% endif %}></td>
-          <td><input class="form-control form-control-sm" name="tag_{{ line.id }}" value="{{ snap.get('tag', '') }}"></td>
-          <td><input class="form-control form-control-sm" name="name_{{ line.id }}" value="{{ snap.get('name', '') }}"></td>
-          <td><input class="form-control form-control-sm" name="serial_{{ line.id }}" value="{{ snap.get('serial') or (line.asset.serial_number if line.asset else '') or '' }}"></td>
+          <td class="committee-revision-asset">
+            {% if image_filename and asset %}<img class="committee-revision-asset-photo" loading="lazy" src="{{ url_for('portal.fixed_asset_image', asset_id=asset.id) }}" alt="صورة {{ asset_name or 'الأصل' }}">{% endif %}
+            <div class="committee-revision-asset-name">{{ asset_name or '-' }}</div>
+            <div class="small text-muted">رقم الأصل: {{ asset_tag or '-' }}</div>
+            <div class="committee-revision-asset-details small">
+              <div><strong>الاسم:</strong> <input class="form-control form-control-sm d-inline-block w-auto" name="name_{{ line.id }}" value="{{ asset_name }}"></div>
+              <div><strong>الرقم التسلسلي:</strong> <input class="form-control form-control-sm d-inline-block w-auto" name="serial_{{ line.id }}" value="{{ serial }}"></div>
+              <div><strong>صنف المستودع:</strong> {{ item_label or '-' }} · <strong>التصنيف:</strong> {{ category_label or '-' }}</div>
+              <div><strong>المستودع:</strong> {{ warehouse_label or '-' }} · <strong>الغرفة:</strong> {{ room_label or '-' }}</div>
+              <div><strong>الوصف:</strong> {{ description or '-' }}</div>
+            </div>
+            <input type="hidden" name="tag_{{ line.id }}" value="{{ asset_tag }}">
+          </td>
           <td><input class="form-control form-control-sm" name="location_{{ line.id }}" value="{{ snap.get('location', '') or '' }}"></td>
           <td><select class="form-select form-select-sm" name="condition_{{ line.id }}">{% for key, label in asset_conditions.items() %}<option value="{{ key }}" {% if snap.get('condition') == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></td>
           <td><select class="form-select form-select-sm" name="lifecycle_{{ line.id }}">{% for key, label in asset_lifecycle_statuses.items() %}<option value="{{ key }}" {% if snap.get('target_lifecycle') == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></td>
+          {% set inventory_result = snap.get('result') %}
+          <td class="committee-revision-result text-center"><span class="badge text-bg-{{ fixed_asset_result_colors.get(inventory_result, 'secondary') }}">{{ fixed_asset_result_labels.get(inventory_result, inventory_result or 'لم يُجرد بعد') }}</span></td>
           <td><textarea class="form-control form-control-sm" name="inventory_note_{{ line.id }}" rows="2">{{ snap.get('inventory_note', '') or '' }}</textarea></td>
         </tr>
       {% endfor %}</tbody>

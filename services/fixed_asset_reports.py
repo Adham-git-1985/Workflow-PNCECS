@@ -242,6 +242,12 @@ def build_committee_variance_index(
                 if (row := _current_snapshot(line)) is not None
             )
         previous_rows = previous_by_employee.get(employee_id, [])
+        # An empty previous-year set is not a comparison.  Do not compare the
+        # current snapshot with ``None``; that would incorrectly flag every
+        # current asset as a difference when the cycle has no prior data.
+        if not previous_rows:
+            result[employee_id] = []
+            continue
         result[employee_id] = _variance_rows(
             current_rows,
             previous_rows,
@@ -501,8 +507,13 @@ def build_committee_report_pdf(
         story.append(Spacer(1, 4 * mm))
 
         previous_rows = previous_by_employee.get(employee.id if employee else None, [])
-        variances = _variance_rows(current_rows, previous_rows, condition_labels, lifecycle_labels, result_labels)
-        story.append(_p(f"تقرير الفروقات (السنة السابقة: {cycle.previous_cycle.inventory_date if cycle.previous_cycle else 'إدخال يدوي'})", styles["section"]))
+        variances = (
+            _variance_rows(current_rows, previous_rows, condition_labels, lifecycle_labels, result_labels)
+            if previous_rows
+            else []
+        )
+        comparison_label = cycle.previous_cycle.inventory_date if cycle.previous_cycle else "لا توجد بيانات سابقة"
+        story.append(_p(f"تقرير الفروقات (السنة السابقة: {comparison_label})", styles["section"]))
         variance_data = [[
             _p("الأصل", styles["header"]),
             _p("السنة السابقة", styles["header"]),

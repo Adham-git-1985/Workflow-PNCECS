@@ -106,6 +106,41 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(InvAssetDocument.query.count(), 1)
 
+    def test_manual_custody_assignment_counts_as_inventory_without_qr(self):
+        asset = self._create_asset("FA-MANUAL-001")
+        asset.custodian_user_id = self.employee.id
+        cycle = InvFixedAssetCycle(
+            code="COMMITTEE-MANUAL-2026",
+            name="جرد يدوي 2026",
+            inventory_date="2026-09-13",
+            committee_name="لجنة الجرد اليدوي",
+            status="ACTIVE",
+        )
+        db.session.add(cycle)
+        db.session.flush()
+        populate_cycle_entries(cycle)
+        db.session.commit()
+
+        doc = send_cycle_reports(cycle, self.admin.id)[0]
+        db.session.commit()
+        entry = InvFixedAssetEntry.query.filter_by(cycle_id=cycle.id, asset_id=asset.id).one()
+        self.assertIsNotNone(entry.scanned_at)
+        self.assertEqual(entry.result_status, "MATCHED")
+        self.assertEqual(doc.lines[0].snapshot["result"], "MATCHED")
+
+    def test_missing_previous_year_does_not_create_false_variances(self):
+        cycle, asset, doc = self.send_one()
+        self.login(self.admin)
+        report_url = f"/portal/inventory/fixed-assets/cycles/{cycle.id}/committee-report"
+        self.assertEqual(self.client.get(report_url).status_code, 200)
+        preview = self.client.get(
+            f"/portal/inventory/fixed-assets/cycles/{cycle.id}/committee-report/print"
+        )
+        self.assertEqual(preview.status_code, 200)
+        preview_text = preview.get_data(as_text=True)
+        self.assertIn("لا توجد بيانات سابقة للمقارنة", preview_text)
+        self.assertNotIn('data-has-difference="1"', preview_text)
+
     def test_employee_change_then_committee_revise_and_reject_escalate(self):
         cycle, asset, doc = self.send_one()
         review_inventory_document(doc, self.employee.id, "CHANGE", "الموقع يحتاج تصحيحاً")

@@ -42,7 +42,7 @@
   <div class="col-6 col-xl-2"><div class="card card-body h-100 border-primary"><div class="text-muted small">مسترد/جديد</div><div class="fs-3 fw-bold text-primary">{{ stats.get('RECOVERED', 0) + stats.get('NEW_SINCE_PREVIOUS', 0) }}</div></div></div>
   <div class="col-6 col-xl-2"><div class="card card-body h-100 border-danger"><div class="text-muted small">غير موجود</div><div class="fs-3 fw-bold text-danger">{{ stats.get('MISSING', 0) + stats.get('STILL_MISSING', 0) }}</div></div></div>
 </div>
-<div class="progress mb-3" style="height:10px"><div class="progress-bar" style="width:{{ progress }}%"></div></div>
+<div class="d-flex justify-content-between small mb-1"><span>تم جرده <strong>{{ completed }}</strong> من أصل <strong>{{ total }}</strong></span><span>{{ progress }}%</span></div><div class="progress mb-3" style="height:10px"><div class="progress-bar" style="width:{{ progress }}%"></div></div>
 
 {% if can_manage and cycle.status == 'ACTIVE' %}
 <div class="d-flex flex-wrap gap-2 mb-3">

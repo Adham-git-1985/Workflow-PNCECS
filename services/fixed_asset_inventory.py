@@ -310,6 +310,67 @@ def calculate_inventory_result(entry: InvFixedAssetEntry) -> str:
     return "MATCHED"
 
 
+def record_manual_asset_inventory(
+    cycle: InvFixedAssetCycle,
+    entry: InvFixedAssetEntry,
+    *,
+    scanned_by_id: int | None,
+    note: str | None = None,
+) -> InvFixedAssetEntry:
+    """Record a custody/manual entry as an inventory observation.
+
+    The committee may verify an asset by entering it in the custody workflow
+    instead of using a phone or QR reader.  It still needs a real inventory
+    observation so the cycle progress and result are not left at PENDING.
+    """
+    if cycle.status not in {"ACTIVE", "CLOSED"} or cycle.finalized_at is not None:
+        raise ValueError("لا يمكن تسجيل جرد يدوي في دورة مغلقة نهائياً.")
+    if entry.scanned_at:
+        return entry
+    # A closed cycle may contain assets already classified as missing.  Sending
+    # that asset for employee review must not turn a missing observation into a
+    # physical inventory match.
+    if entry.result_status in MISSING_RESULTS:
+        return entry
+
+    now = datetime.utcnow()
+    previous_result = entry.result_status
+    entry.observed_warehouse_id = entry.expected_warehouse_id
+    entry.observed_room_id = entry.expected_room_id
+    entry.observed_custodian_user_id = entry.expected_custodian_user_id
+    entry.observed_condition = entry.expected_condition or (entry.asset.asset_condition if entry.asset else "GOOD")
+    entry.observed_lifecycle_status = entry.expected_lifecycle_status or (entry.asset.lifecycle_status if entry.asset else "ACTIVE")
+    entry.observed_warehouse = entry.expected_warehouse
+    entry.observed_room = entry.expected_room
+    entry.observed_custodian = entry.expected_custodian
+    entry.scanned_at = now
+    entry.scanned_by_id = scanned_by_id
+    entry.scan_count = int(entry.scan_count or 0) + 1
+    entry.last_scan_source = "MANUAL_CUSTODY"
+    if note:
+        entry.note = note.strip() or entry.note
+    entry.updated_at = now
+    entry.result_status = calculate_inventory_result(entry)
+    db.session.add(InvFixedAssetScanLog(
+        entry_id=entry.id,
+        cycle_id=cycle.id,
+        asset_id=entry.asset_id,
+        scanned_by_id=scanned_by_id,
+        scanned_at=now,
+        source="MANUAL_CUSTODY",
+        previous_result_status=previous_result,
+        result_status=entry.result_status,
+        observed_warehouse_id=entry.observed_warehouse_id,
+        observed_room_id=entry.observed_room_id,
+        observed_custodian_user_id=entry.observed_custodian_user_id,
+        observed_condition=entry.observed_condition,
+        observed_lifecycle_status=entry.observed_lifecycle_status,
+        note=entry.note,
+        device_info=None,
+    ))
+    return entry
+
+
 def record_asset_scan(
     cycle: InvFixedAssetCycle,
     asset: InvFixedAsset,

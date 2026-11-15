@@ -19,7 +19,11 @@ from models import (
     Notification,
     User,
 )
-from services.fixed_asset_inventory import close_inventory_cycle, open_followup_inventory_cycle
+from services.fixed_asset_inventory import (
+    close_inventory_cycle,
+    open_followup_inventory_cycle,
+    record_manual_asset_inventory,
+)
 from services.notification_email import PORTAL_APPROVAL_EMAIL_MODE, enqueue_notification_email
 
 KINDS = {"INVENTORY": "تقرير جرد", "ASSIGN": "إسناد عهدة", "TRANSFER": "نقل عهدة",
@@ -110,6 +114,28 @@ def _inventory_entry_for_asset(cycle_id, asset_id):
     if not cycle_id:
         return None
     return InvFixedAssetEntry.query.filter_by(cycle_id=cycle_id, asset_id=asset_id).first()
+
+
+def _sync_inventory_line_from_entry(line, entry):
+    snapshot = dict(line.snapshot or {})
+    snapshot["result"] = entry.result_status
+    if entry.scanned_at:
+        snapshot.update({
+            "condition": entry.observed_condition or snapshot.get("condition"),
+            "target_lifecycle": entry.observed_lifecycle_status or snapshot.get("target_lifecycle"),
+            "location": entry.observed_location_label,
+            "inventory_note": entry.note,
+        })
+    line.snapshot = snapshot
+
+
+def _sync_inventory_line_result(line, entry):
+    """Keep the custody snapshot's inventory status in sync without
+    overwriting edits made by the committee in the custody form.
+    """
+    snapshot = dict(line.snapshot or {})
+    snapshot["result"] = entry.result_status
+    line.snapshot = snapshot
 
 
 def fixed_asset_report_details(asset, entry=None):
@@ -249,6 +275,14 @@ def send_cycle_reports(cycle, actor_id):
     groups = cycle_assignment_groups(cycle)
     if not groups:
         raise ValueError("لا توجد تقارير جديدة للإرسال؛ راجع التقارير القائمة أو ربط البنود بالموظفين.")
+    for entries in groups.values():
+        for entry in entries:
+            record_manual_asset_inventory(
+                cycle,
+                entry,
+                scanned_by_id=actor_id,
+                note="تم اعتماد الأصل ضمن إدخال العهدة يدوياً.",
+            )
     return [_new_document("INVENTORY", employee_id, actor_id, [e.asset for e in entries],
                           cycle=cycle, entries={e.asset_id: e for e in entries})
             for employee_id, entries in groups.items()]
@@ -292,6 +326,19 @@ def review_document(doc, employee_id, responses):
         line.decision, line.employee_note = decision, note or None
         rejected = rejected or decision == "OBJECT"
     _transition(doc, "PENDING", "REJECTED" if rejected else "APPROVED")
+    if doc.kind == "INVENTORY" and doc.cycle:
+        for line in doc.lines:
+            if line.decision != "ACCEPT":
+                continue
+            entry = _inventory_entry_for_asset(doc.cycle_id, line.asset_id)
+            if entry:
+                record_manual_asset_inventory(
+                    doc.cycle,
+                    entry,
+                    scanned_by_id=employee_id,
+                    note="تم اعتماد الأصل ضمن موافقة الموظف على العهدة.",
+                )
+                _sync_inventory_line_from_entry(line, entry)
     doc.reviewed_at = datetime.utcnow()
     if rejected:
         InvAssetDocumentReservation.query.filter_by(document_id=doc.id).delete(synchronize_session=False)
@@ -344,6 +391,17 @@ def review_inventory_document(doc, employee_id, action, note=None):
         "REJECT": "REJECTED",
         "CHANGE": "CHANGE_REQUESTED",
     }[action])
+    if action == "ACCEPT" and doc.cycle:
+        for line in doc.lines:
+            entry = _inventory_entry_for_asset(doc.cycle_id, line.asset_id)
+            if entry:
+                record_manual_asset_inventory(
+                    doc.cycle,
+                    entry,
+                    scanned_by_id=employee_id,
+                    note="تم اعتماد الأصل ضمن موافقة الموظف على العهدة.",
+                )
+                _sync_inventory_line_from_entry(line, entry)
     doc.reviewed_at = now
     if action == "REJECT":
         InvAssetDocumentReservation.query.filter_by(document_id=doc.id).delete(synchronize_session=False)
@@ -438,6 +496,20 @@ def revise_inventory_document(doc, actor_id, line_updates, note=None):
             ))
             existing_asset_ids.add(asset.id)
             added_lines.append(asset.asset_tag)
+
+    if doc.cycle:
+        for line in doc.lines:
+            if (line.snapshot or {}).get("included", True) is False:
+                continue
+            entry = _inventory_entry_for_asset(doc.cycle_id, line.asset_id)
+            if entry:
+                record_manual_asset_inventory(
+                    doc.cycle,
+                    entry,
+                    scanned_by_id=actor_id,
+                    note="تم اعتماد الأصل ضمن تعديل العهدة يدوياً.",
+                )
+                _sync_inventory_line_result(line, entry)
 
     now = datetime.utcnow()
     doc.status = "PENDING"
