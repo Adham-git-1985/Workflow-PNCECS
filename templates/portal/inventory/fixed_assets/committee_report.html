@@ -32,6 +32,11 @@
 </div>
 {% if cycle.successor_cycle %}<div class="alert alert-success">اعتمد الأمين العام التقرير وأُغلقت دورة {{ cycle.code }} نهائيًا. دورة الجرد الجديدة مفتوحة: <a class="alert-link" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.successor_cycle.id) }}">{{ cycle.successor_cycle.code }} · {{ cycle.successor_cycle.name }}</a></div>{% endif %}
 
+<div class="alert alert-info">
+  <strong>المسار الذي تتبعه اللجنة:</strong>
+  1) إرسال العهدة للموظف، 2) انتظار موافقته أو طلبه للتعديل، 3) تعديل نفس العهدة وإعادتها له، 4) رفع تقرير اللجنة، 5) اعتماد الأمين العام، 6) إغلاق الدورة. عند الإغلاق يتم إسناد العهد المعتمدة تلقائياً، ولا تنشئ اللجنة عهدة جديدة بعد التعديل.
+</div>
+
 {% if committee_actor and report.status in ['DRAFT','RETURNED','SUBMITTED','READY_TO_CLOSE'] %}
 <form method="post" enctype="multipart/form-data" class="card shadow-sm mb-4 report-intro">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -55,8 +60,8 @@
 <form method="post" class="card border-primary mb-4"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="card-body">
   <h6 class="fw-bold">قرار الأمين العام</h6>
   <textarea class="form-control mb-2" name="secretary_note" rows="3" maxlength="4000" placeholder="الملاحظة أو سبب الإعادة للجنة"></textarea>
-  <button class="btn btn-success" name="action" value="approve">اعتماد وإعادة للجنة للإغلاق</button>
-  <button class="btn btn-outline-warning" name="action" value="return">إعادة للجنة للتعديل</button>
+  <button class="btn btn-success" name="action" value="approve">اعتماد التقرير وإعادته للجنة للإغلاق</button>
+  <button class="btn btn-outline-warning" name="action" value="return">إعادة التقرير للجنة مع ملاحظات</button>
 </div></form>
 {% endif %}
 
@@ -71,15 +76,14 @@
 {% endif %}
 
 <div class="card shadow-sm"><div class="card-header fw-bold">العهدة حسب الموظف</div><div class="table-responsive"><table class="table table-hover align-middle mb-0">
-  <thead><tr><th>الموظف</th><th>قرار الموظف</th><th>حالة المستند</th><th>البنود</th><th>ملاحظة الموظف</th><th>السنة السابقة</th><th></th></tr></thead>
+  <thead><tr><th>الموظف</th><th>المسار الحالي / المطلوب التالي</th><th>البنود</th><th>ملاحظة الموظف</th><th>السنة السابقة</th><th></th></tr></thead>
   <tbody>
   {% for employee in employees %}
     {% set employee_docs = documents|selectattr('employee_id', 'equalto', employee.id)|list %}
     {% set employee_line_count = namespace(value=0) %}{% for doc in employee_docs %}{% for line in doc.lines %}{% if line.snapshot.get('included', True) %}{% set employee_line_count.value = employee_line_count.value + 1 %}{% endif %}{% endfor %}{% endfor %}
     <tr>
-      <td><strong>{{ employee.full_name }}</strong><div class="small text-muted">{{ employee.job_title or '' }}</div></td>
-      <td>{% for doc in employee_docs %}<a href="{{ url_for('portal.asset_document', document_id=doc.id) }}" class="badge text-bg-{{ 'success' if doc.employee_response == 'ACCEPT' else ('danger' if doc.employee_response == 'REJECT' else ('warning' if doc.employee_response == 'CHANGE' else 'secondary')) }} text-decoration-none">{{ employee_response_labels.get(doc.employee_response, 'لم يقرر بعد') }}</a>{% endfor %}</td>
-      <td>{% for doc in employee_docs %}<a href="{{ url_for('portal.asset_document', document_id=doc.id) }}" class="badge text-bg-{{ 'success' if doc.status in ['APPROVED','ISSUED'] else ('danger' if doc.status in ['REJECTED','REJECTED_ESCALATED'] else ('warning' if doc.status == 'CHANGE_REQUESTED' else 'secondary')) }} text-decoration-none">{{ statuses.get(doc.status, doc.status) }}</a>{% endfor %}</td>
+      <td><strong>{{ employee.full_name }}</strong><div class="small text-muted">{{ employee.job_title or '' }}</div>{% if employee_docs|length > 1 %}<div class="small text-primary mt-1">{{ employee_docs|length }} مستندات محفوظة لهذا الموظف</div>{% endif %}</td>
+      <td>{% for doc in employee_docs %}{% set workflow_state = workflow_states.get(doc.id) %}<div class="mb-2"><a href="{{ url_for('portal.asset_document', document_id=doc.id) }}" class="badge text-bg-{{ workflow_state.badge_class if workflow_state else 'secondary' }} text-decoration-none">{{ workflow_state.title if workflow_state else statuses.get(doc.status, doc.status) }}</a><div class="small mt-1"><strong>التالي من {{ workflow_state.next_role if workflow_state else 'المسؤول المختص' }}:</strong> {{ workflow_state.next_action if workflow_state else 'افتح المستند لمراجعة الإجراء التالي.' }}</div><div class="small text-muted">رد الموظف: {{ employee_response_labels.get(doc.employee_response, 'لم يقرر بعد') }} · مستند {{ doc.id }}</div></div>{% endfor %}</td>
       <td>{{ employee_line_count.value }}</td>
       <td>{% for doc in employee_docs %}{% if doc.employee_response_note %}<div class="small">{{ doc.employee_response_note }}</div>{% endif %}{% else %}-{% endfor %}</td>
       <td>{{ previous_by_employee.get(employee.id, [])|length }} بند{% if cycle.previous_cycle %} · {{ cycle.previous_cycle.inventory_date }}{% else %} · يدوي{% endif %}</td>
@@ -88,12 +92,12 @@
         <a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener" href="{{ url_for('portal.asset_committee_report_print', cycle_id=cycle.id, employee_id=employee.id) }}#employee-{{ employee.id }}">عرض تقرير الموظف</a>
       </td>
     </tr>
-  {% else %}<tr><td colspan="7" class="text-center text-muted py-5">لا توجد عهد موظفين بعد. أكمل قراءة الأصول ثم اضغط «إسناد العهد للموظفين».</td></tr>{% endfor %}
+  {% else %}<tr><td colspan="6" class="text-center text-muted py-5">لا توجد عهد موظفين بعد. أكمل قراءة الأصول ثم اضغط «إرسال العهد للموظفين».</td></tr>{% endfor %}
   </tbody>
 </table></div></div>
 
 <div class="card shadow-sm mt-3"><div class="card-header fw-bold">سجل إجراءات العهد</div><div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>التاريخ</th><th>الموظف</th><th>الإجراء</th><th>بواسطة</th><th>الملاحظة</th></tr></thead><tbody>
-{% set event_count = namespace(value=0) %}{% for doc in documents %}{% for event in doc.events %}{% set event_count.value = event_count.value + 1 %}<tr><td>{{ event.created_at|local_datetime }}</td><td>{{ doc.employee.full_name }}</td><td>{{ event.action }}</td><td>{{ event.actor.full_name if event.actor else '-' }}</td><td>{{ event.note or '-' }}</td></tr>{% endfor %}{% endfor %}
+{% set event_count = namespace(value=0) %}{% for doc in documents %}{% for event in doc.events %}{% set event_count.value = event_count.value + 1 %}<tr><td>{{ event.created_at|local_datetime }}</td><td>{{ doc.employee.full_name }}</td><td>{{ event_labels.get(event.action, event.action) }}</td><td>{{ event.actor.full_name if event.actor else '-' }}</td><td>{{ event.note or '-' }}</td></tr>{% endfor %}{% endfor %}
 {% if event_count.value == 0 %}<tr><td colspan="5" class="text-center text-muted">لا يوجد سجل بعد.</td></tr>{% endif %}
 </tbody></table></div></div>
 

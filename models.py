@@ -6460,7 +6460,7 @@ class InvFixedAssetScanLog(db.Model):
 # Portal: Access Requests (Request permission within Portal)
 # ======================
 class InvAssetDocument(db.Model):
-    """Immutable asset snapshots reviewed by the receiving employee."""
+    """Versioned asset snapshots reviewed by the receiving employee."""
     __tablename__ = "inv_asset_document"
     id = db.Column(db.Integer, primary_key=True)
     kind = db.Column(db.String(20), nullable=False)

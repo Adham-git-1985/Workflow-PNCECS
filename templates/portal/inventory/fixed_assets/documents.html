@@ -11,12 +11,15 @@
   .documents-table { min-width: 920px; }
   .documents-asset-summary { min-width: 190px; }
   .documents-asset-summary .asset-tags { line-height: 1.6; overflow-wrap: anywhere; }
+  .document-next-action { min-width: 260px; }
 </style>
 <h4>عهدي وتقارير الاعتماد</h4>
-<p class="text-muted">راجع كل بند وأضف ملاحظاتك. من عمود «تقرير لجنة الجرد» تعرف هل تم رفع التقرير للأمين العام، ويمكنك فتح التقرير الكامل وقراءته.</p>
+<p class="text-muted">هذه الصفحة تعرض كل مستندات العهدة، بما فيها العهد السابقة. عند طلب تعديل لا تُنشأ عهدة جديدة؛ يبقى نفس المستند وتظهر النسخ السابقة داخل «فتح العهدة والتفاصيل».</p>
+<div class="alert alert-info"><strong>المسار باختصار:</strong> ترسل اللجنة العهدة ← يراجع الموظف ويوافق أو يطلب تعديلاً ← تعدّل اللجنة نفس العهدة وتعيدها للموظف ← ترفع اللجنة التقرير ← يعتمد الأمين العام ← تغلق اللجنة الدورة فيتم الإسناد تلقائياً.</div>
 <form class="d-flex gap-2 mb-3"><input type="hidden" name="cycle_id" value="{{ request.args.get('cycle_id', '') }}"><select class="form-select" name="status"><option value="">جميع الحالات</option>{% for key, label in statuses.items() %}<option value="{{ key }}" {{ 'selected' if selected_status == key }}>{{ label }}</option>{% endfor %}</select><button class="btn btn-outline-primary">تصفية</button></form>
-<div class="table-responsive"><table class="table table-bordered bg-white align-middle documents-table"><thead><tr><th>الرقم</th><th>المستند</th><th>الموظف</th><th>الأصول</th><th>حالة المستند / رد الموظف</th><th>تقرير لجنة الجرد / القراءة</th><th>التاريخ</th></tr></thead><tbody>
+<div class="table-responsive"><table class="table table-bordered bg-white align-middle documents-table"><thead><tr><th>الرقم</th><th>المستند</th><th>الموظف</th><th>الأصول</th><th>المسار الحالي / المطلوب التالي</th><th>تقرير لجنة الجرد / القراءة</th><th>التاريخ</th></tr></thead><tbody>
 {% for doc in documents.items %}
+{% set workflow_state = workflow_states.get(doc.id) %}
 <tr>
   <td><a href="{{ url_for('portal.asset_document', document_id=doc.id) }}">{{ doc.id }}</a></td>
   <td>{{ kinds[doc.kind] }}{% if doc.cycle %}<div class="small text-muted">دورة: {{ doc.cycle.code }}</div>{% endif %}</td>
@@ -28,7 +31,11 @@
     </div>
     <a class="btn btn-sm btn-outline-primary mt-2" href="{{ url_for('portal.asset_document', document_id=doc.id) }}">فتح العهدة والتفاصيل</a>
   </td>
-  <td><span class="badge text-bg-{{ 'success' if doc.status in ['APPROVED','ISSUED','COMPLETED'] else ('danger' if doc.status in ['REJECTED','REJECTED_ESCALATED'] else ('warning' if doc.status == 'CHANGE_REQUESTED' else 'secondary')) }}">{{ statuses[doc.status] }}</span><div class="small mt-1">رد الموظف: {{ employee_response_labels.get(doc.employee_response, 'لم يقرر بعد') }}</div></td>
+  <td class="document-next-action">
+    {% if workflow_state %}<span class="badge text-bg-{{ workflow_state.badge_class }}">{{ workflow_state.title }}</span><div class="small mt-2"><strong>التالي من {{ workflow_state.next_role }}:</strong> {{ workflow_state.next_action }}</div>{% endif %}
+    <div class="small text-muted mt-2">حالة المستند: {{ statuses[doc.status] }} · رد الموظف: {{ employee_response_labels.get(doc.employee_response, 'لم يقرر بعد') }}</div>
+    {% if doc.revision_number %}<div class="small text-primary mt-1">النسخة الحالية: مراجعة رقم {{ doc.revision_number }} — النسخ السابقة محفوظة</div>{% endif %}
+  </td>
   <td class="document-report-status">
     {% if doc.cycle %}
       {% set committee_report = doc.cycle.committee_report %}

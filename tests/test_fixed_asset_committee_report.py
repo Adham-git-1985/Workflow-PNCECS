@@ -184,6 +184,7 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
 
         self.login(self.admin)
         line = doc.lines[0]
+        previous_serial = line.snapshot.get("serial")
         response = self.client.post(
             f"/portal/inventory/fixed-assets/documents/{doc.id}",
             data={
@@ -201,6 +202,15 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(doc.status, "PENDING")
         self.assertEqual(doc.revision_number, 1)
+        self.assertEqual(InvAssetDocument.query.filter_by(cycle_id=cycle.id).count(), 1)
+        revision_event = next(event for event in doc.events if event.action == "COMMITTEE_REVISED")
+        self.assertEqual(revision_event.metadata_json["previous_lines"][0]["snapshot"]["serial"], previous_serial)
+        self.assertEqual(revision_event.metadata_json["current_lines"][0]["snapshot"]["serial"], "SN-UPDATED")
+        revision_page = self.client.get(f"/portal/inventory/fixed-assets/documents/{doc.id}")
+        self.assertEqual(revision_page.status_code, 200)
+        revision_text = revision_page.get_data(as_text=True)
+        self.assertIn("المسار المبسط للعهدة", revision_text)
+        self.assertIn("النسخ السابقة للعهدة", revision_text)
 
         self.login(self.employee)
         response = self.client.post(

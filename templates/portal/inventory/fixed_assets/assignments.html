@@ -4,14 +4,14 @@
 <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
   <div>
     <h4 class="mb-1">إسناد العهدة</h4>
-    <p class="text-muted mb-0">إرسال أصول دورة الجرد إلى الموظفين دفعة واحدة للتوقيع والاعتماد؛ الإسناد الفعلي يتم تلقائياً عند الإغلاق النهائي.</p>
+    <p class="text-muted mb-0">إرسال العهدة للموظفين للمراجعة؛ الإسناد الفعلي يتم تلقائياً عند الإغلاق النهائي بعد اعتماد الأمين العام.</p>
   </div>
   <a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_cycles') }}">كل دورات الجرد</a>
 </div>
 
 <div class="alert alert-info">
   <strong>الإرسال الجماعي:</strong>
-  سيجمع النظام الأصول حسب الموظف، وينشئ مستند عهدة واحدًا لكل موظف، ثم يرسل له إشعارًا ليوافق أو يطلب التعديل. يمكنك إرسال جميع الموظفين أو اختيار موظف محدد. بعد اعتماد التقرير وإغلاق الدورة تُسند البنود المعتمدة تلقائياً.
+  سيجمع النظام الأصول حسب الموظف ويرسل له مستند العهدة ليوافق أو يطلب التعديل. عند طلب التعديل تفتح اللجنة نفس المستند وتعيده للموظف؛ لا تنشئ مستنداً جديداً ولا تختفي النسخة السابقة، فهي محفوظة داخل سجل العهدة. يمكنك إرسال جميع الموظفين أو اختيار موظف محدد. بعد اعتماد التقرير وإغلاق الدورة تُسند البنود المعتمدة تلقائياً.
   الأصول التي سبق إرسالها لا تُكرر، ويمكن إعادة التنفيذ بعد إضافة أصول جديدة.
 </div>
 
@@ -32,7 +32,7 @@
       <div class="col-6 col-lg-3"><div class="border rounded p-2"><div class="small text-muted">إجمالي الأصول</div><strong>{{ row.asset_count }}</strong></div></div>
       <div class="col-6 col-lg-3"><div class="border rounded p-2"><div class="small text-muted">الموظفون الجدد</div><strong>{{ row.employee_count }}</strong></div></div>
       <div class="col-6 col-lg-3"><div class="border rounded p-2"><div class="small text-muted">أصول جاهزة للإسناد</div><strong>{{ row.new_asset_count }}</strong></div></div>
-      <div class="col-6 col-lg-3"><div class="border rounded p-2"><div class="small text-muted">مستندات مرسلة سابقًا</div><strong>{{ row.document_count }}</strong></div></div>
+       <div class="col-6 col-lg-3"><div class="border rounded p-2"><div class="small text-muted">سجلات عهد محفوظة</div><strong>{{ row.document_count }}</strong></div></div>
     </div>
 
     {% if row.cycle.committee_report %}
@@ -43,7 +43,7 @@
       {% if row.new_asset_count %}
       <form method="post" action="{{ url_for('portal.asset_send_reports', cycle_id=row.cycle.id) }}" onsubmit="return confirm('هل تريد إرسال العهدة لكل الموظفين في هذه الدورة الآن؟');">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="btn btn-success"><i class="bi bi-person-check"></i> إرسال العهد للموظفين مرة واحدة</button>
+         <button class="btn btn-success"><i class="bi bi-person-check"></i> إرسال العهد للموظفين مرة واحدة</button>
       </form>
       <form method="post" action="{{ url_for('portal.asset_send_reports', cycle_id=row.cycle.id) }}" class="d-flex flex-wrap gap-2" onsubmit="return confirm('هل تريد إرسال عهدة الموظف المختار فقط؟');">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -58,7 +58,7 @@
       {% else %}
       <span class="btn btn-outline-secondary disabled">لا توجد أصول جديدة للإسناد</span>
       {% endif %}
-      <a class="btn btn-outline-primary" href="{{ url_for('portal.asset_documents', cycle_id=row.cycle.id) }}">عرض عهدي وتقارير الاعتماد</a>
+       <a class="btn btn-outline-primary" href="{{ url_for('portal.asset_documents', cycle_id=row.cycle.id) }}">عرض العهد وسجل التعديلات</a>
       <a class="btn btn-outline-dark" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=row.cycle.id) }}">فتح الدورة</a>
     </div>
   </div>

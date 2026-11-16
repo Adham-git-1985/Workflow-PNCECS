@@ -25,9 +25,11 @@ from models import (
     InvFixedAssetPreviousLine,
     User,
 )
-from services.asset_custody import (COMMITTEE_REPORT_STATUSES, EMPLOYEE_RESPONSE_LABELS,
-                                    KINDS, STATUSES, cancel_document, create_movement,
+from services.asset_custody import (COMMITTEE_REPORT_STATUSES, DOCUMENT_EVENT_LABELS,
+                                    EMPLOYEE_RESPONSE_LABELS, KINDS, STATUSES,
+                                    cancel_document, create_movement,
                                     decide_committee_report,
+                                    document_revision_history, document_workflow_state,
                                     escalate_inventory_rejection, get_or_create_committee_report,
                                     inventory_documents_for_cycle, issue_document, pending_for_asset,
                                     review_document, review_inventory_document,
@@ -182,9 +184,11 @@ def asset_documents():
     status = request.args.get("status", "")
     if status in STATUSES:
         query = query.filter_by(status=status)
+    documents = query.order_by(InvAssetDocument.id.desc()).paginate(per_page=30)
     assets = InvFixedAsset.query.filter_by(custodian_user_id=current_user.id).order_by(InvFixedAsset.asset_tag).all()
     return render_template("portal/inventory/fixed_assets/documents.html",
-        documents=query.order_by(InvAssetDocument.id.desc()).paginate(per_page=30),
+        documents=documents,
+        workflow_states={doc.id: document_workflow_state(doc) for doc in documents.items},
         assets=assets, kinds=KINDS, statuses=STATUSES, manager=manager,
         committee_cycle_ids=committee_cycle_ids, selected_status=status,
         can_read_committee_report=manager or bool(committee_cycle_ids) or _is_secretary_general(),
@@ -380,6 +384,9 @@ def asset_document(document_id):
         asset_conditions=ASSET_CONDITIONS,
         asset_lifecycle_statuses=ASSET_LIFECYCLE_STATUSES,
         events=doc.events,
+        event_labels=DOCUMENT_EVENT_LABELS,
+        workflow_state=document_workflow_state(doc),
+        revision_history=document_revision_history(doc),
         addable_assets=_document_addable_assets(doc),
     )
 
@@ -503,6 +510,7 @@ def asset_committee_report(cycle_id):
         .all()
     )
     previous_by_employee = _report_previous_rows(cycle.id)
+    workflow_states = {doc.id: document_workflow_state(doc) for doc in documents}
     employees = []
     seen = set()
     for doc in documents:
@@ -521,6 +529,8 @@ def asset_committee_report(cycle_id):
         report_statuses=COMMITTEE_REPORT_STATUSES,
         statuses=STATUSES,
         employee_response_labels=EMPLOYEE_RESPONSE_LABELS,
+        event_labels=DOCUMENT_EVENT_LABELS,
+        workflow_states=workflow_states,
         report_audits=report_audits,
     )
 

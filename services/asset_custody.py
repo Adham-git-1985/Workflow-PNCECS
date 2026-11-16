@@ -47,6 +47,17 @@ EMPLOYEE_RESPONSE_LABELS = {
     "REJECT": "رفض الموظف",
     "CHANGE": "طلب الموظف مراجعة وتعديل",
 }
+DOCUMENT_EVENT_LABELS = {
+    "CREATED": "أُنشئت العهدة وأُرسلت للموظف",
+    "EMPLOYEE_ACCEPTED": "اعتمد الموظف العهدة",
+    "EMPLOYEE_CHANGE_REQUEST": "طلب الموظف تعديل العهدة",
+    "EMPLOYEE_REJECTED": "رفض الموظف العهدة",
+    "COMMITTEE_REVISED": "عدّلت اللجنة العهدة وأعادتها للموظف",
+    "REJECTION_ESCALATED": "رفعت اللجنة الرفض للأمين العام",
+    "ISSUED": "تم إسناد العهدة فعلياً",
+    "COMPLETED": "اكتملت حركة العهدة",
+    "CANCELLED": "أُلغي مستند العهدة",
+}
 STATE_FIELDS = ("custodian_user_id", "warehouse_id", "room_id", "asset_condition", "lifecycle_status", "is_active", "asset_tag", "name", "serial_number")
 
 
@@ -79,6 +90,192 @@ def record_document_event(doc, action, actor_id=None, note=None, metadata=None):
         metadata_json=metadata or None,
         created_at=datetime.utcnow(),
     ))
+
+
+def document_workflow_state(doc):
+    """Return the plain-language next step for a custody document."""
+    report = doc.cycle.committee_report if doc.cycle else None
+    report_status = report.status if report else None
+
+    if doc.kind != "INVENTORY":
+        if doc.status == "PENDING":
+            return {
+                "stage": "EMPLOYEE_REVIEW",
+                "stage_label": "مراجعة الموظف",
+                "title": "بانتظار مراجعة الموظف",
+                "next_role": "الموظف",
+                "next_action": "راجع بيانات الحركة ثم وافق عليها أو سجّل اعتراضاً واضحاً.",
+                "badge_class": "warning",
+            }
+        if doc.status in {"ISSUED", "COMPLETED"}:
+            return {
+                "stage": "DONE",
+                "stage_label": "مكتملة",
+                "title": "اكتملت حركة العهدة",
+                "next_role": "لا يوجد",
+                "next_action": "الحركة محفوظة في سجل العهدة.",
+                "badge_class": "success",
+            }
+        return {
+            "stage": "STATUS",
+            "stage_label": STATUSES.get(doc.status, doc.status),
+            "title": STATUSES.get(doc.status, doc.status),
+            "next_role": "المسؤول المختص",
+            "next_action": "راجع تفاصيل المستند وسجل الإجراء التالي من نفس الصفحة.",
+            "badge_class": "secondary",
+        }
+
+    if doc.status == "PENDING":
+        revised = bool(doc.revision_number)
+        return {
+            "stage": "EMPLOYEE_REVIEW",
+            "stage_label": "مراجعة الموظف بعد التعديل" if revised else "مراجعة الموظف",
+            "title": "بانتظار موافقة الموظف على البيانات",
+            "next_role": "الموظف",
+            "next_action": (
+                "راجع التعديل الذي أجرته اللجنة ثم وافق عليه أو اطلب تعديلاً جديداً. "
+                "لا يتم إنشاء عهدة جديدة عند التعديل."
+            ),
+            "badge_class": "warning",
+        }
+    if doc.status == "CHANGE_REQUESTED":
+        return {
+            "stage": "COMMITTEE_EDIT",
+            "stage_label": "معالجة طلب التعديل",
+            "title": "بانتظار لجنة الجرد معالجة طلب الموظف",
+            "next_role": "لجنة الجرد",
+            "next_action": "افتح العهدة نفسها، عدّل البيانات المطلوبة، ثم أعد إرسالها للموظف.",
+            "badge_class": "warning",
+        }
+    if doc.status == "REJECTED":
+        return {
+            "stage": "COMMITTEE_DECISION",
+            "stage_label": "قرار لجنة الجرد",
+            "title": "رفض الموظف العهدة",
+            "next_role": "لجنة الجرد",
+            "next_action": "عالج سبب الرفض داخل العهدة نفسها أو ارفع الرفض للأمين العام.",
+            "badge_class": "danger",
+        }
+    if doc.status == "REJECTED_ESCALATED":
+        return {
+            "stage": "SECRETARY_REVIEW",
+            "stage_label": "رفض مرفوع للأمين العام",
+            "title": "تم تصعيد رفض الموظف",
+            "next_role": "الأمين العام / لجنة الجرد",
+            "next_action": "راجع سبب التصعيد ضمن تقرير الدورة وتابع القرار من نفس السجل.",
+            "badge_class": "danger",
+        }
+    if doc.status == "APPROVED":
+        if report_status == "SUBMITTED":
+            return {
+                "stage": "SECRETARY_REVIEW",
+                "stage_label": "تقرير لدى الأمين العام",
+                "title": "اعتمد الموظف العهدة وهي ضمن تقرير مرفوع للأمين العام",
+                "next_role": "الأمين العام",
+                "next_action": "راجع تقرير اللجنة ثم اعتمده أو أعده للجنة مع ملاحظة.",
+                "badge_class": "primary",
+            }
+        if report_status == "RETURNED":
+            return {
+                "stage": "COMMITTEE_EDIT",
+                "stage_label": "التقرير معاد للجنة",
+                "title": "اعتمد الموظف، لكن تقرير الدورة يحتاج تعديلاً",
+                "next_role": "لجنة الجرد",
+                "next_action": "راجع ملاحظة الأمين العام وعدّل التقرير أو العهدة نفسها عند الحاجة.",
+                "badge_class": "warning",
+            }
+        if report_status in {"READY_TO_CLOSE", "APPROVED"}:
+            return {
+                "stage": "FINAL_ASSIGNMENT",
+                "stage_label": "جاهزة للإسناد النهائي",
+                "title": "اعتمد الأمين العام التقرير",
+                "next_role": "لجنة الجرد",
+                "next_action": "أغلق الدورة نهائياً؛ عند الإغلاق يتم إسناد العهدة تلقائياً.",
+                "badge_class": "info",
+            }
+        if report_status == "CLOSED":
+            return {
+                "stage": "ASSIGNED",
+                "stage_label": "مُسندة نهائياً",
+                "title": "تم إسناد العهدة نهائياً",
+                "next_role": "لا يوجد",
+                "next_action": "العهدة الحالية محفوظة، وتبقى النسخ السابقة والتعديلات في سجلها.",
+                "badge_class": "success",
+            }
+        return {
+            "stage": "COMMITTEE_REPORT",
+            "stage_label": "تجميع تقرير اللجنة",
+            "title": "اعتمد الموظف العهدة وهي جاهزة لتقرير اللجنة",
+            "next_role": "لجنة الجرد",
+            "next_action": "أدرجها في تقرير الدورة ثم ارفع التقرير للأمين العام.",
+            "badge_class": "success",
+        }
+    if doc.status == "ISSUED":
+        return {
+            "stage": "ASSIGNED",
+            "stage_label": "مُسندة نهائياً",
+            "title": "تم إسناد العهدة فعلياً",
+            "next_role": "لا يوجد",
+            "next_action": "العهدة الحالية محفوظة، وتبقى النسخ السابقة والتعديلات في سجلها.",
+            "badge_class": "success",
+        }
+    if doc.status == "COMPLETED":
+        return {
+            "stage": "DONE",
+            "stage_label": "مكتملة",
+            "title": "اكتمل سجل الجرد لهذا الأصل",
+            "next_role": "لا يوجد",
+            "next_action": "هذا الأصل كان للمراجعة فقط ولم يدخل في الإسناد النهائي.",
+            "badge_class": "success",
+        }
+    if doc.status == "CANCELLED":
+        return {
+            "stage": "CANCELLED",
+            "stage_label": "ملغاة",
+            "title": "أُلغي مستند العهدة",
+            "next_role": "لا يوجد",
+            "next_action": "المستند محفوظ كسجل تاريخي ولا يمثل عهدة فعالة.",
+            "badge_class": "secondary",
+        }
+    return {
+        "stage": "STATUS",
+        "stage_label": STATUSES.get(doc.status, doc.status),
+        "title": STATUSES.get(doc.status, doc.status),
+        "next_role": "المسؤول المختص",
+        "next_action": "راجع تفاصيل المستند وسجل الإجراء التالي من نفس الصفحة.",
+        "badge_class": "secondary",
+    }
+
+
+def _document_line_history(line):
+    return {
+        "asset_id": line.asset_id,
+        "snapshot": dict(line.snapshot or {}),
+        "decision": line.decision,
+        "employee_note": line.employee_note,
+    }
+
+
+def document_revision_history(doc):
+    """Return prior custody versions kept in committee revision events."""
+    history = []
+    for event in doc.events:
+        if event.action != "COMMITTEE_REVISED":
+            continue
+        metadata = event.metadata_json or {}
+        previous_lines = metadata.get("previous_lines") or []
+        if not previous_lines:
+            continue
+        revision = int(metadata.get("revision") or 1)
+        history.append({
+            "version": max(revision - 1, 0),
+            "label": f"النسخة السابقة قبل المراجعة رقم {revision}",
+            "created_at": event.created_at,
+            "actor": event.actor,
+            "note": event.note,
+            "lines": previous_lines,
+        })
+    return list(reversed(history))
 
 
 def _transition(doc, before, after):
@@ -183,7 +380,13 @@ def _new_document(kind, employee_id, actor_id, assets, *, cycle=None, reason=Non
             db.session.add(InvAssetDocumentReservation(asset_id=asset.id, document_id=doc.id))
         doc.lines.append(InvAssetDocumentLine(asset_id=asset.id, snapshot=snapshot))
     db.session.flush()
-    record_document_event(doc, "CREATED", actor_id, reason)
+    record_document_event(
+        doc,
+        "CREATED",
+        actor_id,
+        reason,
+        {"revision": 0, "lines": [_document_line_history(line) for line in doc.lines]},
+    )
     if kind not in {"RETURN", "DISPOSE"}:
         notify_document(doc, employee_id, "يرجى مراجعة بنود " + KINDS[kind])
     return doc
@@ -399,6 +602,8 @@ def revise_inventory_document(doc, actor_id, line_updates, note=None):
     if not doc.lines:
         raise ValueError("لا توجد بنود لتعديلها.")
 
+    previous_lines = [_document_line_history(line) for line in doc.lines]
+
     report = doc.cycle.committee_report if doc.cycle else None
     if report is not None and report.status == "READY_TO_CLOSE":
         _mark_committee_report_dirty(report, actor_id)
@@ -493,6 +698,8 @@ def revise_inventory_document(doc, actor_id, line_updates, note=None):
             "changed": changed_lines,
             "added": added_lines,
             "removed": removed_lines,
+            "previous_lines": previous_lines,
+            "current_lines": [_document_line_history(line) for line in doc.lines],
         },
     )
     notify_document(doc, doc.employee_id, "أعادت اللجنة إرسال العهدة بعد التعديل")

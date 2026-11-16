@@ -70,7 +70,7 @@ from services.fixed_asset_inventory import (
     record_asset_scan,
     reopen_inventory_cycle,
 )
-from services.asset_custody import close_committee_cycle
+from services.asset_custody import close_committee_cycle, document_workflow_state
 
 from . import portal_bp
 from .routes import (
@@ -1233,6 +1233,13 @@ def fixed_asset_view(asset_id: int):
         .order_by(InvFixedAssetCycle.inventory_date.desc(), InvFixedAssetCycle.id.desc())
         .all()
     )
+    custody_history = (
+        InvAssetDocument.query
+        .join(InvAssetDocumentLine)
+        .filter(InvAssetDocumentLine.asset_id == asset.id)
+        .order_by(InvAssetDocument.id.desc())
+        .all()
+    )
     return render_template(
         "portal/inventory/fixed_assets/asset_view.html",
         asset=asset,
@@ -1240,7 +1247,8 @@ def fixed_asset_view(asset_id: int):
         active_cycles=active_cycles,
         can_manage=current_user.has_perm(STORE_MANAGE),
         can_delete=current_user.has_perm(INVENTORY_FIXED_ASSET_DELETE),
-        custody_history=InvAssetDocument.query.join(InvAssetDocumentLine).filter(InvAssetDocumentLine.asset_id == asset.id).order_by(InvAssetDocument.id.desc()).all(),
+        custody_history=custody_history,
+        custody_states={doc.id: document_workflow_state(doc) for doc in custody_history},
     )
 
 
