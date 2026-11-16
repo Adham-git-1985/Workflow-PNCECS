@@ -4,14 +4,14 @@
 <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
   <div>
     <h4 class="mb-1">إسناد العهدة</h4>
-    <p class="text-muted mb-0">إسناد أصول دورة الجرد إلى الموظفين دفعة واحدة وإرسالها للتوقيع والاعتماد.</p>
+    <p class="text-muted mb-0">إرسال أصول دورة الجرد إلى الموظفين دفعة واحدة للتوقيع والاعتماد؛ الإسناد الفعلي يتم تلقائياً عند الإغلاق النهائي.</p>
   </div>
   <a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_cycles') }}">كل دورات الجرد</a>
 </div>
 
 <div class="alert alert-info">
-  <strong>الإسناد الجماعي:</strong>
-  سيجمع النظام الأصول حسب الموظف، وينشئ مستند عهدة واحدًا لكل موظف، ثم يرسل له إشعارًا ليوافق أو يطلب التعديل.
+  <strong>الإرسال الجماعي:</strong>
+  سيجمع النظام الأصول حسب الموظف، وينشئ مستند عهدة واحدًا لكل موظف، ثم يرسل له إشعارًا ليوافق أو يطلب التعديل. يمكنك إرسال جميع الموظفين أو اختيار موظف محدد. بعد اعتماد التقرير وإغلاق الدورة تُسند البنود المعتمدة تلقائياً.
   الأصول التي سبق إرسالها لا تُكرر، ويمكن إعادة التنفيذ بعد إضافة أصول جديدة.
 </div>
 
@@ -41,9 +41,19 @@
 
     <div class="d-flex flex-wrap gap-2">
       {% if row.new_asset_count %}
-      <form method="post" action="{{ url_for('portal.asset_send_reports', cycle_id=row.cycle.id) }}" onsubmit="return confirm('هل تريد إسناد العهدة لكل الموظفين في هذه الدورة الآن؟');">
+      <form method="post" action="{{ url_for('portal.asset_send_reports', cycle_id=row.cycle.id) }}" onsubmit="return confirm('هل تريد إرسال العهدة لكل الموظفين في هذه الدورة الآن؟');">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="btn btn-success"><i class="bi bi-person-check"></i> إسناد العهدة للجميع مرة واحدة</button>
+        <button class="btn btn-success"><i class="bi bi-person-check"></i> إرسال العهد للموظفين مرة واحدة</button>
+      </form>
+      <form method="post" action="{{ url_for('portal.asset_send_reports', cycle_id=row.cycle.id) }}" class="d-flex flex-wrap gap-2" onsubmit="return confirm('هل تريد إرسال عهدة الموظف المختار فقط؟');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <select class="form-select" name="employee_id" required aria-label="الموظف المحدد للإسناد">
+          <option value="">إسناد عهدة لموظف محدد</option>
+          {% for employee in row.employee_choices %}
+          <option value="{{ employee.id }}">{{ employee.full_name }} · {{ row.employee_asset_counts.get(employee.id, 0) }} أصل</option>
+          {% endfor %}
+        </select>
+        <button class="btn btn-outline-success"><i class="bi bi-person-check"></i> إرسال العهدة للموظف</button>
       </form>
       {% else %}
       <span class="btn btn-outline-secondary disabled">لا توجد أصول جديدة للإسناد</span>

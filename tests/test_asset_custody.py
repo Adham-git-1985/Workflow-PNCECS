@@ -207,7 +207,8 @@ class AssetCustodyTests(unittest.TestCase):
 
         page = self.client.get("/portal/inventory/fixed-assets/assignments")
         self.assertEqual(page.status_code, 200)
-        self.assertIn("إسناد العهدة للجميع مرة واحدة", page.get_data(as_text=True))
+        self.assertIn("إرسال العهد للموظفين مرة واحدة", page.get_data(as_text=True))
+        self.assertIn("إسناد عهدة لموظف محدد", page.get_data(as_text=True))
 
         first = send_cycle_reports(cycle, self.admin.id)
         db.session.commit()
@@ -231,6 +232,37 @@ class AssetCustodyTests(unittest.TestCase):
         self.assertEqual(len(second[0].lines), 1)
         self.assertEqual(second[0].lines[0].asset_id, new_asset.id)
         self.assertEqual(InvAssetDocument.query.count(), 2)
+
+    def test_specific_employee_assignment_sends_only_selected_employee(self):
+        first_asset = self._create_asset("FA-SPECIFIC-001")
+        second_asset = self._create_asset("FA-SPECIFIC-002")
+        first_cycle = self.cycle(first_asset)
+        second_cycle_entry = InvFixedAssetEntry.query.filter_by(
+            cycle_id=first_cycle.id,
+            asset_id=second_asset.id,
+        ).one()
+        second_cycle_entry.expected_custodian_user_id = self.other.id
+        second_cycle_entry.result_status = "MATCHED"
+        db.session.commit()
+
+        response = self.client.post(
+            f"/portal/inventory/fixed-assets/cycles/{first_cycle.id}/send-reports",
+            data={"employee_id": str(self.employee.id)},
+        )
+        self.assertEqual(response.status_code, 302)
+        docs = InvAssetDocument.query.all()
+        self.assertEqual(len(docs), 1)
+        self.assertEqual(docs[0].employee_id, self.employee.id)
+        self.assertEqual([line.asset_id for line in docs[0].lines], [first_asset.id])
+
+        response = self.client.post(
+            f"/portal/inventory/fixed-assets/cycles/{first_cycle.id}/send-reports",
+            data={"employee_id": str(self.other.id)},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(InvAssetDocument.query.count(), 2)
+        second_doc = InvAssetDocument.query.filter_by(employee_id=self.other.id).one()
+        self.assertEqual([line.asset_id for line in second_doc.lines], [second_asset.id])
 
     def test_reports_freeze_cycle_and_duplicate_send_is_rejected(self):
         cycle = self.cycle(self._create_asset())

@@ -9,6 +9,7 @@ from PIL import Image
 from extensions import db
 from models import (
     InvAssetDocument,
+    InvAssetDocumentReservation,
     InvFixedAssetCycle,
     InvFixedAssetCycleMember,
     InvFixedAssetEntry,
@@ -106,7 +107,7 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(InvAssetDocument.query.count(), 1)
 
-    def test_manual_custody_assignment_counts_as_inventory_without_qr(self):
+    def test_unscanned_asset_is_not_marked_as_inventory_by_custody_send(self):
         asset = self._create_asset("FA-MANUAL-001")
         asset.custodian_user_id = self.employee.id
         cycle = InvFixedAssetCycle(
@@ -124,9 +125,12 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         doc = send_cycle_reports(cycle, self.admin.id)[0]
         db.session.commit()
         entry = InvFixedAssetEntry.query.filter_by(cycle_id=cycle.id, asset_id=asset.id).one()
-        self.assertIsNotNone(entry.scanned_at)
-        self.assertEqual(entry.result_status, "MATCHED")
-        self.assertEqual(doc.lines[0].snapshot["result"], "MATCHED")
+        self.assertIsNone(entry.scanned_at)
+        self.assertEqual(entry.result_status, "PENDING")
+        self.assertFalse(doc.lines[0].snapshot["eligible"])
+        self.assertFalse(doc.lines[0].snapshot["included"])
+        with self.assertRaises(ValueError):
+            send_cycle_reports(cycle, self.admin.id)
 
     def test_missing_previous_year_does_not_create_false_variances(self):
         cycle, asset, doc = self.send_one()
@@ -219,6 +223,49 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         self.assertEqual(doc.status, "REJECTED_ESCALATED")
         self.assertTrue(any(event.action == "REJECTION_ESCALATED" for event in doc.events))
 
+    def test_employee_change_revision_is_issued_when_committee_closes(self):
+        cycle, asset, doc = self.send_one()
+        review_inventory_document(doc, self.employee.id, "CHANGE", "تعديل الرقم التسلسلي")
+        db.session.commit()
+
+        self.login(self.admin)
+        line = doc.lines[0]
+        response = self.client.post(
+            f"/portal/inventory/fixed-assets/documents/{doc.id}",
+            data={
+                "action": "revise",
+                f"include_{line.id}": "1",
+                f"tag_{line.id}": line.snapshot["tag"],
+                f"name_{line.id}": line.snapshot["name"],
+                f"serial_{line.id}": "SN-REVISED",
+                f"location_{line.id}": line.snapshot["location"],
+                f"condition_{line.id}": "GOOD",
+                f"lifecycle_{line.id}": "ACTIVE",
+                "committee_revision_note": "اعتماد التعديل",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(doc.status, "PENDING")
+
+        review_inventory_document(doc, self.employee.id, "ACCEPT", "تم اعتماد التعديل")
+        report = get_or_create_committee_report(cycle, self.admin.id)
+        submit_committee_report(report, self.admin.id)
+        db.session.commit()
+
+        self.login(self.secretary)
+        response = self.client.post(
+            f"/portal/inventory/fixed-assets/cycles/{cycle.id}/committee-report",
+            data={"action": "approve", "secretary_note": "معتمد"},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        self.login(self.admin)
+        response = self.client.post(f"/portal/inventory/fixed-assets/cycles/{cycle.id}/close")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(doc.status, "ISSUED")
+        self.assertEqual(asset.custodian_user_id, self.employee.id)
+        self.assertEqual(InvAssetDocumentReservation.query.count(), 0)
+
     def test_committee_report_submission_and_secretary_approval(self):
         cycle, asset, doc = self.send_one()
         review_inventory_document(doc, self.employee.id, "ACCEPT", "تمت المطابقة")
@@ -274,12 +321,6 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         self.assertEqual(next_cycle.status, "ACTIVE")
         self.assertEqual([entry.asset_id for entry in next_cycle.entries], [asset.id])
 
-        self.login(self.admin)
-        response = self.client.post(
-            f"/portal/inventory/fixed-assets/documents/{doc.id}",
-            data={"action": "issue"},
-        )
-        self.assertEqual(response.status_code, 302)
         self.assertEqual(doc.status, "ISSUED")
         self.assertEqual(asset.custodian_user_id, self.employee.id)
 
@@ -494,6 +535,7 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         self.assertEqual(doc.status, "PENDING")
         self.assertIsNone(doc.employee_response)
         self.assertFalse(next(line for line in doc.lines if line.asset_id == first.id).snapshot["included"])
+        self.assertIsNone(InvAssetDocumentReservation.query.filter_by(asset_id=first.id).first())
         self.assertTrue(any(line.asset_id == second.id for line in doc.lines))
         self.assertTrue(any(event.action == "COMMITTEE_REVISED" for event in doc.events))
 
@@ -514,6 +556,9 @@ class FixedAssetCommitteeReportTests(unittest.TestCase):
         self.assertEqual(close_response.status_code, 302)
         self.assertEqual(report.status, "CLOSED")
         self.assertEqual(cycle.status, "CLOSED")
+        self.assertEqual(doc.status, "ISSUED")
+        self.assertIsNone(first.custodian_user_id)
+        self.assertEqual(second.custodian_user_id, self.employee.id)
 
 
 if __name__ == "__main__":

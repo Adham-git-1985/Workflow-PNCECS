@@ -215,10 +215,18 @@ def _assignment_cycles_for_current_user():
 @portal_bp.route("/inventory/fixed-assets/assignments")
 @login_required
 def asset_assignments():
-    """Show open inventory cycles and provide one-click bulk custody assignment."""
+    """Show open inventory cycles with bulk and employee-specific assignment."""
     rows = []
     for cycle in _assignment_cycles_for_current_user():
         groups = cycle_assignment_groups(cycle)
+        employee_ids = list(groups)
+        employees = (
+            User.query
+            .filter(User.id.in_(employee_ids))
+            .order_by(User.name.asc(), User.email.asc())
+            .all()
+            if employee_ids else []
+        )
         existing_documents = InvAssetDocument.query.filter(
             InvAssetDocument.cycle_id == cycle.id,
             InvAssetDocument.kind == "INVENTORY",
@@ -230,6 +238,8 @@ def asset_assignments():
             "employee_count": len(groups),
             "new_asset_count": sum(len(entries) for entries in groups.values()),
             "document_count": existing_documents,
+            "employee_choices": employees,
+            "employee_asset_counts": {employee_id: len(entries) for employee_id, entries in groups.items()},
         })
     return render_template(
         "portal/inventory/fixed_assets/assignments.html",
@@ -244,11 +254,19 @@ def asset_send_reports(cycle_id):
     cycle = InvFixedAssetCycle.query.get_or_404(cycle_id)
     if not (current_user.has_perm(STORE_MANAGE) or _can_committee_act(cycle)):
         abort(403)
+    selected_employee_id = request.form.get("employee_id") or None
     try:
-        docs = send_cycle_reports(cycle, current_user.id)
-        _audit("INV_ASSET_REPORT_SEND", f"إرسال {len(docs)} تقرير من الدورة {cycle.code}", "INV_FIXED_ASSET_CYCLE", cycle.id)
+        docs = send_cycle_reports(cycle, current_user.id, employee_id=selected_employee_id)
+        if selected_employee_id:
+            employee_label = docs[0].employee.full_name if docs else selected_employee_id
+            audit_message = f"إرسال عهدة الموظف {employee_label} من الدورة {cycle.code}"
+            success_message = f"تم إرسال عهدة الموظف {employee_label} للاعتماد."
+        else:
+            audit_message = f"إرسال {len(docs)} تقرير من الدورة {cycle.code}"
+            success_message = f"تم إرسال {len(docs)} تقرير للموظفين للاعتماد."
+        _audit("INV_ASSET_REPORT_SEND", audit_message, "INV_FIXED_ASSET_CYCLE", cycle.id)
         db.session.commit()
-        flash(f"تم إرسال {len(docs)} تقرير للموظفين للاعتماد.", "success")
+        flash(success_message, "success")
     except (ValueError, IntegrityError) as exc:
         db.session.rollback()
         flash(str(exc) if isinstance(exc, ValueError) else "يوجد إجراء متزامن على الأصل؛ حدّث الصفحة.", "danger")
@@ -384,6 +402,8 @@ def _document_addable_assets(doc):
     )
     result = []
     for entry in entries:
+        if not entry.scanned_at:
+            continue
         holder_id = (
             entry.observed_custodian_user_id
             if entry.scanned_at

@@ -62,7 +62,7 @@
 
 {% if committee_actor and report.status == 'READY_TO_CLOSE' and cycle.status in ['ACTIVE','CLOSED'] and not cycle.finalized_at %}
 <div class="alert alert-info d-flex flex-wrap justify-content-between align-items-center gap-2">
-  <div><strong>أعاد الأمين العام التقرير للجنة للإغلاق.</strong><br><span class="small">بعد الإغلاق لن يمكن تعديل الدورة. الإعادة للفتح متاحة للسوبر أدمن فقط.</span></div>
+  <div><strong>أعاد الأمين العام التقرير للجنة للإغلاق.</strong><br><span class="small">عند الإغلاق تُسند العهد المعتمدة تلقائياً، وبعدها لن يمكن تعديل الدورة. الإعادة للفتح متاحة للسوبر أدمن فقط.</span></div>
   <form method="post" action="{{ url_for('portal.fixed_asset_cycle_close', cycle_id=cycle.id) }}" onsubmit="return confirm('سيتم إغلاق الدورة نهائياً ومنع التعديل عليها. هل تريد المتابعة؟')">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button class="btn btn-primary" type="submit"><i class="bi bi-lock"></i> إغلاق الدورة نهائياً</button>
@@ -75,7 +75,7 @@
   <tbody>
   {% for employee in employees %}
     {% set employee_docs = documents|selectattr('employee_id', 'equalto', employee.id)|list %}
-    {% set employee_line_count = namespace(value=0) %}{% for doc in employee_docs %}{% set employee_line_count.value = employee_line_count.value + (doc.lines|length) %}{% endfor %}
+    {% set employee_line_count = namespace(value=0) %}{% for doc in employee_docs %}{% for line in doc.lines %}{% if line.snapshot.get('included', True) %}{% set employee_line_count.value = employee_line_count.value + 1 %}{% endif %}{% endfor %}{% endfor %}
     <tr>
       <td><strong>{{ employee.full_name }}</strong><div class="small text-muted">{{ employee.job_title or '' }}</div></td>
       <td>{% for doc in employee_docs %}<a href="{{ url_for('portal.asset_document', document_id=doc.id) }}" class="badge text-bg-{{ 'success' if doc.employee_response == 'ACCEPT' else ('danger' if doc.employee_response == 'REJECT' else ('warning' if doc.employee_response == 'CHANGE' else 'secondary')) }} text-decoration-none">{{ employee_response_labels.get(doc.employee_response, 'لم يقرر بعد') }}</a>{% endfor %}</td>

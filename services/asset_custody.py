@@ -19,11 +19,7 @@ from models import (
     Notification,
     User,
 )
-from services.fixed_asset_inventory import (
-    close_inventory_cycle,
-    open_followup_inventory_cycle,
-    record_manual_asset_inventory,
-)
+from services.fixed_asset_inventory import close_inventory_cycle, open_followup_inventory_cycle
 from services.notification_email import PORTAL_APPROVAL_EMAIL_MODE, enqueue_notification_email
 
 KINDS = {"INVENTORY": "تقرير جرد", "ASSIGN": "إسناد عهدة", "TRANSFER": "نقل عهدة",
@@ -116,28 +112,6 @@ def _inventory_entry_for_asset(cycle_id, asset_id):
     return InvFixedAssetEntry.query.filter_by(cycle_id=cycle_id, asset_id=asset_id).first()
 
 
-def _sync_inventory_line_from_entry(line, entry):
-    snapshot = dict(line.snapshot or {})
-    snapshot["result"] = entry.result_status
-    if entry.scanned_at:
-        snapshot.update({
-            "condition": entry.observed_condition or snapshot.get("condition"),
-            "target_lifecycle": entry.observed_lifecycle_status or snapshot.get("target_lifecycle"),
-            "location": entry.observed_location_label,
-            "inventory_note": entry.note,
-        })
-    line.snapshot = snapshot
-
-
-def _sync_inventory_line_result(line, entry):
-    """Keep the custody snapshot's inventory status in sync without
-    overwriting edits made by the committee in the custody form.
-    """
-    snapshot = dict(line.snapshot or {})
-    snapshot["result"] = entry.result_status
-    line.snapshot = snapshot
-
-
 def fixed_asset_report_details(asset, entry=None):
     """Return the descriptive fields that should travel with an asset report.
 
@@ -181,7 +155,12 @@ def _inventory_snapshot(asset, employee, entry=None):
         "inventory_note": entry.note if entry else None,
         "eligible": eligible,
         "target_lifecycle": entry.observed_lifecycle_status if scanned else (entry.expected_lifecycle_status if entry else asset.lifecycle_status),
-        "included": True,
+        # An asset that was not physically read (or is otherwise not eligible)
+        # may remain in the audit document, but it is never part of the active
+        # custody.  Keeping this flag false also keeps it out of the committee
+        # custody report and releases it from assignment when the document is
+        # issued.
+        "included": eligible,
         **fixed_asset_report_details(asset, entry),
     }
 
@@ -199,8 +178,10 @@ def _new_document(kind, employee_id, actor_id, assets, *, cycle=None, reason=Non
     employee = db.session.get(User, employee_id)
     for asset in assets:
         entry = entries.get(asset.id) if entries else None
-        db.session.add(InvAssetDocumentReservation(asset_id=asset.id, document_id=doc.id))
-        doc.lines.append(InvAssetDocumentLine(asset_id=asset.id, snapshot=_inventory_snapshot(asset, employee, entry)))
+        snapshot = _inventory_snapshot(asset, employee, entry)
+        if snapshot.get("included", True):
+            db.session.add(InvAssetDocumentReservation(asset_id=asset.id, document_id=doc.id))
+        doc.lines.append(InvAssetDocumentLine(asset_id=asset.id, snapshot=snapshot))
     db.session.flush()
     record_document_event(doc, "CREATED", actor_id, reason)
     if kind not in {"RETURN", "DISPOSE"}:
@@ -231,7 +212,10 @@ def cycle_assignment_groups(cycle):
         line.asset_id
         for document in documents
         for line in document.lines
-        if (line.snapshot or {}).get("included", True) is not False
+        if (
+            (line.snapshot or {}).get("eligible", True) is False
+            or (line.snapshot or {}).get("included", True) is not False
+        )
     }
     entry_asset_ids = {entry.asset_id for entry in cycle.entries}
     reserved_asset_ids = set()
@@ -267,22 +251,22 @@ def cycle_assignment_groups(cycle):
     return groups
 
 
-def send_cycle_reports(cycle, actor_id):
+def send_cycle_reports(cycle, actor_id, employee_id=None):
     if cycle.status not in {"ACTIVE", "CLOSED"}:
         raise ValueError("دورة الجرد غير متاحة لإسناد العهد.")
     if cycle.finalized_at is not None:
         raise ValueError("اعتمد الأمين العام تقرير هذه الدورة؛ استخدم دورة الجرد الجديدة.")
     groups = cycle_assignment_groups(cycle)
+    if employee_id is not None:
+        try:
+            employee_id = int(employee_id)
+        except (TypeError, ValueError):
+            raise ValueError("اختر موظفاً صحيحاً لإرسال العهدة.")
+        if employee_id not in groups:
+            raise ValueError("لا توجد أصول جديدة جاهزة للإرسال لهذا الموظف في هذه الدورة.")
+        groups = {employee_id: groups[employee_id]}
     if not groups:
         raise ValueError("لا توجد تقارير جديدة للإرسال؛ راجع التقارير القائمة أو ربط البنود بالموظفين.")
-    for entries in groups.values():
-        for entry in entries:
-            record_manual_asset_inventory(
-                cycle,
-                entry,
-                scanned_by_id=actor_id,
-                note="تم اعتماد الأصل ضمن إدخال العهدة يدوياً.",
-            )
     return [_new_document("INVENTORY", employee_id, actor_id, [e.asset for e in entries],
                           cycle=cycle, entries={e.asset_id: e for e in entries})
             for employee_id, entries in groups.items()]
@@ -326,19 +310,6 @@ def review_document(doc, employee_id, responses):
         line.decision, line.employee_note = decision, note or None
         rejected = rejected or decision == "OBJECT"
     _transition(doc, "PENDING", "REJECTED" if rejected else "APPROVED")
-    if doc.kind == "INVENTORY" and doc.cycle:
-        for line in doc.lines:
-            if line.decision != "ACCEPT":
-                continue
-            entry = _inventory_entry_for_asset(doc.cycle_id, line.asset_id)
-            if entry:
-                record_manual_asset_inventory(
-                    doc.cycle,
-                    entry,
-                    scanned_by_id=employee_id,
-                    note="تم اعتماد الأصل ضمن موافقة الموظف على العهدة.",
-                )
-                _sync_inventory_line_from_entry(line, entry)
     doc.reviewed_at = datetime.utcnow()
     if rejected:
         InvAssetDocumentReservation.query.filter_by(document_id=doc.id).delete(synchronize_session=False)
@@ -391,17 +362,6 @@ def review_inventory_document(doc, employee_id, action, note=None):
         "REJECT": "REJECTED",
         "CHANGE": "CHANGE_REQUESTED",
     }[action])
-    if action == "ACCEPT" and doc.cycle:
-        for line in doc.lines:
-            entry = _inventory_entry_for_asset(doc.cycle_id, line.asset_id)
-            if entry:
-                record_manual_asset_inventory(
-                    doc.cycle,
-                    entry,
-                    scanned_by_id=employee_id,
-                    note="تم اعتماد الأصل ضمن موافقة الموظف على العهدة.",
-                )
-                _sync_inventory_line_from_entry(line, entry)
     doc.reviewed_at = now
     if action == "REJECT":
         InvAssetDocumentReservation.query.filter_by(document_id=doc.id).delete(synchronize_session=False)
@@ -458,10 +418,23 @@ def revise_inventory_document(doc, actor_id, line_updates, note=None):
                 snapshot[key] = value[:max_length] or None
         if "included" in values:
             snapshot["included"] = bool(values["included"])
+        if not snapshot.get("eligible", True):
+            snapshot["included"] = False
         snapshot["committee_revision_note"] = note or None
         line.snapshot = snapshot
         line.decision = "PENDING"
         line.employee_note = None
+        if snapshot.get("included", True):
+            if not InvAssetDocumentReservation.query.filter_by(
+                asset_id=line.asset_id,
+                document_id=doc.id,
+            ).first():
+                db.session.add(InvAssetDocumentReservation(asset_id=line.asset_id, document_id=doc.id))
+        else:
+            InvAssetDocumentReservation.query.filter_by(
+                asset_id=line.asset_id,
+                document_id=doc.id,
+            ).delete(synchronize_session=False)
         if before_snapshot != snapshot:
             changed_lines.append(snapshot.get("tag") or line.asset_id)
         if before_snapshot.get("included", True) and snapshot.get("included", True) is False:
@@ -478,6 +451,8 @@ def revise_inventory_document(doc, actor_id, line_updates, note=None):
             if asset is None:
                 raise ValueError("لا يمكن إضافة أصل غير موجود.")
             entry = _inventory_entry_for_asset(doc.cycle_id, asset.id)
+            if entry is None or not entry.scanned_at:
+                raise ValueError(f"الأصل {asset.asset_tag} لم تتم قراءته في دورة الجرد؛ لا يمكن إدراجه في العهدة.")
             holder_id = (
                 entry.observed_custodian_user_id
                 if entry and entry.scanned_at
@@ -496,20 +471,6 @@ def revise_inventory_document(doc, actor_id, line_updates, note=None):
             ))
             existing_asset_ids.add(asset.id)
             added_lines.append(asset.asset_tag)
-
-    if doc.cycle:
-        for line in doc.lines:
-            if (line.snapshot or {}).get("included", True) is False:
-                continue
-            entry = _inventory_entry_for_asset(doc.cycle_id, line.asset_id)
-            if entry:
-                record_manual_asset_inventory(
-                    doc.cycle,
-                    entry,
-                    scanned_by_id=actor_id,
-                    note="تم اعتماد الأصل ضمن تعديل العهدة يدوياً.",
-                )
-                _sync_inventory_line_result(line, entry)
 
     now = datetime.utcnow()
     doc.status = "PENDING"
@@ -680,9 +641,9 @@ def decide_committee_report(report, actor_id, decision, note=None):
         pending = [doc for doc in documents if doc.status not in {"APPROVED", "ISSUED", "COMPLETED"}]
         if pending:
             raise ValueError("لا يمكن اعتماد التقرير قبل اعتماد جميع العهد من الموظفين.")
-    # The Secretary General approves the consolidated committee report only.
-    # Employee custody approval remains the employee's decision, and the
-    # operational issue/assignment of an approved custody is a separate action.
+    # The Secretary General approves the consolidated committee report.  The
+    # committee's final close below performs the operational issue of approved
+    # custody documents in the same transaction.
     for doc in inventory_documents_for_cycle(report.cycle_id):
         notify_document(
             doc,
@@ -729,6 +690,14 @@ def close_committee_cycle(report, actor_id):
     ]
     if pending:
         raise ValueError("لا يمكن إغلاق الدورة قبل اكتمال قرارات الموظفين على جميع العهد.")
+
+    # The committee's final close is the operational hand-off.  Approved
+    # custody documents (including documents revised after an employee's
+    # change request) are issued here so the committee does not have to leave
+    # the report workflow and create/issue the custody again manually.
+    for doc in documents:
+        if doc.status == "APPROVED":
+            issue_document(doc, actor_id)
 
     result = (
         close_inventory_cycle(
