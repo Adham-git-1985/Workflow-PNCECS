@@ -9,7 +9,7 @@ from flask_wtf.csrf import validate_csrf
 from PIL import Image
 from wtforms.validators import ValidationError
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import noload
+from sqlalchemy.orm import joinedload, noload, selectinload
 from werkzeug.utils import secure_filename
 
 from extensions import db
@@ -184,7 +184,23 @@ def asset_documents():
     status = request.args.get("status", "")
     if status in STATUSES:
         query = query.filter_by(status=status)
-    documents = query.order_by(InvAssetDocument.id.desc()).paginate(per_page=30)
+    # The list template displays several relationships for every document.
+    # Without explicit loading this becomes an N+1 query page (and the
+    # select-in-loaded event history is not used here at all).
+    documents = (
+        query.options(
+            joinedload(InvAssetDocument.employee),
+            joinedload(InvAssetDocument.cycle).selectinload(
+                InvFixedAssetCycle.committee_report
+            ),
+            selectinload(InvAssetDocument.lines).joinedload(
+                InvAssetDocumentLine.asset
+            ),
+            noload(InvAssetDocument.events),
+        )
+        .order_by(InvAssetDocument.id.desc())
+        .paginate(per_page=30)
+    )
     assets = InvFixedAsset.query.filter_by(custodian_user_id=current_user.id).order_by(InvFixedAsset.asset_tag).all()
     return render_template("portal/inventory/fixed_assets/documents.html",
         documents=documents,

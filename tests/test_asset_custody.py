@@ -2,12 +2,14 @@ import importlib
 import unittest
 
 import sqlalchemy as sa
+from sqlalchemy import event
 from flask import g
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
 from extensions import db
-from models import (InvAssetDocument, InvAssetDocumentReservation, InvFixedAssetCycle,
+from models import (InvAssetDocument, InvAssetDocumentLine, InvAssetDocumentReservation,
+                    InvFixedAssetCommitteeReport, InvFixedAssetCycle,
                     InvFixedAssetCycleMember, InvFixedAssetEntry, InvFixedAssetMobileDevice,
                     Notification, User)
 from portal.fixed_assets import _mobile_device_invitation_token
@@ -54,6 +56,60 @@ class AssetCustodyTests(unittest.TestCase):
     def approve(self, doc):
         review_document(doc, doc.employee_id, {line.id: ("ACCEPT", "موافق") for line in doc.lines})
         db.session.commit()
+
+    def test_document_list_preloads_relationships(self):
+        cycle = InvFixedAssetCycle(
+            code="LIST-PERF",
+            name="قائمة العهد",
+            inventory_date="2026-09-11",
+            status="ACTIVE",
+        )
+        db.session.add(cycle)
+        db.session.flush()
+        db.session.add(InvFixedAssetCommitteeReport(cycle_id=cycle.id, status="DRAFT"))
+        for index in range(3):
+            asset = self._create_asset(f"FA-LIST-{index:03d}")
+            doc = InvAssetDocument(
+                kind="INVENTORY",
+                status="PENDING",
+                cycle_id=cycle.id,
+                employee_id=self.employee.id,
+                created_by_id=self.admin.id,
+            )
+            db.session.add(doc)
+            db.session.flush()
+            db.session.add(InvAssetDocumentLine(
+                document_id=doc.id,
+                asset_id=asset.id,
+                snapshot={"tag": asset.asset_tag},
+            ))
+        db.session.commit()
+
+        statements = []
+
+        def before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+
+        event.listen(db.engine, "before_cursor_execute", before_cursor_execute)
+        try:
+            response = self.client.get("/portal/inventory/fixed-assets/documents")
+        finally:
+            event.remove(db.engine, "before_cursor_execute", before_cursor_execute)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("FA-LIST-000", response.get_data(as_text=True))
+        line_selects = [
+            statement for statement in statements
+            if statement.lstrip().upper().startswith("SELECT")
+            and "inv_asset_document_line" in statement
+        ]
+        report_selects = [
+            statement for statement in statements
+            if statement.lstrip().upper().startswith("SELECT")
+            and "inv_fixed_asset_committee_report" in statement
+        ]
+        self.assertEqual(len(line_selects), 1)
+        self.assertEqual(len(report_selects), 1)
 
     def test_full_inventory_review_issue_and_notifications(self):
         asset = self._create_asset()
