@@ -56158,7 +56158,12 @@ def inventory_admin_units():
 
         name = (request.form.get("name") or "").strip()
         note = (request.form.get("note") or "").strip() or None
-        is_active = bool(request.form.get("is_active"))
+        is_active = (request.form.get("is_active") or "").strip().lower() in {
+            "1",
+            "true",
+            "on",
+            "yes",
+        }
 
         if not name:
             flash("يرجى تعبئة اسم الوحدة.", "warning")
@@ -56170,16 +56175,61 @@ def inventory_admin_units():
             if not u:
                 flash("الوحدة غير موجودة.", "warning")
                 return redirect(url_for("portal.inventory_admin_units"))
+
+            duplicate = (
+                InvUnit.query
+                .filter(InvUnit.name == name, InvUnit.id != u.id)
+                .first()
+            )
+            if duplicate:
+                flash("اسم الوحدة مستخدم مسبقًا لوحدة أخرى.", "warning")
+                return redirect(
+                    url_for("portal.inventory_admin_units", edit_id=u.id)
+                )
+
             u.name = name
             u.note = note
             u.is_active = is_active
-            db.session.commit()
+            try:
+                db.session.commit()
+            except (IntegrityError, OperationalError):
+                db.session.rollback()
+                current_app.logger.exception(
+                    "Failed to update inventory unit action=%s name=%r",
+                    action,
+                    name,
+                )
+                flash(
+                    "تعذر حفظ الوحدة بسبب تعارض في البيانات أو قاعدة البيانات.",
+                    "danger",
+                )
+                return redirect(
+                    url_for("portal.inventory_admin_units", edit_id=u.id)
+                )
             flash("تم تحديث الوحدة.", "success")
+            return redirect(url_for("portal.inventory_admin_units"))
+
+        duplicate = InvUnit.query.filter_by(name=name).first()
+        if duplicate:
+            flash("اسم الوحدة مستخدم مسبقًا.", "warning")
             return redirect(url_for("portal.inventory_admin_units"))
 
         u = InvUnit(name=name, note=note, is_active=is_active, created_at=datetime.utcnow())
         db.session.add(u)
-        db.session.commit()
+        try:
+            db.session.commit()
+        except (IntegrityError, OperationalError):
+            db.session.rollback()
+            current_app.logger.exception(
+                "Failed to create inventory unit action=%s name=%r",
+                action,
+                name,
+            )
+            flash(
+                "تعذر حفظ الوحدة بسبب تعارض في البيانات أو قاعدة البيانات.",
+                "danger",
+            )
+            return redirect(url_for("portal.inventory_admin_units"))
         flash("تم إضافة الوحدة.", "success")
         return redirect(url_for("portal.inventory_admin_units"))
 
