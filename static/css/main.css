@@ -28,6 +28,7 @@ table[data-sortable="true"] th.sorted-desc::after {
 
 html {
     height: 100%;
+    width: 100%;
 }
 
 body {
@@ -36,6 +37,9 @@ body {
     margin: 0;
     padding-top: 0; /* default: no fixed header */
     min-height: 100%;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
     overflow-y: auto;
 }
 
@@ -58,7 +62,12 @@ body.has-fixed-header{
     padding: 12px 0;
     position: fixed;
     top: 0;
-    width: 100%;
+    left: 0;
+    right: 0;
+    width: auto;
+    min-width: 100%;
+    box-sizing: border-box;
+    padding-top: calc(12px + env(safe-area-inset-top, 0px));
     z-index: 1000;
 }
 
@@ -67,7 +76,10 @@ body.has-fixed-header{
     justify-content: space-between;
     align-items: center;
     gap: 12px;
+    width: 100%;
+    min-width: 0;
     max-width: none;
+    box-sizing: border-box;
     padding-inline: clamp(1rem, 3vw, 3.5rem);
 }
 
@@ -126,6 +138,8 @@ body.has-fixed-header{
 
 .admin-wrapper {
     display: flex;
+    width: 100%;
+    min-width: 0;
     min-height: calc(100vh - var(--wf-header-h, 70px)); /* الهيدر */
     align-items: flex-start; /* مهم جدًا */
 }
@@ -193,6 +207,8 @@ body.has-fixed-header{
 
 .admin-content {
     flex: 1;
+    min-width: 0;
+    width: 100%;
     background: #fff;
     padding: 22px;
     border-radius: 12px;
@@ -633,6 +649,16 @@ canvas {
 
 .portal-brand-logo{height:34px;width:auto;padding:2px;border-radius:10px;}
 .portal-brand-logo.brand-logo--masar{height:30px;}
+.portal-topnav{
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.portal-topnav > .container-fluid{
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
 @media (max-width: 576px){
   .portal-brand-logo{height:30px;padding:2px;border-radius:9px;}
   .portal-brand-logo.brand-logo--masar{height:26px;}
@@ -765,14 +791,24 @@ body.wf-print-only-target .wf-print-target { position: absolute; inset: 0; paddi
 /* Header wrapping on small screens */
 @media (max-width: 991.98px){
   .main-header .container{
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 10px;
     align-items: center;
   }
+  .main-header .brand{
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+  }
+  .main-header .brand-logos{
+    flex: 0 0 auto;
+  }
   .header-actions{
-    flex-wrap: wrap;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
     gap: 8px !important;
     justify-content: flex-start;
+    min-width: 0;
   }
   .admin-content{
     padding: 16px;
@@ -783,6 +819,9 @@ body.wf-print-only-target .wf-print-target { position: absolute; inset: 0; paddi
 
 @media (max-width: 767.98px){
   .brand-subtitle{ display:none; }
+  .main-header{ padding-bottom: 8px; }
+  .main-header .container{ padding-inline: 12px; }
+  .header-actions .btn{ padding-inline: .45rem; }
 }
 
 @media (max-width: 575.98px){

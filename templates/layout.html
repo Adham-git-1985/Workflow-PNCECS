@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>{% block title %}مسار{% endblock %}</title>
 
     <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -14,7 +14,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css">
 
     <!-- Global CSS (cache-bust) -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v=20261007-user-menu1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v=20261119-mobile-header1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/chat_assistant.css') }}?v=20260930-language-tools">
 
     {% block extra_css %}{% endblock %}
@@ -91,7 +91,7 @@
 
             <button type="button"
                     id="notification-sound-toggle"
-                    class="btn btn-outline-light btn-sm no-print"
+                    class="btn btn-outline-light btn-sm no-print d-none d-sm-inline-flex"
                     data-notifications-url="{{ url_for('workflow.notifications') }}"
                     data-workflow-notifications-url="{{ url_for('workflow.notifications') }}"
                     data-portal-notifications-url="{{ url_for('portal.portal_notifications') }}"
@@ -113,11 +113,11 @@
                 <i class="bi bi-search"></i>
             </button>
 
-            <button type="button" class="btn btn-outline-light btn-sm no-print" onclick="wfPrintAuto()" title="طباعة">
+            <button type="button" class="btn btn-outline-light btn-sm no-print d-none d-sm-inline-flex" onclick="wfPrintAuto()" title="طباعة">
                 <i class="bi bi-printer"></i>
             </button>
 
-            <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm">خروج</a>
+            <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm d-none d-sm-inline-flex">خروج</a>
         </div>
         {% endif %}
     </div>
