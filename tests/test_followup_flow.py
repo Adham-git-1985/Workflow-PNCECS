@@ -617,6 +617,9 @@ class FollowupFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         enabled_page = self.employee_client.get(f"/portal/followups/{report_id}")
         self.assertIn(b"bi-box-seam", enabled_page.data)
+        operational_start = enabled_page.data.find(b'<details class="followup-operational mb-4"')
+        self.assertGreaterEqual(operational_start, 0)
+        self.assertIn(b" open>", enabled_page.data[operational_start:operational_start + 300])
 
         response = self.employee_client.post(
             f"/portal/followups/{report_id}/update",
@@ -1020,6 +1023,10 @@ class FollowupFlowTests(unittest.TestCase):
         self.assertIn(f'name="ai_suggestion_{system_item_id}"'.encode(), view.data)
         self.assertIn(ai_summary.encode(), view.data)
         self.assertIn('value="apply_ai"'.encode(), view.data)
+        self.assertLess(
+            view.data.find(b'name="action" value="ai"'),
+            view.data.find(b'class="followup-extra-actions"'),
+        )
 
         edited_manual = "تم إعداد تقرير الإنجازات الشهري ومراجعته."
         edited_system = "تمت مراجعة واعتماد طلب شراء الأجهزة."

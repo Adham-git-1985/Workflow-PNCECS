@@ -143,7 +143,7 @@
   {% set path_items = report.items|rejectattr('source_type', 'equalto', 'MANUAL')|list %}
 
   {% if operational_sections %}
-  <details class="followup-operational mb-4" aria-label="التقارير التشغيلية المرتبطة بالصلاحيات">
+  <details class="followup-operational mb-4" aria-label="التقارير التشغيلية المرتبطة بالصلاحيات" open>
     <summary class="d-flex align-items-center justify-content-between flex-wrap gap-2">
       <span>
         <span class="h5 d-block mb-1"><i class="bi bi-bar-chart-line"></i> ملخص الأعمال التشغيلية</span>
@@ -373,14 +373,14 @@
       <div class="action-buttons d-flex flex-wrap gap-2">
         <button class="btn btn-outline-primary" type="submit" form="followup-update-{{ report.id }}" name="action" value="save"><i class="bi bi-save"></i> حفظ مسودة</button>
         <button class="btn btn-success" type="submit" form="followup-update-{{ report.id }}" name="action" value="submit"><i class="bi bi-send"></i> إرسال للمدير</button>
+        <button class="btn btn-outline-info" type="submit" form="followup-update-{{ report.id }}" name="action" value="ai" title="اقتراح صياغة مفيدة لكل مهمة في سطر أو سطرين"><i class="bi bi-stars"></i> إعادة الصياغة المختصرة</button>
+        {% if has_ai_suggestions %}
+        <button class="btn btn-info" type="submit" form="followup-update-{{ report.id }}" name="action" value="apply_ai" onclick="return confirm('سيتم استبدال نصوص الإنجازات بالصياغات المقترحة بعد تعديلاتك. هل تريد المتابعة؟');"><i class="bi bi-box-arrow-in-down"></i> اعتماد الصياغات على المهام</button>
+        {% endif %}
         <details class="followup-extra-actions">
           <summary class="btn btn-outline-secondary"><i class="bi bi-three-dots"></i> خيارات إضافية</summary>
           <div class="d-flex flex-wrap gap-2 mt-2">
             <button class="btn btn-outline-secondary" type="submit" form="import-workflow-{{ report.id }}"><i class="bi bi-arrow-repeat"></i> تحديث مهام المسار</button>
-            <button class="btn btn-outline-info" type="submit" form="followup-update-{{ report.id }}" name="action" value="ai"><i class="bi bi-stars"></i> إعادة الصياغة المختصرة</button>
-            {% if has_ai_suggestions %}
-            <button class="btn btn-info" type="submit" form="followup-update-{{ report.id }}" name="action" value="apply_ai" onclick="return confirm('سيتم استبدال نصوص الإنجازات بالصياغات المقترحة بعد تعديلاتك. هل تريد المتابعة؟');"><i class="bi bi-box-arrow-in-down"></i> اعتماد الصياغات على المهام</button>
-            {% endif %}
           </div>
         </details>
       </div>
