@@ -1,0 +1,148 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}إشعار تأخير الدوام{% endblock %}
+
+{% block hr_content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h3 class="mb-1"><i class="bi bi-bell"></i> إشعار تأخير الدوام #{{ case.id }}</h3>
+    <div class="text-muted">هذه معاملة مستقلة عن مسارات الموافقات العامة.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_report_delay') }}"><i class="bi bi-arrow-right"></i> تقرير التأخير</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card shadow-sm border-0 mb-3">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start gap-2 mb-3">
+          <div>
+            <h5 class="mb-1">{{ request_row.title }}</h5>
+            <div class="small text-muted">أنشأه: {{ case.initiated_by.full_name if case.initiated_by else '—' }} · {{ request_row.created_at.strftime('%Y-%m-%d %H:%M') if request_row.created_at else '—' }}</div>
+          </div>
+          <span class="badge {% if status == 'CLOSED' %}text-bg-success{% elif status == 'PENDING_EMPLOYEE' %}text-bg-warning{% else %}text-bg-primary{% endif %}">{{ status_label }}</span>
+        </div>
+        <div class="row g-2 small">
+          <div class="col-md-6"><div class="border rounded p-2"><strong>الموظف:</strong> {{ case.employee.full_name if case.employee else '—' }}</div></div>
+          <div class="col-md-6"><div class="border rounded p-2"><strong>اليوم:</strong> {{ case.delay_day }}</div></div>
+          <div class="col-md-4"><div class="border rounded p-2"><strong>وقت الدخول:</strong> {{ case.first_in_time or '—' }}</div></div>
+          <div class="col-md-4"><div class="border rounded p-2"><strong>التأخير:</strong> {{ case.late_minutes or 0 }} دقيقة</div></div>
+          <div class="col-md-4"><div class="border rounded p-2"><strong>الخروج المبكر:</strong> {{ case.early_leave_minutes or 0 }} دقيقة</div></div>
+        </div>
+      </div>
+    </div>
+
+    {% if can_employee and status == 'PENDING_EMPLOYEE' %}
+    <div class="card shadow-sm border-0 mb-3">
+      <div class="card-header bg-white"><h5 class="mb-0">تعبئة تبرير التأخير</h5></div>
+      <div class="card-body">
+        <form method="post" enctype="multipart/form-data" action="{{ url_for('portal.hr_attendance_delay_respond', case_id=case.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="mb-3">
+            <label class="form-label">سبب التأخير <span class="text-danger">*</span></label>
+            <textarea class="form-control" name="reason" rows="5" required></textarea>
+          </div>
+          <div class="row g-2">
+            <div class="col-md-4">
+              <label class="form-label">نوع الحالة</label>
+              <select class="form-select" name="case_kind"><option value="DELAY" selected>تأخير</option><option value="ABSENCE">غياب</option></select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">هل يوجد مستند مؤيد؟</label>
+              <select class="form-select" name="has_document"><option value="NO" selected>لا</option><option value="YES">نعم</option></select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">اسم / مرجع المستند</label>
+              <input class="form-control" name="document_name">
+            </div>
+          </div>
+          <div class="mb-3 mt-2"><label class="form-label">ملاحظة الموظف</label><textarea class="form-control" name="note" rows="2"></textarea></div>
+          <div class="mb-3"><label class="form-label">مرفقات مؤيدة</label><input class="form-control" type="file" name="files" multiple></div>
+          <button class="btn btn-primary" type="submit"><i class="bi bi-send"></i> إرسال التبرير إلى الأمين العام</button>
+        </form>
+      </div>
+    </div>
+    {% elif payload.reason %}
+    <div class="card shadow-sm border-0 mb-3">
+      <div class="card-header bg-white"><h5 class="mb-0">تبرير الموظف</h5></div>
+      <div class="card-body">
+        <p class="mb-2" style="white-space:pre-wrap">{{ payload.reason }}</p>
+        {% if payload.note %}<div class="small text-muted">ملاحظة الموظف: {{ payload.note }}</div>{% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if can_secretary and status in ['PENDING_SECRETARY_GENERAL', 'RETURNED_TO_SECRETARY_GENERAL'] %}
+    <div class="card shadow-sm border-0 mb-3 border-primary">
+      <div class="card-header bg-white"><h5 class="mb-0">إجراء الأمين العام</h5></div>
+      <div class="card-body">
+        <form method="post" action="{{ url_for('portal.hr_attendance_delay_secretary_action', case_id=case.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="mb-3"><label class="form-label">ملاحظة / توجيه</label><textarea class="form-control" name="note" rows="3">{{ case.secretary_general_note or '' }}</textarea></div>
+          <div class="row g-2 align-items-end">
+            <div class="col-md-7">
+              <label class="form-label">إعادة الإرسال إلى موظف من الشؤون الإدارية والمالية</label>
+              <select class="form-select" name="assignee_id">
+                <option value="">— اختر موظفاً —</option>
+                {% for u in admin_finance_users %}<option value="{{ u.id }}">{{ u.full_name }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-md-5 d-flex gap-2">
+              <button class="btn btn-outline-primary flex-fill" name="action" value="ASSIGN" type="submit">إعادة الإرسال للموظف</button>
+              <button class="btn btn-success flex-fill" name="action" value="CLOSE" type="submit" onclick="return confirm('هل تريد إنهاء إشعار التأخير؟');">إنهاء</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if can_assignee and status == 'ASSIGNED_ADMIN_FINANCE' %}
+    <div class="card shadow-sm border-0 mb-3 border-warning">
+      <div class="card-header bg-white"><h5 class="mb-0">الإجراء المطلوب من الشؤون الإدارية والمالية</h5></div>
+      <div class="card-body">
+        <form method="post" action="{{ url_for('portal.hr_attendance_delay_administrative_action', case_id=case.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label class="form-label">بيان الإجراء المتخذ <span class="text-danger">*</span></label>
+          <textarea class="form-control mb-3" name="note" rows="5" required></textarea>
+          <button class="btn btn-primary" type="submit"><i class="bi bi-arrow-return-left"></i> حفظ الإجراء وإعادتها إلى الأمين العام</button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="card shadow-sm border-0 mb-3">
+      <div class="card-header bg-white"><h5 class="mb-0">الملفات والنموذج Word</h5></div>
+      <div class="card-body">
+        {% if case.notice_archived_file %}<a class="btn btn-sm btn-outline-secondary mb-1" href="{{ url_for('portal.hr_attendance_delay_attachment_download', case_id=case.id, file_id=case.notice_archived_file.id) }}"><i class="bi bi-file-earmark-word"></i> إشعار التأخير</a>{% endif %}
+        {% if case.completed_justification_archived_file %}<a class="btn btn-sm btn-outline-primary mb-1" href="{{ url_for('portal.hr_attendance_delay_attachment_download', case_id=case.id, file_id=case.completed_justification_archived_file.id) }}"><i class="bi bi-file-earmark-word"></i> نموذج التبرير المحدّث</a>{% elif case.blank_justification_archived_file %}<a class="btn btn-sm btn-outline-primary mb-1" href="{{ url_for('portal.hr_attendance_delay_attachment_download', case_id=case.id, file_id=case.blank_justification_archived_file.id) }}"><i class="bi bi-file-earmark-word"></i> نموذج التبرير</a>{% endif %}
+        {% for attachment in attachments %}{% if attachment.archived_file and not attachment.archived_file.is_deleted %}<a class="btn btn-sm btn-outline-secondary mb-1" href="{{ url_for('portal.hr_attendance_delay_attachment_download', case_id=case.id, file_id=attachment.archived_file_id) }}">{{ attachment.archived_file.original_name }}</a>{% endif %}{% endfor %}
+        {% if not attachments and not case.notice_archived_file and not case.blank_justification_archived_file and not case.completed_justification_archived_file %}<span class="text-muted">لا توجد ملفات.</span>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card shadow-sm border-0 mb-3">
+      <div class="card-body">
+        <div class="text-muted small mb-1">المرحلة الحالية</div>
+        <h5>{{ stage_label }}</h5>
+        {% if case.current_assignee %}<div class="small">المكلّف: {{ case.current_assignee.full_name }}</div>{% endif %}
+        {% if case.secretary_general_note %}<div class="small mt-2"><strong>توجيه الأمين العام:</strong><br>{{ case.secretary_general_note }}</div>{% endif %}
+        {% if case.administrative_action_note %}<div class="small mt-2"><strong>الإجراء الإداري:</strong><br>{{ case.administrative_action_note }}</div>{% endif %}
+      </div>
+    </div>
+    <div class="card shadow-sm border-0">
+      <div class="card-header bg-white"><h5 class="mb-0">سجل الإجراءات</h5></div>
+      <div class="list-group list-group-flush">
+        {% for row in audit_rows %}
+          <div class="list-group-item small">
+            <div class="fw-semibold">{{ row.user.full_name if row.user else 'النظام' }}</div>
+            <div class="text-muted">{{ row.created_at.strftime('%Y-%m-%d %H:%M') if row.created_at else '—' }}</div>
+            {% if row.note %}<div class="mt-1" style="white-space:pre-wrap">{{ row.note }}</div>{% endif %}
+          </div>
+        {% else %}<div class="list-group-item text-muted">لا توجد إجراءات مسجلة بعد.</div>{% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

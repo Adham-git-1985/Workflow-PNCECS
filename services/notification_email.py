@@ -57,6 +57,7 @@ MEETING_EMAIL_MODE = "MEETING"
 HR_DEDUCTION_EMAIL_MODE = "HR_DEDUCTION"
 TRANSPORT_MOVEMENT_EMAIL_MODE = "TRANSPORT_MOVEMENT"
 PORTAL_APPROVAL_EMAIL_MODE = "PORTAL_APPROVAL"
+ATTENDANCE_DELAY_EMAIL_MODE = "ATTENDANCE_DELAY"
 _EMAIL_DELIVERY_MODES = {
     ATTENDANCE_SCHEDULE_EMAIL_MODE,
     DELEGATION_SENSITIVE_EMAIL_MODE,
@@ -66,6 +67,7 @@ _EMAIL_DELIVERY_MODES = {
     HR_DEDUCTION_EMAIL_MODE,
     TRANSPORT_MOVEMENT_EMAIL_MODE,
     PORTAL_APPROVAL_EMAIL_MODE,
+    ATTENDANCE_DELAY_EMAIL_MODE,
 }
 NOTIFICATION_EMAILS_DISABLED_REASON = "Notification emails are disabled; the notification remains available in the system."
 EMAIL_UNAVAILABLE_CANCELLED_REASON = "Skipped: recipient has no configured delivery email address."
@@ -223,12 +225,18 @@ def _email_content(user: User, notification: Notification) -> tuple[str, str, st
         (notification.email_delivery_mode or "").strip().upper()
         == TRANSPORT_MOVEMENT_EMAIL_MODE
     )
+    is_attendance_delay_notification = (
+        (notification.email_delivery_mode or "").strip().upper()
+        == ATTENDANCE_DELAY_EMAIL_MODE
+    )
     if is_calendar_reminder:
         heading = "تذكير بموعد في نظام مسار"
     elif is_meeting_notification:
         heading = "إشعار اجتماع في نظام مسار"
     elif is_transport_movement_notification:
         heading = "إشعار طلب حركة في نظام مسار"
+    elif is_attendance_delay_notification:
+        heading = "إشعار تأخير الدوام في نظام مسار"
     else:
         heading = "تحديث جديد في نظام مسار"
     subject = f"{heading} — {message}"[:200]
@@ -238,6 +246,8 @@ def _email_content(user: User, notification: Notification) -> tuple[str, str, st
         action_text = "فتح الاجتماع"
     elif is_transport_movement_notification:
         action_text = "فتح طلب الحركة"
+    elif is_attendance_delay_notification:
+        action_text = "فتح إشعار التأخير"
     else:
         action_text = "فتح التحديث في النظام"
 

@@ -5633,6 +5633,9 @@ def inbox():
         .filter(WorkflowInstance.is_completed.is_(False))
         .filter(WorkflowInstanceStep.status == "PENDING")
         .filter(WorkflowInstanceStep.step_order == WorkflowInstance.current_step_order)
+        # Attendance-delay notices have their own notification/assignment
+        # screen; legacy rows must not continue to surface as generic paths.
+        .filter(~_portal_workflow_scope_clause())
     )
 
     # Search (by id/title/description/requester email)

@@ -41,6 +41,10 @@ from services.hr_request_workflow import (
     resolve_responsible_managers,
     secretary_general_user_ids,
 )
+from services.notification_email import (
+    ATTENDANCE_DELAY_EMAIL_MODE,
+    enqueue_notification_email,
+)
 from utils.file_uploads import clean_original_filename, random_storage_name
 from utils.notification_links import notification_target_path
 
@@ -49,6 +53,16 @@ ATTENDANCE_DELAY_WORKFLOW_LABEL = "نموذج تأخير عن العمل"
 ATTENDANCE_DELAY_RESPONSE_LABEL = "نموذج تبرير غياب / تأخير"
 ATTENDANCE_DELAY_OVERDUE_TYPE = "ATTENDANCE_DELAY_OVERDUE"
 ATTENDANCE_DELAY_DIRECT_MANAGERS_ROLE = "ATTENDANCE_DELAY_DIRECT_MANAGERS"
+ATTENDANCE_DELAY_CASE_PENDING_EMPLOYEE = "PENDING_EMPLOYEE"
+ATTENDANCE_DELAY_CASE_PENDING_SECRETARY = "PENDING_SECRETARY_GENERAL"
+ATTENDANCE_DELAY_CASE_ASSIGNED_ADMIN_FINANCE = "ASSIGNED_ADMIN_FINANCE"
+ATTENDANCE_DELAY_CASE_RETURNED_SECRETARY = "RETURNED_TO_SECRETARY_GENERAL"
+ATTENDANCE_DELAY_CASE_CLOSED = "CLOSED"
+ATTENDANCE_DELAY_CASE_NOTICE = "ATTENDANCE_DELAY_NOTICE"
+ATTENDANCE_DELAY_CASE_EMPLOYEE_SUBMITTED = "ATTENDANCE_DELAY_EMPLOYEE_SUBMITTED"
+ATTENDANCE_DELAY_CASE_ASSIGNED = "ATTENDANCE_DELAY_ASSIGNED"
+ATTENDANCE_DELAY_CASE_ADMIN_ACTION = "ATTENDANCE_DELAY_ADMIN_ACTION"
+ATTENDANCE_DELAY_CASE_CLOSED_EVENT = "ATTENDANCE_DELAY_CLOSED"
 logger = logging.getLogger(__name__)
 
 
@@ -315,6 +329,111 @@ def _as_ids(values: Iterable[int | None]) -> set[int]:
     return result
 
 
+def attendance_delay_case_status_label(value: str | None) -> str:
+    """Return the user-facing status for the lightweight delay notice flow."""
+    return {
+        ATTENDANCE_DELAY_CASE_PENDING_EMPLOYEE: "بانتظار تعبئة الموظف",
+        ATTENDANCE_DELAY_CASE_PENDING_SECRETARY: "بانتظار إجراء الأمين العام",
+        ATTENDANCE_DELAY_CASE_ASSIGNED_ADMIN_FINANCE: "بانتظار إجراء الشؤون الإدارية والمالية",
+        ATTENDANCE_DELAY_CASE_RETURNED_SECRETARY: "عاد إلى الأمين العام",
+        ATTENDANCE_DELAY_CASE_CLOSED: "منتهية",
+    }.get((value or "").strip().upper(), "قيد المعالجة")
+
+
+def attendance_delay_case_stage_label(value: str | None) -> str:
+    return {
+        ATTENDANCE_DELAY_CASE_PENDING_EMPLOYEE: "بانتظار تعبئة الموظف للتبرير",
+        ATTENDANCE_DELAY_CASE_PENDING_SECRETARY: "بانتظار مراجعة الأمين العام",
+        ATTENDANCE_DELAY_CASE_ASSIGNED_ADMIN_FINANCE: "بانتظار الإجراء الإداري والمالي",
+        ATTENDANCE_DELAY_CASE_RETURNED_SECRETARY: "بانتظار الإجراء النهائي للأمين العام",
+        ATTENDANCE_DELAY_CASE_CLOSED: "تم إنهاء معاملة التأخير",
+    }.get((value or "").strip().upper(), "قيد المعالجة")
+
+
+def _attendance_delay_admin_finance_label(*values: str | None) -> bool:
+    text = _compact_attendance_label(" ".join(str(value or "") for value in values))
+    compact_markers = (
+        "الشؤون الادارية والمالية",
+        "الشؤون الاداريةوالمالية",
+        "الادارية والمالية",
+        "الاداريه والماليه",
+        "administrative financial affairs",
+        "administrativeandfinancialaffairs",
+        "administrativefinance",
+        "administrativefinancial",
+    )
+    if any(_compact_attendance_label(marker) in text for marker in compact_markers):
+        return True
+    return (
+        ("administrative" in text and "financial" in text)
+        or ("اداري" in text and "مالي" in text)
+    )
+
+
+def attendance_delay_admin_finance_user_ids() -> list[int]:
+    """Resolve employees eligible for the Secretary General's reassignment.
+
+    The explicit setting is preferred, then the organization chart and the
+    employee's department/directorate labels are inspected.  This keeps the
+    selector useful on installations whose chart uses different role names.
+    """
+    ids = _attendance_delay_setting_user_ids((
+        "HR_ATTENDANCE_DELAY_ADMIN_FINANCE_USER_IDS",
+        "HR_ATTENDANCE_DELAY_ADMINISTRATIVE_AFFAIRS_USER_IDS",
+    ))
+    try:
+        departments = {
+            int(row.id): row
+            for row in Department.query.all()
+            if getattr(row, "id", None)
+        }
+        directorates = {
+            int(row.id): row
+            for row in Directorate.query.all()
+            if getattr(row, "id", None)
+        }
+        rows = User.query.with_entities(
+            User.id,
+            User.role,
+            User.job_title,
+            User.department_id,
+            User.directorate_id,
+        ).all()
+        for user_id, role, job_title, department_id, directorate_id in rows:
+            department = departments.get(int(department_id)) if department_id else None
+            directorate = directorates.get(int(directorate_id)) if directorate_id else None
+            labels = (
+                role,
+                job_title,
+                getattr(department, "name_ar", None),
+                getattr(department, "name_en", None),
+                getattr(department, "code", None),
+                getattr(directorate, "name_ar", None),
+                getattr(directorate, "name_en", None),
+                getattr(directorate, "code", None),
+            )
+            if user_id and _attendance_delay_admin_finance_label(*labels):
+                ids.add(int(user_id))
+    except Exception:
+        logger.exception("Unable to resolve administrative/financial delay assignees")
+
+    # A manager explicitly resolved for Administrative Affairs is a safe
+    # fallback on older installations that have no employee department link.
+    if not ids:
+        ids.update(administrative_affairs_manager_user_ids())
+    return sorted(ids)
+
+
+def attendance_delay_admin_finance_users() -> list[User]:
+    ids = attendance_delay_admin_finance_user_ids()
+    if not ids:
+        return []
+    users = User.query.filter(User.id.in_(ids)).order_by(
+        User.name.asc(), User.username.asc(), User.email.asc()
+    ).all()
+    return users
+
+
 def get_delay_case_for_request(request_id: int | None) -> HRAttendanceDelayRequest | None:
     if not request_id:
         return None
@@ -422,6 +541,63 @@ def attendance_delay_parallel_candidate_user_ids(
 
 def attendance_delay_secretary_user_ids() -> set[int]:
     return _as_ids(secretary_general_user_ids())
+
+
+def notify_attendance_delay_case(
+    case: HRAttendanceDelayRequest | None,
+    message: str,
+    *,
+    user_ids: Iterable[int] | None = None,
+    notification_type: str = ATTENDANCE_DELAY_CASE_NOTICE,
+    actor_id: int | None = None,
+    event_suffix: str | None = None,
+) -> None:
+    """Notify delay-case participants in the portal and by email.
+
+    The event key makes retries idempotent for the same transition while the
+    target points directly at the standalone delay notice page.
+    """
+    if not case or not getattr(case, "workflow_request", None):
+        return
+    recipients = _as_ids(user_ids or ())
+    if not recipients:
+        return
+    suffix = (event_suffix or uuid.uuid4().hex).strip() or uuid.uuid4().hex
+    event_key = f"attendance-delay:{int(case.id)}:{suffix}"[:64]
+    now = datetime.utcnow()
+    link_url = notification_target_path("HRAttendanceDelayRequest", case.id)
+    for user_id in sorted(recipients):
+        existing = Notification.query.filter_by(
+            user_id=user_id,
+            event_key=event_key,
+            is_mirror=False,
+        ).first()
+        if existing:
+            continue
+        notification = Notification(
+            user_id=user_id,
+            type=notification_type,
+            message=(message or "")[:255],
+            is_read=False,
+            created_at=now,
+            actor_id=actor_id,
+            event_key=event_key,
+            is_mirror=False,
+            source="portal",
+            link_url=link_url,
+            email_delivery_mode=ATTENDANCE_DELAY_EMAIL_MODE,
+            is_visible=True,
+            target_type="HRAttendanceDelayRequest",
+            target_id=int(case.id),
+        )
+        db.session.add(notification)
+        db.session.flush()
+        try:
+            enqueue_notification_email(notification)
+        except Exception:
+            # A mail configuration problem must not prevent the portal notice
+            # from being committed or the case from moving forward.
+            logger.exception("Unable to queue attendance-delay email notification")
 
 
 def attendance_delay_participant_user_ids(req: WorkflowRequest | None) -> set[int]:
@@ -685,6 +861,62 @@ def process_pending_delay_response_alerts(*, now: datetime | None = None) -> int
         req = case.workflow_request
         if not req or (req.status or "").strip().upper() in {"APPROVED", "REJECTED", "CLOSED"}:
             continue
+        case_status = (getattr(case, "case_status", None) or "").strip().upper()
+        if case_status == ATTENDANCE_DELAY_CASE_PENDING_EMPLOYEE:
+            case.overdue_notified_at = now
+            db.session.add(case)
+            employee_message = (
+                f"تنبيه: لم يتم تعبئة تبرير التأخير #{case.id} خلال ساعتين. "
+                "يرجى فتح إشعار التأخير وإرسال السبب، وقد تُتخذ إجراءات إدارية عند عدم الرد."
+            )
+            notify_attendance_delay_case(
+                case,
+                employee_message,
+                user_ids={int(case.employee_id)},
+                notification_type=ATTENDANCE_DELAY_OVERDUE_TYPE,
+                event_suffix="OVERDUE_EMPLOYEE",
+            )
+            recipients = _as_ids((case.initiated_by_id,))
+            recipients.update(attendance_delay_secretary_user_ids())
+            notify_attendance_delay_case(
+                case,
+                (
+                    f"تأخر الموظف {getattr(case.employee, 'full_name', case.employee_id)} "
+                    f"عن تعبئة تبرير التأخير #{case.id} أكثر من ساعتين."
+                ),
+                user_ids=recipients,
+                notification_type=ATTENDANCE_DELAY_OVERDUE_TYPE,
+                event_suffix="OVERDUE_ADMIN",
+            )
+            target_id = sorted(recipients or {int(case.initiated_by_id)})[0]
+            db.session.add(
+                RequestEscalation(
+                    request_id=req.id,
+                    from_user_id=int(case.employee_id),
+                    to_user_id=int(target_id),
+                    category="ATTENDANCE_DELAY_RESPONSE",
+                    description=employee_message,
+                    alert_level=1,
+                    step_order=1,
+                    targets=",".join(str(value) for value in sorted(recipients)),
+                    created_at=now,
+                )
+            )
+            db.session.add(
+                AuditLog(
+                    request_id=req.id,
+                    user_id=case.initiated_by_id,
+                    action="ATTENDANCE_DELAY_RESPONSE_OVERDUE",
+                    old_status=case_status,
+                    new_status=case_status,
+                    note=employee_message,
+                    target_type="HRAttendanceDelayRequest",
+                    target_id=case.id,
+                    created_at=now,
+                )
+            )
+            processed += 1
+            continue
         inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
         current_step = (
             WorkflowInstanceStep.query.filter_by(
@@ -821,6 +1053,8 @@ def _delay_document_status(value: str | None, *, employee_step: bool = False) ->
         return "تمت تعبئة التبرير"
     return {
         "APPROVED": "تمت الموافقة",
+        "CLOSED": "تم الإنهاء",
+        "ACTED": "تم تسجيل الإجراء",
         "REJECTED": "تم الرفض",
         "RESPONDED": "تم الرد",
         "SKIPPED": "تم تجاوز المرحلة",
@@ -848,6 +1082,101 @@ def attendance_delay_workflow_form_data(req: WorkflowRequest) -> dict | None:
 
     instance = WorkflowInstance.query.filter_by(request_id=req.id).first()
     if not instance:
+        # New notices are deliberately not generic workflow paths.  Build the
+        # same Word payload from the explicit case state so the editable form
+        # remains current after each employee/Secretary-General/admin action.
+        case_status = (
+            getattr(case, "case_status", None)
+            or (
+                ATTENDANCE_DELAY_CASE_CLOSED
+                if (getattr(req, "status", None) or "").upper() == "CLOSED"
+                else ATTENDANCE_DELAY_CASE_PENDING_EMPLOYEE
+            )
+        ).strip().upper()
+        employee_name = _delay_document_user_name(getattr(case, "employee_id", None))
+        admin_user_id = (
+            getattr(case, "administrative_action_by_id", None)
+            or getattr(case, "current_assignee_id", None)
+        )
+        secretary_user_id = (
+            getattr(case, "secretary_general_action_by_id", None)
+            or next(iter(sorted(attendance_delay_secretary_user_ids())), None)
+        )
+        approval_steps = [
+            {
+                "label": "تعبئة تبرير الموظف",
+                "name": employee_name,
+                "status": "APPROVED" if case.employee_responded_at else "PENDING",
+                "note": (data.get("reason") or "").strip(),
+                "employee_step": True,
+            },
+        ]
+        if admin_user_id or case_status in {
+            ATTENDANCE_DELAY_CASE_ASSIGNED_ADMIN_FINANCE,
+            ATTENDANCE_DELAY_CASE_RETURNED_SECRETARY,
+            ATTENDANCE_DELAY_CASE_CLOSED,
+        }:
+            approval_steps.append({
+                "label": "الإجراء الإداري والمالي",
+                "name": _delay_document_user_name(admin_user_id),
+                "status": "ACTED" if getattr(case, "administrative_action_note", None) else "PENDING",
+                "note": (getattr(case, "administrative_action_note", None) or "").strip(),
+            })
+        approval_steps.append({
+            "label": "إجراء الأمين العام",
+            "name": _delay_document_user_name(secretary_user_id) or "الأمين العام",
+            "status": "CLOSED" if case_status == ATTENDANCE_DELAY_CASE_CLOSED else "PENDING",
+            "note": (getattr(case, "secretary_general_note", None) or "").strip(),
+        })
+        data.update({
+            "approval_steps": approval_steps,
+            "current_step_order": 1 if case_status == ATTENDANCE_DELAY_CASE_PENDING_EMPLOYEE else 2,
+            "current_stage_label": attendance_delay_case_stage_label(case_status),
+            "administrative_affairs_comment": (
+                getattr(case, "administrative_action_note", None) or ""
+            ).strip(),
+            "secretary_general_comment": (
+                getattr(case, "secretary_general_note", None) or ""
+            ).strip(),
+            "workflow_status": (
+                "CLOSED" if case_status == ATTENDANCE_DELAY_CASE_CLOSED else "IN_PROGRESS"
+            ),
+            "case_status": case_status,
+        })
+        if not (data.get("note") or "").strip():
+            data["note"] = (data.get("reason") or "").strip()
+
+        evidence_logs = (
+            AuditLog.query
+            .filter_by(
+                request_id=req.id,
+                action="WORKFLOW_ATTACHMENT_UPLOADED",
+                target_type="ARCHIVE_FILE",
+            )
+            .filter(AuditLog.note.contains("source=ATTENDANCE_DELAY_EMPLOYEE_RESPONSE"))
+            .order_by(AuditLog.id.asc())
+            .all()
+        )
+        evidence_files = [
+            db.session.get(ArchivedFile, row.target_id)
+            for row in evidence_logs
+            if row.target_id
+        ]
+        evidence_files = [row for row in evidence_files if row is not None]
+        if evidence_files:
+            data["has_document"] = "YES"
+            if not (data.get("document_name") or "").strip():
+                data["document_name"] = "، ".join(
+                    dict.fromkeys(
+                        (getattr(row, "original_name", None) or "مرفق مؤيد").strip()
+                        for row in evidence_files
+                    )
+                )
+        else:
+            data.setdefault("has_document", "NO")
+        data["signature_people"] = (
+            [{"role": "الموظف", "name": employee_name}] if employee_name else []
+        )
         return data
 
     steps = (

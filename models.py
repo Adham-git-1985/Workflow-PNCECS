@@ -4653,12 +4653,13 @@ class AttendanceDailySummary(db.Model):
 
 
 class HRAttendanceDelayRequest(db.Model):
-    """Workflow-backed explanation request for one employee's late day.
+    """Explanation notice for one employee's late day.
 
     The attendance summary remains the source of the measured delay. This row
-    stores the immutable snapshot used by the official forms and links it to
-    the generic workflow request so the path can be audited independently from
-    later attendance recalculations.
+    stores the immutable snapshot used by the official forms.  The
+    ``workflow_request`` relation is retained as a stable archive/audit key for
+    older installations, but new delay notices use the lightweight case state
+    below instead of creating generic workflow steps.
     """
 
     __tablename__ = "hr_attendance_delay_request"
@@ -4691,6 +4692,36 @@ class HRAttendanceDelayRequest(db.Model):
     employee_responded_at = db.Column(db.DateTime, nullable=True)
     response_payload_json = db.Column(db.Text, nullable=True)
 
+    # New delay-notice flow.  Legacy rows with a generic WorkflowInstance keep
+    # using the old path; new rows move through these explicit states.
+    case_status = db.Column(
+        db.String(32),
+        nullable=False,
+        default="PENDING_EMPLOYEE",
+        server_default="PENDING_EMPLOYEE",
+        index=True,
+    )
+    current_assignee_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    secretary_general_note = db.Column(db.Text, nullable=True)
+    secretary_general_action_at = db.Column(db.DateTime, nullable=True)
+    secretary_general_action_by_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id"),
+        nullable=True,
+    )
+    administrative_action_note = db.Column(db.Text, nullable=True)
+    administrative_action_at = db.Column(db.DateTime, nullable=True)
+    administrative_action_by_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id"),
+        nullable=True,
+    )
+
     # Final decision is intentionally denormalized for reports and alerts;
     # the workflow steps remain the authoritative approval history.
     final_status = db.Column(db.String(20), nullable=True, index=True)
@@ -4707,6 +4738,17 @@ class HRAttendanceDelayRequest(db.Model):
     attendance_summary = db.relationship("AttendanceDailySummary", foreign_keys=[attendance_summary_id], lazy="joined")
     employee = db.relationship("User", foreign_keys=[employee_id], lazy="joined")
     initiated_by = db.relationship("User", foreign_keys=[initiated_by_id], lazy="joined")
+    current_assignee = db.relationship("User", foreign_keys=[current_assignee_id], lazy="joined")
+    secretary_general_action_by = db.relationship(
+        "User",
+        foreign_keys=[secretary_general_action_by_id],
+        lazy="joined",
+    )
+    administrative_action_by = db.relationship(
+        "User",
+        foreign_keys=[administrative_action_by_id],
+        lazy="joined",
+    )
     final_decision_by = db.relationship("User", foreign_keys=[final_decision_by_id], lazy="joined")
     notice_archived_file = db.relationship("ArchivedFile", foreign_keys=[notice_archived_file_id], lazy="joined")
     blank_justification_archived_file = db.relationship(
@@ -4730,6 +4772,11 @@ class HRAttendanceDelayRequest(db.Model):
             "ix_hr_attendance_delay_pending_response",
             "employee_responded_at",
             "response_due_at",
+        ),
+        db.Index(
+            "ix_hr_attendance_delay_case_status_assignee",
+            "case_status",
+            "current_assignee_id",
         ),
     )
 

@@ -38,6 +38,21 @@ from models import (
 REPORT_TITLE = "تقرير التأخير وتبرير التأخير"
 SUMMARY_REPORT_TITLE = "التقرير المختصر"
 
+_NOTICE_STATUS_LABELS = {
+    "PENDING_EMPLOYEE": "بانتظار تعبئة الموظف",
+    "PENDING_SECRETARY_GENERAL": "بانتظار إجراء الأمين العام",
+    "ASSIGNED_ADMIN_FINANCE": "بانتظار إجراء الشؤون الإدارية والمالية",
+    "RETURNED_TO_SECRETARY_GENERAL": "عاد إلى الأمين العام",
+    "CLOSED": "منتهية",
+}
+_NOTICE_STAGE_LABELS = {
+    "PENDING_EMPLOYEE": "بانتظار تعبئة الموظف للتبرير",
+    "PENDING_SECRETARY_GENERAL": "بانتظار مراجعة الأمين العام",
+    "ASSIGNED_ADMIN_FINANCE": "بانتظار الإجراء الإداري والمالي",
+    "RETURNED_TO_SECRETARY_GENERAL": "بانتظار الإجراء النهائي للأمين العام",
+    "CLOSED": "تم إنهاء معاملة التأخير",
+}
+
 
 def _user_name(user_or_id, user_map: dict[int, User] | None = None) -> str:
     if isinstance(user_or_id, User):
@@ -208,6 +223,7 @@ def _collect_user_map(cases) -> dict[int, User]:
     for case in cases:
         request_row = getattr(case, "workflow_request", None)
         instance = getattr(request_row, "workflow_instance", None) if request_row else None
+        tasks = list(getattr(instance, "step_tasks", None) or ()) if instance else []
         for step in getattr(instance, "steps", None) or ():
             ids.update(
                 int(value)
@@ -217,19 +233,19 @@ def _collect_user_map(cases) -> dict[int, User]:
                 )
                 if value
             )
-            tasks = (
-                WorkflowStepTask.query
-                .filter_by(instance_id=instance.id, step_order=step.step_order)
-                .all()
-                if instance
-                else []
-            )
-            ids.update(int(task.assignee_user_id) for task in tasks if task.assignee_user_id)
-            ids.update(int(task.bypassed_by_id) for task in tasks if task.bypassed_by_id)
+            step_tasks = [
+                task for task in tasks
+                if int(getattr(task, "step_order", 0) or 0) == int(step.step_order or 0)
+            ]
+            ids.update(int(task.assignee_user_id) for task in step_tasks if task.assignee_user_id)
+            ids.update(int(task.bypassed_by_id) for task in step_tasks if task.bypassed_by_id)
         for value in (
             getattr(case, "employee_id", None),
             getattr(case, "initiated_by_id", None),
             getattr(case, "final_decision_by_id", None),
+            getattr(case, "current_assignee_id", None),
+            getattr(case, "secretary_general_action_by_id", None),
+            getattr(case, "administrative_action_by_id", None),
         ):
             if value:
                 ids.add(int(value))
@@ -239,7 +255,11 @@ def _collect_user_map(cases) -> dict[int, User]:
     }
 
 
-def _build_case_data(case: HRAttendanceDelayRequest, user_map: dict[int, User]) -> dict:
+def _build_case_data(
+    case: HRAttendanceDelayRequest,
+    user_map: dict[int, User],
+    attachment_names_by_request: dict[int, list[str]] | None = None,
+) -> dict:
     request_row = getattr(case, "workflow_request", None)
     instance = getattr(request_row, "workflow_instance", None) if request_row else None
     steps = sorted(
@@ -248,12 +268,8 @@ def _build_case_data(case: HRAttendanceDelayRequest, user_map: dict[int, User]) 
     )
     tasks_by_step: dict[int, list[WorkflowStepTask]] = {}
     if instance:
-        tasks = (
-            WorkflowStepTask.query
-            .filter_by(instance_id=instance.id)
-            .order_by(WorkflowStepTask.step_order.asc(), WorkflowStepTask.id.asc())
-            .all()
-        )
+        tasks = list(getattr(instance, "step_tasks", None) or ())
+        tasks.sort(key=lambda row: (int(row.step_order or 0), int(row.id or 0)))
         for task in tasks:
             tasks_by_step.setdefault(int(task.step_order), []).append(task)
 
@@ -329,11 +345,75 @@ def _build_case_data(case: HRAttendanceDelayRequest, user_map: dict[int, User]) 
 
     employee = getattr(case, "employee", None)
     payload = case.response_payload()
+    request_id_for_attachments = int(getattr(case, "workflow_request_id", 0) or 0)
+    if attachment_names_by_request is None:
+        attachment_names = _response_attachment_names(case)
+    else:
+        attachment_names = attachment_names_by_request.get(request_id_for_attachments, [])
+    notice_status = (getattr(case, "case_status", None) or "").strip().upper()
+    report_status_label = _workflow_status_label(workflow_status)
+    if not instance and notice_status:
+        report_status_label = _NOTICE_STATUS_LABELS.get(notice_status, "قيد المعالجة")
+        employee_name = _user_name(getattr(case, "employee_id", None), user_map)
+        assigned_name = _user_name(getattr(case, "current_assignee_id", None), user_map)
+        if notice_status == "PENDING_EMPLOYEE":
+            reached_label = _NOTICE_STAGE_LABELS[notice_status]
+            reached_target = employee_name
+        elif notice_status == "ASSIGNED_ADMIN_FINANCE":
+            reached_label = _NOTICE_STAGE_LABELS[notice_status]
+            reached_target = assigned_name or "—"
+        elif notice_status == "CLOSED":
+            reached_label = _NOTICE_STAGE_LABELS[notice_status]
+            reached_target = "—"
+        else:
+            reached_label = _NOTICE_STAGE_LABELS.get(notice_status, "قيد المعالجة")
+            reached_target = "الأمين العام"
+
+        step_rows = [{
+            "order": 1,
+            "label": "تعبئة تبرير الموظف",
+            "target": employee_name,
+            "status": "تم تقديم التبرير" if getattr(case, "employee_responded_at", None) else "بانتظار الإجراء",
+            "responder": employee_name if getattr(case, "employee_responded_at", None) else "—",
+            "action_at": _date_time(getattr(case, "employee_responded_at", None)),
+            "note": payload.get("reason") or "—",
+        }]
+        if (
+            getattr(case, "administrative_action_note", None)
+            or getattr(case, "current_assignee_id", None)
+            or notice_status in {"RETURNED_TO_SECRETARY_GENERAL", "CLOSED"}
+        ):
+            admin_actor = (
+                getattr(case, "administrative_action_by_id", None)
+                or getattr(case, "current_assignee_id", None)
+            )
+            step_rows.append({
+                "order": 2,
+                "label": "الإجراء الإداري والمالي",
+                "target": _user_name(admin_actor, user_map),
+                "status": "تم تسجيل الإجراء" if getattr(case, "administrative_action_note", None) else "بانتظار الإجراء",
+                "responder": _user_name(getattr(case, "administrative_action_by_id", None), user_map) if getattr(case, "administrative_action_by_id", None) else "—",
+                "action_at": _date_time(getattr(case, "administrative_action_at", None)),
+                "note": getattr(case, "administrative_action_note", None) or "—",
+            })
+        step_rows.append({
+            "order": 3,
+            "label": "إجراء الأمين العام",
+            "target": "الأمين العام",
+            "status": "تم الإنهاء" if notice_status == "CLOSED" else "بانتظار الإجراء",
+            "responder": _user_name(getattr(case, "secretary_general_action_by_id", None), user_map) if getattr(case, "secretary_general_action_by_id", None) else "—",
+            "action_at": _date_time(getattr(case, "secretary_general_action_at", None)),
+            "note": getattr(case, "secretary_general_note", None) or "—",
+        })
+
     return {
+        "case_id": getattr(case, "id", None),
         "request_id": getattr(request_row, "id", None) or getattr(case, "workflow_request_id", None),
         "request_title": getattr(request_row, "title", None) or "—",
         "request_description": getattr(request_row, "description", None) or "—",
-        "request_status": _workflow_status_label(workflow_status),
+        "request_status": report_status_label,
+        "case_status": notice_status or workflow_status,
+        "case_status_label": report_status_label,
         "created_at": _date_time(getattr(request_row, "created_at", None)),
         "employee_name": _user_name(employee),
         "employee_no": _employee_number(employee),
@@ -356,9 +436,14 @@ def _build_case_data(case: HRAttendanceDelayRequest, user_map: dict[int, User]) 
         "reason": payload.get("reason") or "—",
         "employee_note": payload.get("note") or "—",
         "document_name": payload.get("document_name") or "—",
-        "attachments": _response_attachment_names(case),
+        "attachments": attachment_names,
         "reached_label": reached_label,
         "reached_target": reached_target,
+        "assigned_to": _user_name(getattr(case, "current_assignee_id", None), user_map),
+        "administrative_action_note": getattr(case, "administrative_action_note", None) or "—",
+        "secretary_general_note": getattr(case, "secretary_general_note", None) or "—",
+        "administrative_action_at": _date_time(getattr(case, "administrative_action_at", None)),
+        "secretary_general_action_at": _date_time(getattr(case, "secretary_general_action_at", None)),
         "steps": step_rows,
     }
 
@@ -367,7 +452,63 @@ def attendance_delay_report_data(cases) -> list[dict]:
     """Return serializable report rows for the supplied delay cases."""
     cases = list(cases or [])
     user_map = _collect_user_map(cases)
-    return [_build_case_data(case, user_map) for case in cases]
+    request_ids = {
+        int(case.workflow_request_id)
+        for case in cases
+        if getattr(case, "workflow_request_id", None)
+    }
+    attachment_names_by_request: dict[int, list[str]] = {request_id: [] for request_id in request_ids}
+    evidence_file_ids_by_request: dict[int, set[int]] = {request_id: set() for request_id in request_ids}
+    for case in cases:
+        request_id = int(getattr(case, "workflow_request_id", 0) or 0)
+        document_name = (case.response_payload().get("document_name") or "").strip()
+        if request_id and document_name:
+            attachment_names_by_request.setdefault(request_id, []).append(document_name)
+    if request_ids:
+        evidence_logs = (
+            AuditLog.query
+            .filter(AuditLog.request_id.in_(request_ids))
+            .filter(AuditLog.action == "WORKFLOW_ATTACHMENT_UPLOADED")
+            .filter(AuditLog.target_type == "ARCHIVE_FILE")
+            .filter(AuditLog.note.contains("source=ATTENDANCE_DELAY_EMPLOYEE_RESPONSE"))
+            .order_by(AuditLog.id.asc())
+            .all()
+        )
+        file_ids = {int(row.target_id) for row in evidence_logs if row.target_id}
+        files = {
+            int(row.id): row
+            for row in (ArchivedFile.query.filter(ArchivedFile.id.in_(file_ids)).all() if file_ids else [])
+        }
+        for row in evidence_logs:
+            request_id = int(row.request_id)
+            if row.target_id:
+                evidence_file_ids_by_request.setdefault(request_id, set()).add(int(row.target_id))
+            archived = files.get(int(row.target_id)) if row.target_id else None
+            if archived and archived.original_name:
+                attachment_names_by_request.setdefault(request_id, []).append(archived.original_name)
+
+        fallback_attachments = (
+            db.session.query(RequestAttachment.request_id, ArchivedFile.original_name)
+            .join(ArchivedFile, ArchivedFile.id == RequestAttachment.archived_file_id)
+            .filter(RequestAttachment.request_id.in_(request_ids))
+            .filter(ArchivedFile.is_deleted.is_(False))
+            .order_by(RequestAttachment.id.asc())
+            .all()
+        )
+        for request_id, original_name in fallback_attachments:
+            if evidence_file_ids_by_request.get(int(request_id)):
+                continue
+            if original_name:
+                attachment_names_by_request.setdefault(int(request_id), []).append(original_name)
+
+    attachment_names_by_request = {
+        request_id: list(dict.fromkeys(name for name in names if name))
+        for request_id, names in attachment_names_by_request.items()
+    }
+    return [
+        _build_case_data(case, user_map, attachment_names_by_request)
+        for case in cases
+    ]
 
 
 def _register_fonts() -> tuple[str, str]:
@@ -575,7 +716,7 @@ def _steps_table(data: dict, width: float, styles: dict[str, ParagraphStyle]) ->
 
 
 def _summary_workflow_text(data: dict) -> str:
-    """Return a readable audit trail for the compact report row."""
+    """Return a short action trail for the compact report row."""
     lines: list[str] = []
     for step in data.get("steps") or []:
         label = (step.get("label") or "المرحلة").strip()
@@ -584,22 +725,20 @@ def _summary_workflow_text(data: dict) -> str:
         action_at = (step.get("action_at") or "—").strip()
         note = (step.get("note") or "—").strip()
 
-        if responder == "—":
+        if responder == "—" and note in {"—", ""}:
             continue
-        lines.append(
-            f"{label}: أجاب {responder} | الحالة: {status} | "
-            f"وقت الإجابة: {action_at} | ماذا كتب: {note}"
-        )
-    return "\n".join(lines) or "لم يتم تسجيل رد حتى الآن"
+        actor = responder if responder != "—" else "—"
+        lines.append(f"{label}: {status} | {actor} | {note}")
+    return "\n".join(lines) or "لم يتم تسجيل إجراء حتى الآن"
 
 
 def _make_summary_styles(font_regular: str, font_bold: str) -> dict[str, ParagraphStyle]:
-    """Use a larger Arabic font for the row-by-row summary PDF."""
+    """Use compact styles so the summary remains readable on few pages."""
     body = ParagraphStyle(
         "AttendanceDelaySummaryBody",
         fontName=font_regular,
-        fontSize=16,
-        leading=20,
+        fontSize=9,
+        leading=11,
         alignment=TA_RIGHT,
         wordWrap="RTL",
         spaceAfter=0,
@@ -610,8 +749,8 @@ def _make_summary_styles(font_regular: str, font_bold: str) -> dict[str, Paragra
             "AttendanceDelaySummaryHeader",
             parent=body,
             fontName=font_bold,
-            fontSize=16,
-            leading=19,
+            fontSize=8.5,
+            leading=10,
             alignment=TA_CENTER,
             textColor=colors.white,
         ),
@@ -619,8 +758,8 @@ def _make_summary_styles(font_regular: str, font_bold: str) -> dict[str, Paragra
             "AttendanceDelaySummaryTitle",
             parent=body,
             fontName=font_bold,
-            fontSize=20,
-            leading=24,
+            fontSize=15,
+            leading=18,
             alignment=TA_CENTER,
             textColor=colors.HexColor("#17375E"),
             spaceAfter=3,
@@ -628,8 +767,8 @@ def _make_summary_styles(font_regular: str, font_bold: str) -> dict[str, Paragra
         "meta": ParagraphStyle(
             "AttendanceDelaySummaryMeta",
             parent=body,
-            fontSize=12,
-            leading=15,
+            fontSize=8.5,
+            leading=10,
             alignment=TA_RIGHT,
         ),
     }
@@ -668,8 +807,12 @@ def _summary_table(rows: list[dict], width: float, styles: dict[str, ParagraphSt
         current_status = (
             f"المرحلة الحالية: {data['reached_label']}\n"
             f"المسند إليه الآن: {data['reached_target']}\n"
-            f"حالة الطلب: {data['request_status']}"
+            f"الحالة: {data['request_status']}"
         )
+        if data.get("administrative_action_note") not in {None, "", "—"}:
+            current_status += f"\nالإجراء الإداري: {data['administrative_action_note']}"
+        if data.get("secretary_general_note") not in {None, "", "—"}:
+            current_status += f"\nتوجيه الأمين العام: {data['secretary_general_note']}"
         table_rows.append([
             _p(employee_text, styles["cell"]),
             _p(delay_text, styles["cell"]),

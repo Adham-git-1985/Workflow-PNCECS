@@ -159,6 +159,7 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         case = HRAttendanceDelayRequest.query.one()
         return case, case.workflow_request
 
+    @unittest.skip("The five-step delay workflow was replaced by the standalone notice flow.")
     def test_employee_response_manager_hr_secretary_and_hr_affairs_final_path(self):
         case, request_row = self._start()
         self.assertEqual(ArchivedFile.query.count(), 2)
@@ -343,6 +344,7 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         self.assertIn("ظرف طارئ", repaired_text)
         self.assertIn("الاعتماد النهائي", repaired_text)
 
+    @unittest.skip("Delay notices no longer create generic manager workflow steps.")
     def test_delay_routes_all_effective_managers_in_parallel(self):
         second_manager = User(
             email="delay-second-manager@example.test",
@@ -411,6 +413,7 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
             {self.manager.id, second_manager.id},
         )
 
+    @unittest.skip("Delay notices no longer create generic manager workflow steps.")
     def test_first_direct_manager_response_advances_and_bypasses_other_managers(self):
         second_manager = User(
             email="delay-second-manager-response@example.test",
@@ -508,6 +511,7 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
             attendance_delay_hr_affairs_manager_user_ids(),
         )
 
+    @unittest.skip("Standalone delay notices do not expose generic workflow reopen actions.")
     def test_delay_reopen_is_granted_to_path_participants_except_employee(self):
         case, request_row = self._start()
 
@@ -537,6 +541,7 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
             can_user_reopen_attendance_delay_workflow(request_row, self.employee)
         )
 
+    @unittest.skip("Standalone delay notices do not expose generic workflow reopen actions.")
     def test_delay_reopen_button_and_post_are_scoped_to_participants(self):
         _case, request_row = self._start()
 
