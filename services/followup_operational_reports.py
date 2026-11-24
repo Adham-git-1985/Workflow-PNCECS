@@ -472,13 +472,22 @@ def _transport_section(report) -> dict:
     return section
 
 
-def build_followup_operational_sections(report) -> list[dict]:
-    """Build sections applicable to the employee represented by ``report``."""
+def build_followup_operational_sections(
+    report,
+    *,
+    visibility: dict[str, bool] | None = None,
+) -> list[dict]:
+    """Build sections applicable to the employee represented by ``report``.
+
+    ``visibility`` is optional so the report editor can preview a checkbox
+    change before the draft is saved.  Normal exports and page loads continue
+    to use the saved report settings.
+    """
     employee = getattr(report, "employee", None)
     if employee is None:
         return []
 
-    visibility = get_followup_operational_visibility(report)
+    visibility = visibility or get_followup_operational_visibility(report)
     sections = []
     if visibility["consumables"] and _has_permission(employee, INVENTORY_CONSUMABLE_PERMISSION):
         sections.append(_consumables_section(report))

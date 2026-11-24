@@ -142,61 +142,9 @@
   {% set manual_items = report.items|selectattr('source_type', 'equalto', 'MANUAL')|list %}
   {% set path_items = report.items|rejectattr('source_type', 'equalto', 'MANUAL')|list %}
 
-  {% if operational_sections %}
-  <details class="followup-operational mb-4" aria-label="التقارير التشغيلية المرتبطة بالصلاحيات" open>
-    <summary class="d-flex align-items-center justify-content-between flex-wrap gap-2">
-      <span>
-        <span class="h5 d-block mb-1"><i class="bi bi-bar-chart-line"></i> ملخص الأعمال التشغيلية</span>
-        <span class="small text-muted d-block">تفاصيل إضافية مرتبطة بالصلاحيات التشغيلية.</span>
-      </span>
-      <span class="badge rounded-pill text-bg-light border">{{ operational_sections|length }} تقرير مرتبط</span>
-    </summary>
-    <div class="pt-3">
-    <div class="row g-3">
-      {% for section in operational_sections %}
-      <div class="col-12">
-        <article class="report-section shadow-sm overflow-hidden">
-          <div class="report-section-header p-3 d-flex align-items-start justify-content-between gap-3">
-            <div class="d-flex align-items-start gap-2">
-              <div class="rounded-circle bg-{{ section.tone }} bg-opacity-10 text-{{ section.tone }} p-2"><i class="bi {{ section.icon }} fs-5"></i></div>
-              <div><h3 class="h6 mb-1">{{ section.title }}</h3><div class="small text-muted">{{ section.subtitle }}</div></div>
-            </div>
-            {% if section.truncated %}<span class="badge text-bg-warning">أول 250 سجلاً</span>{% endif %}
-          </div>
-          <div class="p-3">
-            <div class="row g-2 mb-3">
-              {% for metric in section.metrics %}
-              <div class="col-6 col-md-4"><div class="metric-card p-2"><div class="small text-muted">{{ metric.label }}</div><div class="h5 mb-0 text-{{ metric.tone }}">{{ metric.value }}</div></div></div>
-              {% endfor %}
-            </div>
-            {% if section.key == 'consumables' and section.item_summary %}
-            <div class="row g-3 mb-3">
-              <div class="col-lg-6"><div class="bg-white rounded-3 border p-2 h-100"><div class="small fw-bold mb-2">الأكثر استهلاكاً حسب الصنف</div>{% for label, quantity in section.item_summary[:5] %}<div class="d-flex justify-content-between gap-2 small border-bottom py-1"><span class="text-truncate">{{ label }}</span><strong>{{ quantity|round(2) }}</strong></div>{% endfor %}</div></div>
-              <div class="col-lg-6"><div class="bg-white rounded-3 border p-2 h-100"><div class="small fw-bold mb-2">الاستهلاك حسب الموظف</div>{% for label, quantity in section.employee_summary[:5] %}<div class="d-flex justify-content-between gap-2 small border-bottom py-1"><span class="text-truncate">{{ label }}</span><strong>{{ quantity|round(2) }}</strong></div>{% endfor %}</div></div>
-            </div>
-            {% endif %}
-            <div class="table-responsive">
-              <table class="table table-sm table-hover align-middle mb-0">
-                {% if section.key == 'consumables' %}
-                <thead class="table-light"><tr><th>التاريخ</th><th>الموظف</th><th>الصنف</th><th>الصرف الصافي</th><th>المعاد</th><th>المستودع</th><th>الطلب</th></tr></thead>
-                <tbody>{% for row in section.rows %}<tr><td class="text-nowrap">{{ row.date }}</td><td>{{ row.employee }}</td><td>{{ row.item }}</td><td class="fw-bold text-success">{{ row.consumed_qty|round(2) }} {{ row.unit }}</td><td>{{ row.returned_qty|round(2) }}</td><td>{{ row.warehouse }}</td><td><a href="{{ url_for('portal.inventory_employee_request_view', request_id=row.request_id) }}">#{{ row.request_id }}</a></td></tr>{% else %}<tr><td colspan="7" class="text-center text-muted py-3">لا توجد عمليات صرف خلال الفترة.</td></tr>{% endfor %}</tbody>
-                {% elif section.key in ['technology_requests', 'maintenance_requests'] %}
-                <thead class="table-light"><tr><th>التاريخ</th><th>الموظف</th><th>الصنف</th><th>التصنيف</th><th>المطلوب</th><th>المعتمد</th><th>الحالة</th><th>المرحلة</th><th>الطلب</th></tr></thead>
-                <tbody>{% for row in section.rows %}<tr><td class="text-nowrap">{{ row.date }}</td><td>{{ row.employee }}</td><td>{{ row.item }}</td><td>{{ row.category }}</td><td>{{ row.requested_qty|round(2) }} {{ row.unit }}</td><td class="fw-bold text-success">{{ row.approved_qty|round(2) }}</td><td><span class="badge text-bg-light border">{{ row.status }}</span></td><td>{{ row.stage_label }}</td><td><a href="{{ url_for('portal.inventory_employee_request_view', request_id=row.request_id) }}">#{{ row.request_id }}</a></td></tr>{% else %}<tr><td colspan="9" class="text-center text-muted py-3">لا توجد طلبات خلال الفترة.</td></tr>{% endfor %}</tbody>
-                {% else %}
-                <thead class="table-light"><tr><th>التاريخ</th><th>الموظف</th><th>المسار</th><th>الغرض</th><th>السيارة</th><th>السائق</th><th>الحالة</th><th>الحركة</th></tr></thead>
-                <tbody>{% for row in section.rows %}<tr><td class="text-nowrap">{{ row.date }}</td><td>{{ row.employee }}</td><td>{{ row.route }}</td><td>{{ row.purpose }}</td><td>{{ row.vehicle }}</td><td>{{ row.driver }}</td><td><span class="badge text-bg-light border">{{ row.status }}</span></td><td><a href="{{ url_for('portal.transport_permit_view', permit_id=row.movement_id) }}">{{ row.ref_no }}</a></td></tr>{% else %}<tr><td colspan="8" class="text-center text-muted py-3">لا توجد حركات خلال الفترة.</td></tr>{% endfor %}</tbody>
-                {% endif %}
-              </table>
-            </div>
-          </div>
-        </article>
-      </div>
-    {% endfor %}
-    </div>
-    </div>
-  </details>
-  {% endif %}
+  <div id="followup-operational-preview-{{ report.id }}" aria-live="polite">
+    {% include "portal/followups/_operational_sections.html" %}
+  </div>
 
   {% if can_edit %}
   <div class="card manual-achievement-card mb-4">
@@ -527,6 +475,41 @@
       }
       inputs.forEach((input) => input.addEventListener('change', syncToggle));
       syncToggle();
+
+      const operationalPreview = document.getElementById(`followup-operational-preview-${reportId}`);
+      const operationalForm = document.getElementById(`followup-update-${reportId}`);
+      const operationalToggles = Array.from(
+        operationalForm?.querySelectorAll('input[type="checkbox"][name^="show_operational_"]') || [],
+      );
+      const refreshOperationalPreview = async function () {
+        if (!operationalPreview || !operationalForm) return;
+        const params = new URLSearchParams();
+        operationalForm.querySelectorAll('input[name^="show_operational_"]').forEach((input) => {
+          if (input.type === 'checkbox' && !input.checked) return;
+          params.append(input.name, input.value);
+        });
+        const previousMarkup = operationalPreview.innerHTML;
+        operationalPreview.setAttribute('aria-busy', 'true');
+        try {
+          const response = await fetch(
+            `{{ url_for('portal.followups_operational_sections', report_id=report.id) }}?${params.toString()}`,
+            {
+              headers: {
+                'Accept': 'text/html',
+                'X-Requested-With': 'XMLHttpRequest',
+              },
+            },
+          );
+          if (!response.ok) throw new Error('operational_preview_failed');
+          operationalPreview.innerHTML = await response.text();
+        } catch (error) {
+          operationalPreview.innerHTML = previousMarkup;
+          console.error('Failed to refresh follow-up operational sections', error);
+        } finally {
+          operationalPreview.removeAttribute('aria-busy');
+        }
+      };
+      operationalToggles.forEach((input) => input.addEventListener('change', refreshOperationalPreview));
 
       const search = document.getElementById('path-item-search-{{ report.id }}');
       const status = document.getElementById('path-item-status-{{ report.id }}');

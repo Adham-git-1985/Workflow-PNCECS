@@ -1915,6 +1915,35 @@ def followups_view(report_id: int):
     )
 
 
+@portal_bp.route("/followups/<int:report_id>/operational-sections")
+@login_required
+def followups_operational_sections(report_id: int):
+    """Render an unsaved operational-report preview for the editor."""
+    _require_followups_access()
+    report, _ = _get_report_or_abort(report_id)
+    if not _employee_can_edit(report):
+        abort(403)
+
+    visibility = get_followup_operational_visibility(report)
+    available_keys = {
+        option["key"]
+        for option in get_followup_operational_options(report)
+    }
+    for key in available_keys:
+        values = request.args.getlist(f"show_operational_{key}")
+        if values:
+            visibility[key] = "1" in values
+
+    return render_template(
+        "portal/followups/_operational_sections.html",
+        report=report,
+        operational_sections=build_followup_operational_sections(
+            report,
+            visibility=visibility,
+        ),
+    )
+
+
 @portal_bp.route("/followups/<int:report_id>/delete", methods=["POST"])
 @login_required
 def followups_delete_report(report_id: int):

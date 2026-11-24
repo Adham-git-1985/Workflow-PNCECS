@@ -606,6 +606,20 @@ class FollowupFlowTests(unittest.TestCase):
         self.assertIn(b"show_operational_consumables", page.data)
         self.assertNotIn(b"bi-box-seam", page.data)
 
+        preview = self.employee_client.get(
+            f"/portal/followups/{report_id}/operational-sections"
+            "?show_operational_consumables=1"
+        )
+        self.assertEqual(preview.status_code, 200)
+        self.assertIn(b"bi-box-seam", preview.data)
+
+        hidden_preview = self.employee_client.get(
+            f"/portal/followups/{report_id}/operational-sections"
+            "?show_operational_consumables=0"
+        )
+        self.assertEqual(hidden_preview.status_code, 200)
+        self.assertNotIn(b"bi-box-seam", hidden_preview.data)
+
         response = self.employee_client.post(
             f"/portal/followups/{report_id}/update",
             data={
