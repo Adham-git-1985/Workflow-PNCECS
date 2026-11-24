@@ -494,6 +494,53 @@ class FollowupFlowTests(unittest.TestCase):
             item = EmployeeFollowupReport.query.get(report_id).items[0]
             self.assertEqual(item.title, long_title.strip())
 
+    def test_manual_achievement_json_add_is_immediate_and_keeps_manual_item_included(self):
+        with self.app.app_context():
+            report = EmployeeFollowupReport(
+                employee_user_id=self.employee_id,
+                manager_user_id=self.manager_id,
+                period_start=date(2026, 9, 1),
+                period_end=date(2026, 9, 5),
+                status="DRAFT",
+            )
+            path_item = EmployeeFollowupItem(
+                report=report,
+                source_type="WORKFLOW_AUDIT",
+                source_id=901,
+                title="Path work",
+                completed_on=date(2026, 9, 2),
+                status="COMPLETED",
+                is_included=True,
+            )
+            db.session.add_all([report, path_item])
+            db.session.commit()
+            report_id = report.id
+
+        response = self.employee_client.post(
+            f"/portal/followups/{report_id}/items",
+            data={"title": "Manual achievement", "completed_on": "2026-09-03"},
+            headers={
+                "Accept": "application/json",
+                "X-Requested-With": "XMLHttpRequest",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["item"]["title"], "Manual achievement")
+
+        manual_id = payload["item"]["id"]
+        response = self.employee_client.post(
+            f"/portal/followups/{report_id}/update",
+            data={"action": "save"},
+        )
+        self.assertEqual(response.status_code, 302)
+        with self.app.app_context():
+            items = {item.id: item for item in EmployeeFollowupReport.query.get(report_id).items}
+            self.assertTrue(items[manual_id].is_included)
+            self.assertFalse(items[path_item.id].is_included)
+
     def test_late_completed_and_overdue_meeting_tasks_are_imported(self):
         with self.app.app_context():
             meeting = PortalMeeting(

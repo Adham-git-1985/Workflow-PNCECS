@@ -15,6 +15,7 @@ from flask import (
     abort,
     current_app,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -1040,7 +1041,13 @@ def _apply_employee_changes(report: EmployeeFollowupReport) -> None:
         requested_status = (request.form.get(f"status_{item.id}") or item.status).strip().upper()
         if requested_status in ITEM_STATUS_LABELS:
             item.status = requested_status
-        item.is_included = request.form.get(f"included_{item.id}") == "1"
+        # Manual accomplishments are part of the report as soon as they are
+        # added. Only system/path items are optional selections.
+        item.is_included = (
+            True
+            if item.source_type == "MANUAL"
+            else request.form.get(f"included_{item.id}") == "1"
+        )
         if item.source_type in {"MEETING_TASK", "MEETING"} and item.source_id:
             task_id = int(item.source_id)
             exclusion_ids = (
@@ -1857,10 +1864,9 @@ def followups_new():
 def followups_view(report_id: int):
     _require_followups_access()
     report, access_level = _get_report_or_abort(report_id)
-    # Meetings and meeting tasks can become reportable after the report was
-    # created. Refresh them on every report view so older reports show the
-    # same past meetings and overdue work as newly-created reports. Explicit
-    # employee exclusions are preserved by the synchronisers.
+    # Meeting work can become reportable after the report was created. Refresh
+    # it on every report view so older reports stay current. Explicit meeting
+    # exclusions are preserved by the synchronisers.
     try:
         synchronized_items = (
             _extract_completed_meetings(report)
@@ -2052,16 +2058,25 @@ def followups_add_item(report_id: int):
     report, _ = _get_report_or_abort(report_id)
     if not _employee_can_edit(report):
         abort(403)
+    wants_json = (
+        request.headers.get("Accept", "").lower().find("application/json") >= 0
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.form.get("response_format") == "json"
+    )
     title = (request.form.get("title") or "").strip()
     item_date = _parse_date(request.form.get("completed_on"))
     status = (request.form.get("status") or "COMPLETED").strip().upper()
     if not title:
+        if wants_json:
+            return jsonify(ok=False, message="عنوان الإنجاز مطلوب."), 400
         flash("عنوان الإنجاز مطلوب.", "warning")
     elif request.form.get("completed_on") and not item_date:
+        if wants_json:
+            return jsonify(ok=False, message="يرجى إدخال تاريخ صحيح."), 400
         flash("يرجى إدخال تاريخ صحيح.", "warning")
     else:
         try:
-            db.session.add(EmployeeFollowupItem(
+            item = EmployeeFollowupItem(
                 report_id=report.id,
                 source_type="MANUAL",
                 title=title,
@@ -2069,7 +2084,8 @@ def followups_add_item(report_id: int):
                 completed_on=item_date,
                 status=status if status in ITEM_STATUS_LABELS else "COMPLETED",
                 is_included=True,
-            ))
+            )
+            db.session.add(item)
             db.session.commit()
         except Exception:
             db.session.rollback()
@@ -2077,8 +2093,21 @@ def followups_add_item(report_id: int):
                 "Failed to add manual accomplishment to followup report %s",
                 report_id,
             )
+            if wants_json:
+                return jsonify(ok=False, message="تعذرت إضافة الإنجاز حالياً."), 500
             flash("تعذرت إضافة الإنجاز حالياً.", "danger")
         else:
+            if wants_json:
+                return jsonify(
+                    ok=True,
+                    item={
+                        "id": int(item.id),
+                        "title": item.title,
+                        "completed_on": item.completed_on.isoformat() if item.completed_on else "",
+                        "status": item.status,
+                        "status_label": ITEM_STATUS_LABELS.get(item.status, item.status),
+                    },
+                )
             flash("تمت إضافة البند.", "success")
     return redirect(url_for("portal.followups_view", report_id=report.id))
 

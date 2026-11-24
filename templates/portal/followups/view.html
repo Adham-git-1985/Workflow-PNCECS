@@ -41,8 +41,30 @@
     background: transparent;
   }
 
+  .followup-operational > summary {
+    cursor: pointer;
+    list-style: none;
+    padding: .75rem 1rem;
+    border: 1px solid rgba(15, 23, 42, .08);
+    border-radius: 1rem;
+    background: #fff;
+  }
+
+  .followup-operational > summary::-webkit-details-marker {
+    display: none;
+  }
+
   .followup-actions .action-buttons > * {
     flex: 1 1 auto;
+  }
+
+  .followup-extra-actions > summary {
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .followup-extra-actions > summary::-webkit-details-marker {
+    display: none;
   }
 
   .followup-section-title {
@@ -100,7 +122,7 @@
 <div class="container-fluid py-4 followup-report" dir="rtl">
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
     <div>
-      <a class="btn btn-sm btn-outline-secondary mb-2" href="{{ url_for('portal.followups_dashboard') }}"><i class="bi bi-arrow-right"></i> متابعاتي</a>
+      <a class="btn btn-sm btn-outline-secondary mb-2" href="{{ url_for('portal.followups_dashboard') }}"><i class="bi bi-arrow-right"></i> تقارير الإنجاز</a>
       <h1 class="h4 mb-1">تقرير إنجاز: {{ report.employee.full_name }}</h1>
       <div class="text-muted">{{ report.period_start }} إلى {{ report.period_end }} · المدير المباشر: {{ report.manager.full_name if report.manager else 'غير محدد' }}</div>
       {% if report.reviewed_at %}<div class="review-date mt-1"><i class="bi bi-calendar-check"></i> تمت مراجعة التقرير بتاريخ {{ report.reviewed_at|local_datetime }}</div>{% endif %}
@@ -121,14 +143,15 @@
   {% set path_items = report.items|rejectattr('source_type', 'equalto', 'MANUAL')|list %}
 
   {% if operational_sections %}
-  <section class="followup-operational mb-4" aria-label="التقارير التشغيلية المرتبطة بالصلاحيات">
-    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
-      <div>
-        <h2 class="h5 mb-1"><i class="bi bi-bar-chart-line"></i> ملخص الأعمال التشغيلية</h2>
-        <div class="small text-muted">تظهر الأقسام المرتبطة بالصلاحيات التشغيلية للموظف خلال فترة تقرير الإنجاز.</div>
-      </div>
+  <details class="followup-operational mb-4" aria-label="التقارير التشغيلية المرتبطة بالصلاحيات">
+    <summary class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+      <span>
+        <span class="h5 d-block mb-1"><i class="bi bi-bar-chart-line"></i> ملخص الأعمال التشغيلية</span>
+        <span class="small text-muted d-block">تفاصيل إضافية مرتبطة بالصلاحيات التشغيلية.</span>
+      </span>
       <span class="badge rounded-pill text-bg-light border">{{ operational_sections|length }} تقرير مرتبط</span>
-    </div>
+    </summary>
+    <div class="pt-3">
     <div class="row g-3">
       {% for section in operational_sections %}
       <div class="col-12">
@@ -169,23 +192,25 @@
           </div>
         </article>
       </div>
-      {% endfor %}
+    {% endfor %}
     </div>
-  </section>
+    </div>
+  </details>
   {% endif %}
 
   {% if can_edit %}
   <div class="card manual-achievement-card mb-4">
     <div class="card-body">
       <h2 class="h6 followup-section-title mb-3">إضافة إنجاز يدوي</h2>
-      <form method="post" action="{{ url_for('portal.followups_add_item', report_id=report.id) }}" class="row g-2">
+      <form id="manual-achievement-form-{{ report.id }}" method="post" action="{{ url_for('portal.followups_add_item', report_id=report.id) }}" class="row g-2" data-async-add>
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="col-lg-7">
           <label class="form-label" for="newAchievementTitle">الإنجاز</label>
-          <textarea class="form-control" id="newAchievementTitle" name="title" required rows="5" placeholder="اكتب الإنجاز بالتفصيل"></textarea>
+          <textarea class="form-control" id="newAchievementTitle" name="title" required rows="5" placeholder="اكتب الإنجاز باختصار"></textarea>
         </div>
         <div class="col-lg-3"><label class="form-label" for="newAchievementDate">التاريخ</label><input class="form-control" id="newAchievementDate" name="completed_on" type="date"></div>
-        <div class="col-lg-2 d-flex align-items-end"><button class="btn btn-warning w-100" type="submit"><i class="bi bi-plus-lg"></i> إضافة</button></div>
+        <div class="col-lg-2 d-flex align-items-end"><button class="btn btn-warning w-100" type="submit" data-add-button><i class="bi bi-plus-lg"></i> إضافة</button></div>
+        <div class="col-12"><div class="small text-danger d-none" data-add-error role="alert"></div></div>
       </form>
     </div>
   </div>
@@ -197,15 +222,15 @@
       <div class="col-12">
         <div class="card manual-achievement-card mb-4">
           <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
-            <h2 class="h6 followup-section-title mb-0">المهمات المضافة يدوياً</h2>
-            <span class="small text-muted">{{ manual_items|length }} إنجاز</span>
+            <h2 class="h6 followup-section-title mb-0">المهام المضافة يدوياً</h2>
+            <span class="small text-muted" id="manual-items-count-{{ report.id }}">{{ manual_items|length }} إنجاز</span>
           </div>
           <div class="table-responsive">
             <table class="table table-hover align-middle mb-0">
               <thead class="table-light"><tr><th>المهمة</th><th style="width: 170px">التاريخ</th><th style="width: 155px">الحالة</th><th style="width: 125px">إجراءات</th></tr></thead>
-              <tbody>
+              <tbody id="manual-items-body-{{ report.id }}">
               {% for item in manual_items %}
-                <tr class="manual-achievement-row">
+                <tr class="manual-achievement-row" id="manual-item-row-{{ item.id }}">
                   <td>
                     <div class="manual-item-view" data-item-view="{{ item.id }}"><strong>{{ item.title }}</strong></div>
                     <div class="manual-item-editor d-none" data-item-editor="{{ item.id }}">
@@ -232,13 +257,12 @@
                     <span class="manual-item-editor d-none" data-item-editor="{{ item.id }}"><select class="form-select" name="status_{{ item.id }}">{% for key, label in item_status_labels.items() %}<option value="{{ key }}" {% if item.status == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></span>
                   </td>
                   <td class="text-nowrap">
-                    <input class="form-check-input me-1" id="included-manual-{{ item.id }}" type="checkbox" name="included_{{ item.id }}" value="1" {% if item.is_included %}checked{% endif %} title="إدراج الإنجاز في التقرير">
                     <button class="btn btn-sm btn-outline-primary manual-item-edit-toggle" type="button" data-item-id="{{ item.id }}" aria-label="تعديل الإنجاز" title="تعديل"><i class="bi bi-pencil"></i></button>
                     <button class="btn btn-sm btn-outline-danger" type="submit" form="delete-item-{{ item.id }}" aria-label="حذف الإنجاز" title="حذف"><i class="bi bi-trash"></i></button>
                   </td>
                 </tr>
               {% else %}
-                <tr><td colspan="4" class="text-center text-muted py-4">لا توجد إنجازات مضافة يدوياً بعد.</td></tr>
+                <tr id="manual-items-empty-{{ report.id }}"><td colspan="4" class="text-center text-muted py-4">لا توجد إنجازات مضافة يدوياً بعد.</td></tr>
               {% endfor %}
               </tbody>
             </table>
@@ -250,7 +274,7 @@
             <h2 class="h6 followup-section-title mb-0">مهام على مسار</h2>
             <div class="form-check mb-0">
               <input class="form-check-input" id="include-all-items-{{ report.id }}" type="checkbox">
-              <label class="form-check-label" for="include-all-items-{{ report.id }}">تحديد/إلغاء تحديد الكل</label>
+              <label class="form-check-label" for="include-all-items-{{ report.id }}"><span id="include-all-label-{{ report.id }}">تحديد الكل</span></label>
             </div>
           </div>
           <div class="followup-filter-bar p-3">
@@ -275,27 +299,26 @@
             {% for item in path_items %}
                 <tr class="followup-path-row" data-search="{{ (item.title ~ ' ' ~ (item.description or ''))|lower }}" data-status="{{ item.status }}">
                   <td>
-                    <label class="visually-hidden" for="title_{{ item.id }}">المهمة</label>
-                    <textarea id="title_{{ item.id }}" class="form-control" name="title_{{ item.id }}" rows="3" placeholder="اكتب المهمة بالتفصيل">{{ item.title }}</textarea>
+                    <div class="fw-semibold" style="white-space: pre-line">{{ item.title }}</div>
                     {% if item.source_type == 'MEETING_TASK' and item.status != 'COMPLETED' %}<div class="small text-warning-emphasis mt-1"><i class="bi bi-calendar-x"></i> اجتماع/مهمة متأخرة عن موعدها</div>{% endif %}
                     {% if item.ai_suggestion %}
-                    <div class="alert alert-info py-2 mt-2 mb-0">
-                      <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
-                        <label class="small fw-bold mb-0" for="ai_suggestion_{{ item.id }}"><i class="bi bi-stars"></i> إعادة الصياغة المختصرة المقترحة</label>
-                        <span class="badge text-bg-light border">قابلة للتعديل</span>
+                    <details class="mt-2">
+                      <summary class="small text-info-emphasis"><i class="bi bi-stars"></i> صياغة مقترحة</summary>
+                      <div class="alert alert-info py-2 mt-2 mb-0">
+                        <label class="small fw-bold mb-2" for="ai_suggestion_{{ item.id }}">إعادة الصياغة المختصرة المقترحة</label>
+                        <textarea id="ai_suggestion_{{ item.id }}" class="form-control form-control-sm" name="ai_suggestion_{{ item.id }}" rows="2" maxlength="240" aria-describedby="ai_suggestion_help_{{ item.id }}">{{ item.ai_suggestion }}</textarea>
+                        <div class="form-text" id="ai_suggestion_help_{{ item.id }}">عدّلها كما تريد قبل اعتمادها.</div>
+                        {% if item.duplicate_hint %}<div class="small text-warning-emphasis mt-1"><i class="bi bi-exclamation-triangle"></i> {{ item.duplicate_hint }}</div>{% endif %}
                       </div>
-                      <textarea id="ai_suggestion_{{ item.id }}" class="form-control form-control-sm" name="ai_suggestion_{{ item.id }}" rows="2" maxlength="240" aria-describedby="ai_suggestion_help_{{ item.id }}">{{ item.ai_suggestion }}</textarea>
-                      <div class="form-text" id="ai_suggestion_help_{{ item.id }}">صياغة مختصرة في سطر أو سطرين؛ عدّلها كما تريد قبل اعتمادها على الإنجاز.</div>
-                      {% if item.duplicate_hint %}<div class="small text-warning-emphasis mt-1"><i class="bi bi-exclamation-triangle"></i> {{ item.duplicate_hint }}</div>{% endif %}
-                    </div>
+                    </details>
                     {% elif item.duplicate_hint %}
                     <div class="small alert alert-warning py-2 mt-2 mb-0"><i class="bi bi-exclamation-triangle"></i> {{ item.duplicate_hint }}</div>
                     {% endif %}
                   </td>
-                  <td><input class="form-control" name="completed_on_{{ item.id }}" type="date" value="{{ item.completed_on.isoformat() if item.completed_on else '' }}"></td>
-                  <td><select class="form-select" name="status_{{ item.id }}">{% for key, label in item_status_labels.items() %}<option value="{{ key }}" {% if item.status == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></td>
-                  <td><div class="form-check"><input class="form-check-input" id="included_{{ item.id }}" type="checkbox" name="included_{{ item.id }}" value="1" {% if item.is_included %}checked{% endif %}><label class="form-check-label" for="included_{{ item.id }}">إدراج</label></div></td>
-                  <td>{% if item_open_urls.get(item.id) %}<a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener" href="{{ item_open_urls[item.id] }}" title="فتح المهمة"><i class="bi bi-box-arrow-up-left"></i><span class="visually-hidden">فتح المهمة</span></a>{% else %}<span class="text-muted">-</span>{% endif %}<button class="btn btn-sm btn-outline-danger ms-1" type="submit" form="delete-item-{{ item.id }}" title="{% if item.source_type in ['MEETING_TASK', 'MEETING'] %}إزالة الاجتماع من التقرير{% else %}حذف الإنجاز{% endif %}"><i class="bi bi-trash"></i><span class="visually-hidden">{% if item.source_type in ['MEETING_TASK', 'MEETING'] %}إزالة من التقرير{% else %}حذف{% endif %}</span></button></td>
+                  <td class="text-nowrap">{{ item.completed_on or '-' }}</td>
+                  <td><span class="badge status-pill {% if item.status == 'COMPLETED' %}text-bg-success{% elif item.status == 'IN_PROGRESS' %}text-bg-primary{% else %}text-bg-warning{% endif %}">{{ item_status_labels[item.status] }}</span></td>
+                  <td><div class="form-check"><input class="form-check-input followup-path-include" id="included_{{ item.id }}" type="checkbox" name="included_{{ item.id }}" value="1" {% if item.is_included %}checked{% endif %}><label class="form-check-label" for="included_{{ item.id }}">إدراج</label></div></td>
+                  <td>{% if item_open_urls.get(item.id) %}<a class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener" href="{{ item_open_urls[item.id] }}" title="فتح المهمة"><i class="bi bi-box-arrow-up-left"></i><span class="visually-hidden">فتح المهمة</span></a>{% else %}<span class="text-muted">-</span>{% endif %}</td>
                 </tr>
             {% else %}<tr><td colspan="5" class="p-4 text-center text-muted">لا توجد مهام مرتبطة بمسار ضمن فترة التقرير.</td></tr>{% endfor %}
                 <tr id="path-item-empty-filtered-{{ report.id }}" class="d-none"><td colspan="5" class="p-4 text-center text-muted">لا توجد نتائج مطابقة للبحث.</td></tr>
@@ -349,12 +372,17 @@
       <p class="small text-muted">راجع البنود ثم اختر الإجراء المطلوب.</p>
       <div class="action-buttons d-flex flex-wrap gap-2">
         <button class="btn btn-outline-primary" type="submit" form="followup-update-{{ report.id }}" name="action" value="save"><i class="bi bi-save"></i> حفظ مسودة</button>
-        <button class="btn btn-outline-secondary" type="submit" form="import-workflow-{{ report.id }}"><i class="bi bi-arrow-repeat"></i> تحديث من مسار</button>
-        <button class="btn btn-outline-info" type="submit" form="followup-update-{{ report.id }}" name="action" value="ai"><i class="bi bi-stars"></i> إعادة الصياغة المختصرة</button>
-        {% if has_ai_suggestions %}
-        <button class="btn btn-info" type="submit" form="followup-update-{{ report.id }}" name="action" value="apply_ai" onclick="return confirm('سيتم استبدال نصوص الإنجازات بالصياغات المقترحة بعد تعديلاتك. هل تريد المتابعة؟');"><i class="bi bi-box-arrow-in-down"></i> اعتماد الصياغات على المهام</button>
-        {% endif %}
         <button class="btn btn-success" type="submit" form="followup-update-{{ report.id }}" name="action" value="submit"><i class="bi bi-send"></i> إرسال للمدير</button>
+        <details class="followup-extra-actions">
+          <summary class="btn btn-outline-secondary"><i class="bi bi-three-dots"></i> خيارات إضافية</summary>
+          <div class="d-flex flex-wrap gap-2 mt-2">
+            <button class="btn btn-outline-secondary" type="submit" form="import-workflow-{{ report.id }}"><i class="bi bi-arrow-repeat"></i> تحديث مهام المسار</button>
+            <button class="btn btn-outline-info" type="submit" form="followup-update-{{ report.id }}" name="action" value="ai"><i class="bi bi-stars"></i> إعادة الصياغة المختصرة</button>
+            {% if has_ai_suggestions %}
+            <button class="btn btn-info" type="submit" form="followup-update-{{ report.id }}" name="action" value="apply_ai" onclick="return confirm('سيتم استبدال نصوص الإنجازات بالصياغات المقترحة بعد تعديلاتك. هل تريد المتابعة؟');"><i class="bi bi-box-arrow-in-down"></i> اعتماد الصياغات على المهام</button>
+            {% endif %}
+          </div>
+        </details>
       </div>
       {% if has_ai_suggestions %}<div class="small text-muted mt-2">يمكنك تعديل كل صياغة مقترحة في جدول المهام قبل الاعتماد.</div>{% endif %}
     </div>
@@ -362,35 +390,143 @@
 
   <script>
     document.addEventListener('DOMContentLoaded', function () {
+      const reportId = '{{ report.id }}';
+      const manualForm = document.getElementById(`manual-achievement-form-${reportId}`);
+      const manualBody = document.getElementById(`manual-items-body-${reportId}`);
+      const manualEmpty = document.getElementById(`manual-items-empty-${reportId}`);
+      const manualCount = document.getElementById(`manual-items-count-${reportId}`);
+      const statusLabels = {{ item_status_labels|tojson }};
+
+      const escapeHtml = function (value) {
+        const element = document.createElement('span');
+        element.textContent = value || '';
+        return element.innerHTML;
+      };
+
+      const updateManualCount = function () {
+        if (!manualCount || !manualBody) return;
+        const count = manualBody.querySelectorAll('.manual-achievement-row').length;
+        manualCount.textContent = `${count} إنجاز`;
+      };
+
+      const addDeleteForm = function (itemId) {
+        const csrf = manualForm?.querySelector('[name="csrf_token"]')?.value || '';
+        const deleteForm = document.createElement('form');
+        deleteForm.id = `delete-item-${itemId}`;
+        deleteForm.method = 'post';
+        deleteForm.action = `{{ url_for('portal.followups_delete_item', report_id=report.id, item_id=0) }}`.replace('/0/delete', `/${itemId}/delete`);
+        deleteForm.innerHTML = `<input type="hidden" name="csrf_token" value="${escapeHtml(csrf)}">`;
+        document.body.appendChild(deleteForm);
+      };
+
+      const appendManualItem = function (item) {
+        if (!manualBody) return;
+        manualEmpty?.remove();
+        const statusClass = item.status === 'COMPLETED'
+          ? 'success'
+          : (item.status === 'IN_PROGRESS' ? 'primary' : 'warning');
+        const statusOptions = Object.entries(statusLabels)
+          .map(([key, label]) => `<option value="${escapeHtml(key)}" ${key === item.status ? 'selected' : ''}>${escapeHtml(label)}</option>`)
+          .join('');
+        const row = document.createElement('tr');
+        row.className = 'manual-achievement-row';
+        row.id = `manual-item-row-${item.id}`;
+        row.innerHTML = `
+          <td>
+            <div class="manual-item-view" data-item-view="${item.id}"><strong>${escapeHtml(item.title)}</strong></div>
+            <div class="manual-item-editor d-none" data-item-editor="${item.id}">
+              <label class="visually-hidden" for="title_${item.id}">الإنجاز</label>
+              <textarea id="title_${item.id}" class="form-control" name="title_${item.id}" rows="2">${escapeHtml(item.title)}</textarea>
+            </div>
+          </td>
+          <td>
+            <span class="manual-item-view text-nowrap" data-item-view="${item.id}">${escapeHtml(item.completed_on || '-')}</span>
+            <span class="manual-item-editor d-none" data-item-editor="${item.id}"><input class="form-control" name="completed_on_${item.id}" type="date" value="${escapeHtml(item.completed_on || '')}"></span>
+          </td>
+          <td>
+            <span class="manual-item-view badge status-pill text-bg-${statusClass}" data-item-view="${item.id}">${escapeHtml(item.status_label || '')}</span>
+            <span class="manual-item-editor d-none" data-item-editor="${item.id}"><select class="form-select" name="status_${item.id}">${statusOptions}</select></span>
+          </td>
+          <td class="text-nowrap">
+            <button class="btn btn-sm btn-outline-primary manual-item-edit-toggle" type="button" data-item-id="${item.id}" aria-label="تعديل الإنجاز" title="تعديل"><i class="bi bi-pencil"></i></button>
+            <button class="btn btn-sm btn-outline-danger" type="submit" form="delete-item-${item.id}" aria-label="حذف الإنجاز" title="حذف"><i class="bi bi-trash"></i></button>
+          </td>`;
+        manualBody.prepend(row);
+        addDeleteForm(item.id);
+        updateManualCount();
+      };
+
+      if (manualForm) {
+        manualForm.addEventListener('submit', async function (event) {
+          event.preventDefault();
+          const button = manualForm.querySelector('[data-add-button]');
+          const error = manualForm.querySelector('[data-add-error]');
+          if (button) button.disabled = true;
+          if (error) {
+            error.textContent = '';
+            error.classList.add('d-none');
+          }
+          const formData = new FormData(manualForm);
+          formData.set('response_format', 'json');
+          try {
+            const response = await fetch(manualForm.action, {
+              method: 'POST',
+              body: formData,
+              headers: {
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+              },
+            });
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+              throw new Error(payload.message || 'تعذرت إضافة الإنجاز حالياً.');
+            }
+            appendManualItem(payload.item);
+            manualForm.reset();
+          } catch (requestError) {
+            if (error) {
+              error.textContent = requestError.message || 'تعذرت إضافة الإنجاز حالياً.';
+              error.classList.remove('d-none');
+            }
+          } finally {
+            if (button) button.disabled = false;
+          }
+        });
+      }
+
+      document.addEventListener('click', function (event) {
+        const button = event.target.closest('.manual-item-edit-toggle');
+        if (!button) return;
+        const itemId = button.dataset.itemId;
+        const viewing = document.querySelectorAll(`[data-item-view="${itemId}"]`);
+        const editing = document.querySelectorAll(`[data-item-editor="${itemId}"]`);
+        const isEditing = editing.length > 0 && !editing[0].classList.contains('d-none');
+        viewing.forEach((element) => element.classList.toggle('d-none', !isEditing));
+        editing.forEach((element) => element.classList.toggle('d-none', isEditing));
+        button.classList.toggle('active', !isEditing);
+        button.setAttribute('aria-pressed', String(!isEditing));
+      });
+
       const toggle = document.getElementById('include-all-items-{{ report.id }}');
-      const inputs = Array.from(document.querySelectorAll('input[name^="included_"]'));
+      const includeLabel = document.getElementById('include-all-label-{{ report.id }}');
+      const inputs = Array.from(document.querySelectorAll('.followup-path-include'));
       const syncToggle = function () {
         if (!toggle) return;
         const checkedCount = inputs.filter((input) => input.checked).length;
         toggle.checked = inputs.length > 0 && checkedCount === inputs.length;
         toggle.indeterminate = checkedCount > 0 && checkedCount < inputs.length;
+        if (includeLabel) {
+          includeLabel.textContent = toggle.checked ? 'إلغاء تحديد الكل' : 'تحديد الكل';
+        }
       };
       if (toggle) {
         toggle.addEventListener('change', function () {
           inputs.forEach((input) => { input.checked = toggle.checked; });
-          toggle.indeterminate = false;
+          syncToggle();
         });
       }
       inputs.forEach((input) => input.addEventListener('change', syncToggle));
       syncToggle();
-
-      document.querySelectorAll('.manual-item-edit-toggle').forEach((button) => {
-        button.addEventListener('click', function () {
-          const itemId = button.dataset.itemId;
-          const viewing = document.querySelectorAll(`[data-item-view="${itemId}"]`);
-          const editing = document.querySelectorAll(`[data-item-editor="${itemId}"]`);
-          const isEditing = editing.length > 0 && !editing[0].classList.contains('d-none');
-          viewing.forEach((element) => element.classList.toggle('d-none', !isEditing));
-          editing.forEach((element) => element.classList.toggle('d-none', isEditing));
-          button.classList.toggle('active', !isEditing);
-          button.setAttribute('aria-pressed', String(!isEditing));
-        });
-      });
 
       const search = document.getElementById('path-item-search-{{ report.id }}');
       const status = document.getElementById('path-item-status-{{ report.id }}');
